@@ -1,0 +1,238 @@
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../src/translators/record-crypto.js', () => ({
+  decryptRecordPayload: vi.fn(async (record) => JSON.parse(record.owner_payload.ciphertext)),
+  encryptOwnerPayload: vi.fn(async (_ownerNpub, payload) => ({ ciphertext: JSON.stringify(payload) })),
+  buildGroupPayloads: vi.fn(async (groupNpubs, payload) =>
+    groupNpubs.map((group_npub) => ({ group_npub, ciphertext: JSON.stringify(payload), write: true }))),
+}));
+import {
+  inboundTask,
+  outboundTask,
+  recordFamilyHash,
+  computeParentState,
+  stateColor,
+  formatStateLabel,
+  parseTags,
+} from '../src/translators/tasks.js';
+import { APP_NPUB } from '../src/app-identity.js';
+
+describe('task translator — inbound', () => {
+  it('materializes a task record into a local row', async () => {
+    const record = {
+      record_id: 'task-1',
+      owner_npub: 'npub_owner',
+      version: 2,
+      created_at: '2026-03-10T00:00:00Z',
+      updated_at: '2026-03-10T01:00:00Z',
+      owner_payload: {
+        ciphertext: JSON.stringify({
+          app_namespace: APP_NPUB,
+          collection_space: 'task',
+          schema_version: 1,
+          record_id: 'task-1',
+          data: {
+            title: 'Build task board',
+            description: 'Port v3 board to v4',
+            state: 'in_progress',
+            priority: 'rock',
+            parent_task_id: null,
+            scheduled_for: '2026-03-15',
+            tags: 'frontend,ui',
+            record_state: 'active',
+          },
+        }),
+      },
+      group_payloads: [
+        { group_npub: 'gpub_abc', ciphertext: '{}', write: true },
+      ],
+    };
+
+    const row = await inboundTask(record);
+
+    expect(row.record_id).toBe('task-1');
+    expect(row.owner_npub).toBe('npub_owner');
+    expect(row.title).toBe('Build task board');
+    expect(row.description).toBe('Port v3 board to v4');
+    expect(row.state).toBe('in_progress');
+    expect(row.priority).toBe('rock');
+    expect(row.parent_task_id).toBeNull();
+    expect(row.scheduled_for).toBe('2026-03-15');
+    expect(row.tags).toBe('frontend,ui');
+    expect(row.group_ids).toEqual(['gpub_abc']);
+    expect(row.sync_status).toBe('synced');
+    expect(row.record_state).toBe('active');
+    expect(row.version).toBe(2);
+  });
+
+  it('handles subtask with parent_task_id', async () => {
+    const record = {
+      record_id: 'task-2',
+      owner_npub: 'npub_owner',
+      version: 1,
+      updated_at: '2026-03-10T02:00:00Z',
+      owner_payload: {
+        ciphertext: JSON.stringify({
+          data: {
+            title: 'Design UI',
+            state: 'new',
+            parent_task_id: 'task-1',
+          },
+        }),
+      },
+      group_payloads: [],
+    };
+
+    const row = await inboundTask(record);
+
+    expect(row.parent_task_id).toBe('task-1');
+    expect(row.title).toBe('Design UI');
+  });
+
+  it('defaults missing fields', async () => {
+    const record = {
+      record_id: 'task-3',
+      owner_npub: 'npub_owner',
+      owner_payload: { ciphertext: JSON.stringify({ data: {} }) },
+      group_payloads: [],
+    };
+
+    const row = await inboundTask(record);
+
+    expect(row.title).toBe('');
+    expect(row.state).toBe('new');
+    expect(row.priority).toBe('sand');
+    expect(row.parent_task_id).toBeNull();
+  });
+});
+
+describe('task translator — outbound', () => {
+  it('builds a valid V4 envelope', async () => {
+    const envelope = await outboundTask({
+      record_id: 'task-1',
+      owner_npub: 'npub_owner',
+      title: 'Build board',
+      description: 'Port v3',
+      state: 'new',
+      priority: 'rock',
+      group_ids: ['gpub_abc'],
+      signature_npub: 'npub_owner',
+    });
+
+    expect(envelope.record_id).toBe('task-1');
+    expect(envelope.owner_npub).toBe('npub_owner');
+    expect(envelope.record_family_hash).toBe(`${APP_NPUB}:task`);
+    expect(envelope.version).toBe(1);
+    expect(envelope.group_payloads).toHaveLength(1);
+    expect(envelope.group_payloads[0].group_npub).toBe('gpub_abc');
+    expect(envelope.group_payloads[0].write).toBe(true);
+
+    const payload = JSON.parse(envelope.owner_payload.ciphertext);
+    expect(payload.app_namespace).toBe(APP_NPUB);
+    expect(payload.collection_space).toBe('task');
+    expect(payload.data.title).toBe('Build board');
+    expect(payload.data.state).toBe('new');
+    expect(payload.data.priority).toBe('rock');
+  });
+
+  it('includes soft-delete state', async () => {
+    const envelope = await outboundTask({
+      record_id: 'task-1',
+      owner_npub: 'npub_owner',
+      title: 'Deleted task',
+      record_state: 'deleted',
+      version: 2,
+      previous_version: 1,
+    });
+
+    const payload = JSON.parse(envelope.owner_payload.ciphertext);
+    expect(payload.data.record_state).toBe('deleted');
+    expect(envelope.version).toBe(2);
+    expect(envelope.previous_version).toBe(1);
+  });
+});
+
+describe('task translator — recordFamilyHash', () => {
+  it('returns APP_NPUB:collectionSpace', () => {
+    expect(recordFamilyHash('task')).toBe(`${APP_NPUB}:task`);
+  });
+});
+
+describe('task helpers', () => {
+  describe('computeParentState', () => {
+    it('returns new for empty subtasks', () => {
+      expect(computeParentState([])).toBe('new');
+    });
+
+    it('returns the least-advanced state', () => {
+      const subtasks = [
+        { state: 'done' },
+        { state: 'in_progress' },
+        { state: 'done' },
+      ];
+      expect(computeParentState(subtasks)).toBe('in_progress');
+    });
+
+    it('treats archive as done', () => {
+      const subtasks = [
+        { state: 'archive' },
+        { state: 'done' },
+      ];
+      expect(computeParentState(subtasks)).toBe('done');
+    });
+
+    it('all done returns done', () => {
+      const subtasks = [
+        { state: 'done' },
+        { state: 'done' },
+      ];
+      expect(computeParentState(subtasks)).toBe('done');
+    });
+
+    it('new subtask brings parent to new', () => {
+      const subtasks = [
+        { state: 'done' },
+        { state: 'new' },
+      ];
+      expect(computeParentState(subtasks)).toBe('new');
+    });
+  });
+
+  describe('stateColor', () => {
+    it('returns correct colors', () => {
+      expect(stateColor('done')).toBe('#34d399');
+      expect(stateColor('new')).toBe('#9ca3af');
+      expect(stateColor('in_progress')).toBe('#a78bfa');
+    });
+
+    it('returns fallback for unknown', () => {
+      expect(stateColor('unknown')).toBe('#9ca3af');
+    });
+  });
+
+  describe('formatStateLabel', () => {
+    it('formats in_progress', () => {
+      expect(formatStateLabel('in_progress')).toBe('In Progress');
+    });
+
+    it('capitalizes simple states', () => {
+      expect(formatStateLabel('new')).toBe('New');
+      expect(formatStateLabel('done')).toBe('Done');
+    });
+  });
+
+  describe('parseTags', () => {
+    it('splits comma-separated tags', () => {
+      expect(parseTags('frontend,ui,board')).toEqual(['frontend', 'ui', 'board']);
+    });
+
+    it('returns empty array for empty input', () => {
+      expect(parseTags('')).toEqual([]);
+      expect(parseTags(null)).toEqual([]);
+    });
+
+    it('trims and lowercases', () => {
+      expect(parseTags(' Frontend , UI ')).toEqual(['frontend', 'ui']);
+    });
+  });
+});

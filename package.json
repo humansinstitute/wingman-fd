@@ -1,0 +1,24 @@
+{
+  "name": "coworker-fe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "start": "sh -c 'bunx vite preview --host 0.0.0.0 --port ${PORT:-8093} --strictPort'",
+    "build": "bunx vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "alpinejs": "^3.14.8",
+    "dexie": "^4.0.10",
+    "nostr-tools": "^2.17.0"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.0.0",
+    "playwright": "1.51.1",
+    "vite": "^6.2.0",
+    "vitest": "^3.0.0"
+  }
+}

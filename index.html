@@ -1,0 +1,1951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wingman</title>
+</head>
+<body x-data x-init="$store.chat.init()" x-cloak>
+  <main class="app-shell">
+    <template x-if="$store.chat.error">
+      <div class="error-bar" x-text="$store.chat.error"></div>
+    </template>
+
+    <header class="page-header">
+      <div class="header-leading">
+        <button
+          type="button"
+          class="mobile-menu-btn"
+          x-show="$store.chat.isLoggedIn"
+          @click="$store.chat.togglePrimaryNav()"
+          aria-label="Toggle navigation"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+        <div class="brand-lockup">
+        <img class="brand-logo" src="/wingman-logo.png" alt="Wingman logo" />
+        <div class="brand-copy">
+          <h1>Wingman</h1>
+          <p>Solvitur ambulando</p>
+        </div>
+      </div>
+      </div>
+      <div class="session-controls" x-show="$store.chat.isLoggedIn">
+        <button
+          class="avatar-chip"
+          :class="{
+            'sync-status-synced': $store.chat.syncStatus === 'synced',
+            'sync-status-unsynced': $store.chat.syncStatus === 'unsynced',
+            'sync-status-syncing': $store.chat.syncStatus === 'syncing'
+          }"
+          type="button"
+          @click="$store.chat.showAvatarMenu = !$store.chat.showAvatarMenu"
+          :title="$store.chat.syncStatus === 'synced' ? 'Synced with SuperBased' : $store.chat.syncStatus === 'unsynced' ? 'Local changes not synced' : 'Syncing...'"
+        >
+          <template x-if="$store.chat.avatarUrl">
+            <img class="chat-post-avatar" :src="$store.chat.avatarUrl" alt="Your profile picture" />
+          </template>
+          <template x-if="!$store.chat.avatarUrl">
+            <span class="avatar-fallback" x-text="$store.chat.avatarFallback"></span>
+          </template>
+        </button>
+        <div class="avatar-menu" x-show="$store.chat.showAvatarMenu" @click.outside="$store.chat.showAvatarMenu = false">
+          <div class="avatar-menu-header">
+            <span class="avatar-menu-name" x-text="$store.chat.displayName"></span>
+          </div>
+          <button type="button" @click="$store.chat.openSuperBasedSettings()">SuperBased Sync</button>
+          <button type="button" @click="$store.chat.showAgentConnect()">Agent Connect</button>
+          <button type="button" @click="$store.chat.copyId()">Copy ID</button>
+          <button type="button" @click="$store.chat.syncNow()">Sync Now</button>
+          <button type="button" @click="$store.chat.navigateTo('settings')">Settings</button>
+          <button type="button" @click="$store.chat.logout()">Log out</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="auth-panel" x-show="!$store.chat.isLoggedIn">
+      <div class="auth-brand">
+        <img class="auth-brand-logo" src="/wingman-logo.png" alt="Wingman logo" />
+        <div>
+          <h2>Sign in with Nostr to get started</h2>
+          <p class="auth-description">Wingman. Solvitur ambulando.</p>
+        </div>
+      </div>
+      <div class="auth-actions">
+        <button class="auth-option" type="button" :disabled="$store.chat.isLoggingIn" @click="$store.chat.login('ephemeral')">
+          <span x-show="!$store.chat.isLoggingIn">Sign Up</span>
+          <span x-show="$store.chat.isLoggingIn">Signing in...</span>
+        </button>
+        <button class="auth-option auth-extension" type="button"
+          :disabled="$store.chat.isLoggingIn"
+          @click="$store.chat.login('extension')">Browser Extension</button>
+      </div>
+      <p class="auth-extension-hint" x-show="!$store.chat.hasExtensionSigner()">
+        Waiting for NIP-07 extension injection. On mobile this can appear a moment after the page loads.
+      </p>
+      <details class="auth-advanced">
+        <summary>Advanced options</summary>
+        <p>Connect to a remote bunker or paste your nsec.</p>
+        <form class="auth-form" @submit.prevent="$store.chat.login('bunker', $refs.bunkerInput.value)">
+          <input x-ref="bunkerInput" name="bunker" placeholder="nostrconnect://... or name@example.com" autocomplete="off" />
+          <button class="auth-option" type="submit" :disabled="$store.chat.isLoggingIn">Connect Bunker</button>
+        </form>
+        <hr class="auth-divider" />
+        <form class="auth-form" @submit.prevent="$store.chat.login('secret', $refs.secretInput.value); $refs.secretInput.value = ''">
+          <input x-ref="secretInput" type="password" name="secret" placeholder="nsec1..." autocomplete="off" />
+          <button class="auth-option" type="submit" :disabled="$store.chat.isLoggingIn">BYO Nsec</button>
+        </form>
+      </details>
+      <p class="auth-error" x-show="$store.chat.loginError" x-text="$store.chat.loginError"></p>
+    </section>
+
+    <p class="hero-hint" x-show="!$store.chat.isLoggedIn">Sign in above to open Wingman and start chatting.</p>
+
+    <div
+      class="modal-overlay"
+      x-show="$store.chat.showSuperBasedModal"
+      x-cloak
+      @click.self="$store.chat.closeSuperBasedSettings()"
+      @keydown.escape.window="$store.chat.closeSuperBasedSettings()"
+    >
+      <div class="modal superbased-modal">
+        <button class="modal-close" type="button" @click="$store.chat.closeSuperBasedSettings()">&times;</button>
+        <h2>SuperBased Sync</h2>
+        <p>Configure the workspace connection using the same connection-key format as V3.</p>
+
+        <div class="cvm-toggle">
+          <label>
+            <input
+              type="checkbox"
+              :checked="$store.chat.useCvmSync"
+              @change="$store.chat.toggleCvmSync()"
+            >
+            <span>Use Context VM relay transport</span>
+          </label>
+          <p x-show="$store.chat.useCvmSync">Stored now for V4 compatibility. Active sync is still HTTP until CVM transport lands.</p>
+        </div>
+
+        <div class="superbased-connection-details">
+          <div class="connection-status connected" x-show="$store.chat.backendUrl">
+            <span class="status-dot"></span>
+            <span>Configured</span>
+          </div>
+          <div class="connection-info">
+            <div class="info-row">
+              <span class="info-label">Transport</span>
+              <span class="info-value" x-text="$store.chat.superbasedTransportLabel"></span>
+            </div>
+            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.httpUrl">
+              <span class="info-label">Direct HTTPS</span>
+              <span class="info-value" x-text="$store.chat.superbasedConnectionConfig?.httpUrl"></span>
+            </div>
+            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.relayUrl">
+              <span class="info-label">Relay</span>
+              <span class="info-value" x-text="$store.chat.superbasedConnectionConfig?.relayUrl"></span>
+            </div>
+            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.serverNpub || $store.chat.superbasedConnectionConfig?.serverPubkeyHex">
+              <span class="info-label">Service</span>
+              <span
+                class="info-value info-npub"
+                x-text="$store.chat.superbasedConnectionConfig?.serverNpub || $store.chat.superbasedConnectionConfig?.serverPubkeyHex"
+              ></span>
+            </div>
+            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.workspaceOwnerNpub || $store.chat.workspaceOwnerNpub">
+              <span class="info-label">Workspace owner</span>
+              <span class="info-value info-npub" x-text="$store.chat.superbasedConnectionConfig?.workspaceOwnerNpub || $store.chat.workspaceOwnerNpub"></span>
+            </div>
+            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.appNpub">
+              <span class="info-label">App</span>
+              <span class="info-value info-npub" x-text="$store.chat.superbasedConnectionConfig?.appNpub"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="workspace-selector-panel" x-show="$store.chat.isLoggedIn">
+          <div class="workspace-selector-header">
+            <strong>Workspaces</strong>
+            <button class="auth-option secondary" type="button" @click="$store.chat.openWorkspaceBootstrapModal()">New workspace</button>
+          </div>
+          <div class="workspace-selector-list" x-show="$store.chat.knownWorkspaces.length > 0">
+            <template x-for="workspace in $store.chat.knownWorkspaces" :key="workspace.workspaceOwnerNpub">
+              <button
+                type="button"
+                class="workspace-selector-row"
+                :class="{ 'workspace-selector-row-active': $store.chat.currentWorkspaceOwnerNpub === workspace.workspaceOwnerNpub }"
+                @click="$store.chat.selectWorkspace(workspace.workspaceOwnerNpub)"
+              >
+                <span class="workspace-selector-name" x-text="workspace.name"></span>
+                <span class="workspace-selector-meta" x-text="workspace.description || workspace.workspaceOwnerNpub"></span>
+              </button>
+            </template>
+          </div>
+          <p class="auth-extension-hint" x-show="$store.chat.knownWorkspaces.length === 0">No workspaces yet. Create one to start using group-based records.</p>
+        </div>
+
+        <form class="auth-form" @submit.prevent="$store.chat.saveConnectionSettings()">
+          <label>
+            <span>Connection key</span>
+            <textarea
+              x-model="$store.chat.superbasedTokenInput"
+              rows="3"
+              placeholder="Paste SuperBased connection key"
+              class="token-input"
+            ></textarea>
+          </label>
+          <label>
+            <span>HTTP backend override</span>
+            <input type="text" x-model="$store.chat.backendUrl" placeholder="https://sb.example.com" />
+          </label>
+          <label>
+            <span>Default bot npub</span>
+            <input type="text" x-model="$store.chat.botNpub" placeholder="npub1..." />
+          </label>
+          <p class="auth-error" x-show="$store.chat.superbasedError" x-text="$store.chat.superbasedError"></p>
+          <div class="superbased-actions">
+            <button class="auth-option secondary" type="button" @click="$store.chat.closeSuperBasedSettings()">Cancel</button>
+            <button class="auth-option" type="submit">Save connection</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div
+      class="modal-overlay"
+      x-show="$store.chat.showWorkspaceBootstrapModal"
+      x-cloak
+      @click.self="$store.chat.closeWorkspaceBootstrapModal()"
+      @keydown.escape.window="$store.chat.closeWorkspaceBootstrapModal()"
+    >
+      <div class="modal superbased-modal">
+        <button class="modal-close" type="button" @click="$store.chat.closeWorkspaceBootstrapModal()">&times;</button>
+        <h2>Create Workspace</h2>
+        <p>Create a new workspace owner identity plus a shared group and your private group.</p>
+        <form class="auth-form" @submit.prevent="$store.chat.createWorkspaceBootstrap()">
+          <label>
+            <span>Name</span>
+            <input type="text" x-model="$store.chat.newWorkspaceName" placeholder="Wingmen" />
+          </label>
+          <label>
+            <span>Description</span>
+            <textarea rows="3" x-model="$store.chat.newWorkspaceDescription" placeholder="Optional description"></textarea>
+          </label>
+          <div class="superbased-actions">
+            <button class="auth-option secondary" type="button" @click="$store.chat.closeWorkspaceBootstrapModal()">Cancel</button>
+            <button class="auth-option" type="submit" :disabled="$store.chat.workspaceBootstrapSubmitting">
+              <span x-show="!$store.chat.workspaceBootstrapSubmitting">Create workspace</span>
+              <span x-show="$store.chat.workspaceBootstrapSubmitting">Creating...</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div
+      class="modal-overlay"
+      x-show="$store.chat.showAgentConnectModal"
+      x-cloak
+      @click.self="$store.chat.closeAgentConnect()"
+      @keydown.escape.window="$store.chat.closeAgentConnect()"
+    >
+      <div class="modal agent-connect-modal">
+        <button class="modal-close" type="button" @click="$store.chat.closeAgentConnect()">&times;</button>
+        <h2>Agent Connect</h2>
+        <p>Copy an agent package with the v4 guide, live OpenAPI docs, service endpoint, and workspace connection key.</p>
+        <div class="agent-connect-content">
+          <button
+            class="copy-button"
+            type="button"
+            @click="$store.chat.copyAgentConfig()"
+            :class="{ copied: $store.chat.agentConfigCopied }"
+          >
+            <span x-show="!$store.chat.agentConfigCopied">Copy Package</span>
+            <span x-show="$store.chat.agentConfigCopied">Copied!</span>
+          </button>
+          <pre class="agent-config-json"><code x-text="$store.chat.agentConnectJson"></code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="app-layout" x-show="$store.chat.isLoggedIn">
+      <div class="mobile-sidebar-backdrop" x-show="$store.chat.mobileNavOpen" @click="$store.chat.mobileNavOpen = false"></div>
+      <nav class="sidebar" :class="{ 'sidebar-collapsed': $store.chat.navCollapsed, 'sidebar-mobile-open': $store.chat.mobileNavOpen }">
+        <ul class="sidebar-nav">
+          <li :class="{ active: $store.chat.navSection === 'status' }" @click="$store.chat.navigateTo('status')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5"></path>
+                <path d="M10 17a2 2 0 0 0 4 0"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Notifications</span>
+          </li>
+          <li :class="{ active: $store.chat.navSection === 'tasks' }" @click="$store.chat.navigateTo('tasks')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M9 11l2 2 4-4"></path>
+                <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+              </svg>
+            </span>
+            <span class="sidebar-label">Tasks</span>
+          </li>
+          <li :class="{ active: $store.chat.navSection === 'chat' }" @click="$store.chat.navigateTo('chat')" class="sidebar-chat-row">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8Z"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Chat</span>
+            <button type="button" class="sidebar-add-channel-btn" @click.stop="$store.chat.openNewChannelModal()" title="New channel">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+            </button>
+          </li>
+          <template x-if="$store.chat.navSection === 'chat'">
+            <div class="sidebar-channels">
+              <template x-for="ch in $store.chat.channels" :key="ch.record_id">
+                <li class="sidebar-channel-item"
+                  :class="{ active: $store.chat.selectedChannelId === ch.record_id }"
+                  @click="$store.chat.selectChannel(ch.record_id)">
+                  <span class="channel-hash">#</span>
+                  <span class="sidebar-label" x-text="$store.chat.getChannelLabel(ch)"></span>
+                </li>
+              </template>
+            </div>
+          </template>
+          <li :class="{ active: $store.chat.navSection === 'docs' }" @click="$store.chat.navigateTo('docs')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path>
+                <path d="M14 3v5h5"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Docs</span>
+          </li>
+          <li :class="{ active: $store.chat.navSection === 'scopes' }" @click="$store.chat.navigateTo('scopes')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3z"></path>
+                <path d="M14 14h7v7h-7z"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Scopes</span>
+          </li>
+          <li :class="{ active: $store.chat.navSection === 'people' }" @click="$store.chat.navigateTo('people')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9.5" cy="7" r="4"></circle>
+                <path d="M20 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">People</span>
+          </li>
+          <li :class="{ active: $store.chat.navSection === 'settings' }" @click="$store.chat.navigateTo('settings')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6 1.65 1.65 0 0 1-2 0 1.65 1.65 0 0 0-1-.6 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.6-1 1.65 1.65 0 0 1 0-2 1.65 1.65 0 0 0 .6-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-.6 1.65 1.65 0 0 1 2 0 1.65 1.65 0 0 0 1 .6 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.24.31.44.65.6 1 .3.65.3 1.35 0 2-.16.35-.36.69-.6 1Z"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Settings</span>
+          </li>
+        </ul>
+      </nav>
+
+      <div class="main-content">
+        <div x-show="$store.chat.navSection === 'status'" class="status-section">
+          <section class="status-changes-section">
+            <div class="status-changes-header">
+              <h3>Notifications</h3>
+              <div class="status-changes-controls">
+                <select x-model="$store.chat.statusTimeRange" @change="$store.chat.refreshStatusRecentChanges()" aria-label="Recent changes time range">
+                  <option value="1h">Last hour</option>
+                  <option value="2h">Last 2 hours</option>
+                  <option value="4h">Last 4 hours</option>
+                  <option value="24h">Last 24 hours</option>
+                </select>
+              </div>
+            </div>
+            <p class="status-changes-empty" x-show="$store.chat.statusRecentChanges.length === 0">
+              No recent changes in this window.
+            </p>
+            <ul class="status-changes-list" x-show="$store.chat.statusRecentChanges.length > 0">
+              <template x-for="item in $store.chat.statusRecentChanges" :key="item.id">
+                <li>
+                  <button type="button" class="status-change-row" @click="$store.chat.openStatusChange(item)">
+                    <span class="status-change-type" x-text="item.recordType"></span>
+                    <span class="status-change-title" x-text="item.title"></span>
+                    <span class="status-change-subtitle" x-text="item.subtitle"></span>
+                    <span class="status-change-time">
+                      <span x-text="$store.chat.formatRelativeTime(item.updatedAt)"></span>
+                      <span x-text="new Date(item.updatedAt).toLocaleString()"></span>
+                    </span>
+                  </button>
+                </li>
+              </template>
+            </ul>
+          </section>
+        </div>
+
+        <!-- ═══ TASKS SECTION ═══ -->
+        <div x-show="$store.chat.navSection === 'tasks'" class="tasks-section">
+
+          <!-- Task create bar -->
+          <form class="task-create-bar" x-show="!$store.chat.showTaskDetail" @submit.prevent="$store.chat.addTask()">
+            <input
+              class="task-create-input"
+              type="text"
+              x-model="$store.chat.newTaskTitle"
+              placeholder="Add a task..."
+              required
+            />
+            <button type="submit" class="task-create-btn">Add</button>
+          </form>
+
+          <!-- Filters -->
+          <div class="task-filters-bar" x-show="!$store.chat.showTaskDetail">
+            <input
+              type="text"
+              class="task-search-input"
+              x-model="$store.chat.taskFilter"
+              placeholder="Search tasks..."
+            />
+            <template x-if="$store.chat.allTaskTags.length > 0">
+              <div class="task-tag-filters">
+                <template x-for="tag in $store.chat.allTaskTags" :key="tag">
+                  <button
+                    type="button"
+                    class="tag-chip"
+                    :class="{ 'tag-chip-active': $store.chat.taskFilterTags.includes(tag) }"
+                    @click="$store.chat.toggleTaskFilterTag(tag)"
+                    x-text="tag"
+                  ></button>
+                </template>
+                <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter">
+                  <button type="button" class="clear-filters-btn" @click="$store.chat.clearTaskFilters()">Clear</button>
+                </template>
+              </div>
+            </template>
+
+            <div class="board-selector board-selector-inline" @click.outside="$store.chat.closeBoardPicker()">
+              <button
+                type="button"
+                class="board-picker-toggle"
+                @click="$store.chat.toggleBoardPicker()"
+              >
+                <span class="board-picker-label" x-text="$store.chat.selectedBoardLabel"></span>
+                <span class="board-picker-caret">▾</span>
+              </button>
+              <div class="board-picker-popover" x-show="$store.chat.showBoardPicker" x-cloak>
+                <input
+                  class="board-picker-input"
+                  type="text"
+                  x-model="$store.chat.boardPickerQuery"
+                  placeholder="Type to filter boards..."
+                />
+                <div class="board-picker-options" x-show="$store.chat.filteredTaskBoards.length > 0">
+                  <template x-for="board in $store.chat.filteredTaskBoards" :key="board.id ?? '__personal'">
+                    <button
+                      type="button"
+                      class="board-picker-option"
+                      :class="{ 'board-picker-option-active': $store.chat.selectedBoardId === board.id }"
+                      @click="$store.chat.selectBoard(board.id)"
+                      x-text="board.label"
+                    ></button>
+                  </template>
+                </div>
+                <p class="board-picker-empty" x-show="$store.chat.filteredTaskBoards.length === 0">No boards match.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Kanban board -->
+          <div class="kanban-board" x-show="!$store.chat.showTaskDetail">
+            <template x-for="col in $store.chat.boardColumns" :key="col.state">
+              <div class="kanban-column" :class="`kanban-col-${col.state}`">
+                <div class="kanban-column-header">
+                  <span class="kanban-column-title" x-text="col.label"></span>
+                  <span class="kanban-column-count" x-text="col.tasks.length"></span>
+                </div>
+                <div class="kanban-column-body"
+                  @dragover.prevent="col.state !== 'summary' && $store.chat.handleTaskDragOver($event, col.state)"
+                  @dragleave="$store.chat.handleTaskDragLeave($event)"
+                  @drop.prevent="$store.chat.handleTaskDrop($event, col.state)"
+                >
+                  <template x-for="task in col.tasks" :key="task.record_id">
+                    <div
+                      class="kanban-card"
+                      :class="{ 'summary-card': col.state === 'summary' }"
+                      :draggable="col.state !== 'summary'"
+                      @dragstart="col.state !== 'summary' && $store.chat.handleTaskDragStart($event, task.record_id)"
+                      @dragend="$store.chat.handleTaskDragEnd($event)"
+                      @click="$store.chat.handleTaskCardClick(task.record_id)"
+                    >
+                      <span class="kanban-card-title" x-text="task.title"></span>
+                      <template x-if="$store.chat.getTaskTags(task).length > 0">
+                        <div class="task-card-tags">
+                          <template x-for="tag in $store.chat.getTaskTags(task)" :key="`${task.record_id}-${tag}`">
+                            <button
+                              type="button"
+                              class="task-card-tag"
+                              :class="{ 'task-card-tag-active': $store.chat.taskFilterTags.includes(tag) }"
+                              @click.stop="$store.chat.toggleTaskFilterTag(tag)"
+                              x-text="tag"
+                            ></button>
+                          </template>
+                        </div>
+                      </template>
+                      <div class="kanban-card-meta">
+                        <!-- Priority badge -->
+                        <span class="badge" :class="`priority-${task.priority}`" x-text="task.priority" x-show="task.priority && task.priority !== 'sand'"></span>
+                        <!-- Scheduled date -->
+                        <span class="badge badge-date" x-text="task.scheduled_for" x-show="task.scheduled_for"></span>
+                        <!-- Summary card: progress dots -->
+                        <template x-if="col.state === 'summary'">
+                          <div class="summary-meta">
+                            <span class="badge" :class="`state-${$store.chat.computedParentState(task.record_id)}`"
+                              x-text="$store.chat.formatState($store.chat.computedParentState(task.record_id))"></span>
+                            <div class="progress-dots">
+                              <template x-for="st in $store.chat.getSubtasks(task.record_id)" :key="st.record_id">
+                                <span class="progress-dot"
+                                  :style="`background: ${$store.chat.stateColor(st.state)}`"
+                                  :title="st.title + ' (' + $store.chat.formatState(st.state) + ')'"></span>
+                              </template>
+                            </div>
+                            <span class="subtask-count" x-text="$store.chat.getSubtasks(task.record_id).length + ' subtask' + ($store.chat.getSubtasks(task.record_id).length !== 1 ? 's' : '')"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="col.tasks.length === 0 && col.state !== 'summary'">
+                    <div class="kanban-empty">No tasks</div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Task detail panel -->
+          <template x-if="$store.chat.showTaskDetail && $store.chat.editingTask">
+            <div class="task-detail-panel">
+              <div class="task-detail-header">
+                <button type="button" class="task-back-btn" @click="$store.chat.closeTaskDetail()">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                  Back
+                </button>
+                <div class="task-detail-actions">
+                  <button
+                    type="button"
+                    class="task-copy-btn"
+                    @click="$store.chat.copyTaskLink($store.chat.editingTask.record_id)"
+                    x-text="$store.chat.copiedTaskLinkId === $store.chat.editingTask.record_id ? 'Copied link' : 'Copy link'"
+                  ></button>
+                  <button type="button" class="task-delete-btn" @click="if(confirm('Delete this task?')) $store.chat.deleteTask($store.chat.editingTask.record_id)">Delete</button>
+                </div>
+              </div>
+
+              <div class="task-detail-body">
+                <div class="task-detail-main">
+                  <!-- Title -->
+                  <input
+                    class="task-detail-title"
+                    type="text"
+                    x-model="$store.chat.editingTask.title"
+                    @change="$store.chat.saveEditingTask()"
+                    placeholder="Task title"
+                  />
+
+                  <!-- State & Priority row -->
+                  <div class="task-detail-fields">
+                    <div class="task-field">
+                      <label class="task-field-label">Status</label>
+                      <select x-model="$store.chat.editingTask.state" @change="$store.chat.saveEditingTask()">
+                        <option value="new">New</option>
+                        <option value="ready">Ready</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="review">Review</option>
+                        <option value="done">Done</option>
+                        <option value="archive">Archive</option>
+                      </select>
+                    </div>
+                    <div class="task-field">
+                      <label class="task-field-label">Priority</label>
+                      <select x-model="$store.chat.editingTask.priority" @change="$store.chat.saveEditingTask()">
+                        <option value="rock">Rock (High)</option>
+                        <option value="pebble">Pebble (Med)</option>
+                        <option value="sand">Sand (Low)</option>
+                      </select>
+                    </div>
+                    <div class="task-field">
+                      <label class="task-field-label">Scheduled</label>
+                      <input type="date" x-model="$store.chat.editingTask.scheduled_for" @change="$store.chat.saveEditingTask()" />
+                    </div>
+                    <div class="task-field">
+                      <label class="task-field-label">Tags</label>
+                      <input type="text" x-model="$store.chat.editingTask.tags" @change="$store.chat.saveEditingTask()" placeholder="comma,separated" />
+                      <template x-if="$store.chat.getTaskTags($store.chat.editingTask).length > 0">
+                        <div class="task-detail-tags">
+                          <template x-for="tag in $store.chat.getTaskTags($store.chat.editingTask)" :key="`detail-${tag}`">
+                            <span class="task-detail-tag" x-text="tag"></span>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+
+                  <!-- Move to board -->
+                  <div class="task-field">
+                    <label class="task-field-label">Board</label>
+                    <select
+                      :value="$store.chat.editingTask.board_group_id || ''"
+                      @change="$store.chat.moveTaskToBoard($store.chat.editingTask.record_id, $event.target.value || null)"
+                    >
+                      <template x-for="board in $store.chat.taskBoards" :key="board.id ?? '__personal'">
+                        <option :value="board.id || ''" x-text="board.label" :selected="($store.chat.editingTask.board_group_id || null) === board.id"></option>
+                      </template>
+                    </select>
+                  </div>
+
+                  <!-- Scope -->
+                  <div class="task-field" @click.outside="$store.chat.closeScopePicker()">
+                    <label class="task-field-label">Scope</label>
+                    <div class="scope-picker-wrapper">
+                      <template x-if="$store.chat.editingTask.scope_id">
+                        <div class="scope-picker-selected">
+                          <span class="scope-level-badge" :class="{
+                            'scope-badge-product': $store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level === 'product',
+                            'scope-badge-project': $store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level === 'project',
+                            'scope-badge-deliverable': $store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level === 'deliverable'
+                          }" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level)"></span>
+                          <span x-text="$store.chat.getScopeBreadcrumb($store.chat.editingTask.scope_id)"></span>
+                          <button type="button" class="scope-clear-btn" @click="$store.chat.clearTaskScope()" title="Remove scope">x</button>
+                        </div>
+                      </template>
+                      <button type="button" class="scope-picker-toggle" @click="$store.chat.openScopePicker()"
+                        x-text="$store.chat.editingTask.scope_id ? 'Change' : 'Set scope...'"></button>
+                      <div class="scope-picker-popover" x-show="$store.chat.showScopePicker" x-cloak>
+                        <input
+                          type="text"
+                          class="scope-picker-input"
+                          x-model="$store.chat.scopePickerQuery"
+                          placeholder="Search scopes..."
+                          @keydown.escape="$store.chat.closeScopePicker()"
+                        />
+                        <div class="scope-picker-results">
+                          <template x-if="$store.chat.scopePickerResults.product.length > 0">
+                            <div class="scope-picker-group">
+                              <div class="scope-picker-group-label">Product</div>
+                              <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
+                                <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForTask(item.record_id)">
+                                  <span class="scope-level-badge scope-badge-product">Product</span>
+                                  <span x-text="item.title"></span>
+                                </button>
+                              </template>
+                            </div>
+                          </template>
+                          <template x-if="$store.chat.scopePickerResults.project.length > 0">
+                            <div class="scope-picker-group">
+                              <div class="scope-picker-group-label">Project</div>
+                              <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
+                                <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForTask(item.record_id)">
+                                  <span class="scope-level-badge scope-badge-project">Project</span>
+                                  <span x-text="item.title"></span>
+                                  <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                                </button>
+                              </template>
+                            </div>
+                          </template>
+                          <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
+                            <div class="scope-picker-group">
+                              <div class="scope-picker-group-label">Deliverable</div>
+                              <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
+                                <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForTask(item.record_id)">
+                                  <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
+                                  <span x-text="item.title"></span>
+                                  <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                                </button>
+                              </template>
+                            </div>
+                          </template>
+                        </div>
+                        <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">
+                          <p>No scopes found. <a href="/scopes" @click.prevent="$store.chat.navigateTo('scopes')">Create scopes</a> first.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Description -->
+                  <div class="task-field task-field-wide">
+                    <label class="task-field-label">Description</label>
+                    <textarea
+                      x-model="$store.chat.editingTask.description"
+                      @change="$store.chat.saveEditingTask()"
+                      placeholder="Add a description..."
+                      rows="4"
+                    ></textarea>
+                  </div>
+
+                  <!-- Subtasks -->
+                  <div class="subtask-list-field">
+                    <label class="task-field-label">Subtasks</label>
+                    <div class="subtask-list">
+                      <template x-for="st in $store.chat.getSubtasks($store.chat.editingTask.record_id)" :key="st.record_id">
+                        <div class="subtask-row" @click="$store.chat.openTaskDetail(st.record_id)">
+                          <span class="progress-dot" :style="`background: ${$store.chat.stateColor(st.state)}`"></span>
+                          <span class="subtask-title" x-text="st.title"></span>
+                          <span class="badge" :class="`state-${st.state}`" x-text="$store.chat.formatState(st.state)"></span>
+                        </div>
+                      </template>
+                      <template x-if="!$store.chat.editingTask.parent_task_id">
+                        <div class="subtask-add-inline">
+                          <input
+                            type="text"
+                            x-model="$store.chat.newSubtaskTitle"
+                            @keydown.enter.prevent="$store.chat.addSubtask($store.chat.editingTask.record_id)"
+                            placeholder="Add subtask..."
+                          />
+                          <button type="button" @click="$store.chat.addSubtask($store.chat.editingTask.record_id)">+</button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+
+                  <!-- Parent link (if subtask) -->
+                  <template x-if="$store.chat.editingTask.parent_task_id">
+                    <div class="task-parent-link">
+                      <span class="task-field-label">Parent:</span>
+                      <button type="button" class="task-parent-btn"
+                        @click="$store.chat.openTaskDetail($store.chat.editingTask.parent_task_id)"
+                        x-text="($store.chat.tasks.find(t => t.record_id === $store.chat.editingTask.parent_task_id) || {}).title || 'Unknown'">
+                      </button>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Comments section -->
+                <div class="task-comments-section">
+                  <label class="task-field-label">Comments</label>
+                  <div class="task-comment-add">
+                    <textarea
+                      x-model="$store.chat.newTaskCommentBody"
+                      placeholder="Add a comment..."
+                      rows="2"
+                    ></textarea>
+                    <div class="task-comment-actions">
+                      <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('task-comment')">Mic</button>
+                      <button type="button" @click="$store.chat.addTaskComment($store.chat.editingTask.record_id)" :disabled="!$store.chat.newTaskCommentBody.trim() && $store.chat.taskCommentAudioDrafts.length === 0">Post</button>
+                    </div>
+                  </div>
+                  <div class="audio-draft-list" x-show="$store.chat.taskCommentAudioDrafts.length > 0">
+                    <template x-for="draft in $store.chat.taskCommentAudioDrafts" :key="draft.draft_id">
+                      <div class="audio-card audio-card-draft">
+                        <div class="audio-card-main">
+                          <div class="audio-card-title" x-text="draft.title || 'Voice note'"></div>
+                          <div class="audio-card-meta">
+                            <span x-text="draft.duration_seconds ? $store.chat.formatAudioDuration(draft.duration_seconds) : 'Pending'"></span>
+                            <span>Ready to post</span>
+                          </div>
+                        </div>
+                        <button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('task-comment', draft.draft_id)">&times;</button>
+                      </div>
+                    </template>
+                  </div>
+                  <div class="task-comments-list">
+                    <template x-for="comment in $store.chat.taskComments" :key="comment.record_id">
+                      <div class="task-comment-row">
+                        <div class="task-comment-header">
+                          <span class="task-comment-sender" x-text="$store.chat.getSenderName(comment.sender_npub)"></span>
+                          <span class="task-comment-time" x-text="$store.chat.formatRelativeTime(comment.updated_at)"></span>
+                        </div>
+                        <div class="task-comment-body" x-html="$store.chat.renderMarkdown(comment.body)"></div>
+                        <div class="audio-attachment-list" x-show="(comment.attachments || []).length > 0">
+                          <template x-for="attachment in (comment.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
+                            <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
+                              <div class="audio-card-main">
+                                <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
+                                <div class="audio-card-meta">
+                                  <span>Voice note</span>
+                                  <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
+                                </div>
+                              </div>
+                            </button>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                    <template x-if="$store.chat.taskComments.length === 0">
+                      <div class="task-comments-empty">No comments yet.</div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="chat-section" x-show="$store.chat.navSection === 'chat'">
+          <div class="chat-channel-header" x-show="$store.chat.selectedChannelId">
+            <span class="chat-channel-hash">#</span>
+            <span class="chat-channel-name" x-text="$store.chat.getChannelLabel($store.chat.channels.find(c => c.record_id === $store.chat.selectedChannelId))"></span>
+            <details class="chat-channel-menu" @click.outside="$el.open = false">
+              <summary title="Channel options">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="5" r="1"></circle>
+                  <circle cx="12" cy="12" r="1"></circle>
+                  <circle cx="12" cy="19" r="1"></circle>
+                </svg>
+              </summary>
+              <div class="chat-channel-menu-popover">
+                <button type="button" @click="$store.chat.openChannelSettings(); $event.target.closest('details').open = false">Channel settings</button>
+              </div>
+            </details>
+          </div>
+
+          <div class="chat-layout" :class="{ 'chat-layout-thread-full': $store.chat.activeThreadId && $store.chat.threadSize === 'full' }">
+            <div class="chat-main">
+              <div class="chat-feed">
+                <template x-if="!$store.chat.selectedChannelId">
+                  <div class="chat-empty">Select or create a channel to start chatting.</div>
+                </template>
+
+                <template x-if="$store.chat.selectedChannelId && $store.chat.mainFeedMessages.length === 0">
+                  <div class="chat-empty">No messages yet. Start a conversation!</div>
+                </template>
+
+                <template x-for="msg in $store.chat.mainFeedMessages" :key="msg.record_id">
+                  <div class="chat-post" :class="{ 'chat-post-focused': $store.chat.isFocusedMessage(msg.record_id) }">
+                    <span
+                      class="chat-status-dot"
+                      :class="msg.sync_status === 'synced' ? 'chat-status-dot-synced' : msg.sync_status === 'failed' ? 'chat-status-dot-failed' : 'chat-status-dot-pending'"
+                      :title="msg.sync_status === 'synced' ? 'Synced' : msg.sync_status === 'failed' ? 'Sync failed' : 'Pending sync'"
+                    ></span>
+                    <div class="chat-post-header">
+                      <template x-if="$store.chat.getSenderAvatar(msg.sender_npub)">
+                        <img class="chat-post-avatar" :src="$store.chat.getSenderAvatar(msg.sender_npub)" alt="Profile picture" />
+                      </template>
+                      <template x-if="!$store.chat.getSenderAvatar(msg.sender_npub)">
+                        <div class="chat-post-avatar chat-post-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(msg.sender_npub))"></div>
+                      </template>
+                      <span class="chat-post-sender" x-text="$store.chat.getSenderName(msg.sender_npub)"></span>
+                      <span class="chat-post-time" x-text="new Date(msg.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })"></span>
+                    </div>
+                    <div class="chat-post-content">
+                      <p x-text="msg.body"></p>
+                    </div>
+                    <div class="audio-attachment-list" x-show="(msg.attachments || []).length > 0">
+                      <template x-for="attachment in (msg.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
+                        <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
+                          <div class="audio-card-main">
+                            <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
+                            <div class="audio-card-meta">
+                              <span>Voice note</span>
+                              <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
+                            </div>
+                          </div>
+                        </button>
+                      </template>
+                    </div>
+                    <template x-if="$store.chat.getThreadReplyCount(msg.record_id) > 0">
+                      <div class="chat-thread-preview" @click="$store.chat.openThread(msg.record_id)">
+                        <span class="chat-thread-preview-count" x-text="$store.chat.getThreadReplyCount(msg.record_id) + ' replies'"></span>
+                        <span class="chat-thread-preview-link">view thread</span>
+                      </div>
+                    </template>
+                    <div class="chat-post-reply-bar" @click="$store.chat.openThread(msg.record_id)">
+                      <span class="chat-post-reply-placeholder">Reply in thread...</span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+
+              <div class="chat-input-bar">
+                <textarea
+                  class="chat-input"
+                  placeholder="Message channel"
+                  x-model="$store.chat.messageInput"
+                  @keydown.enter.prevent="if (!$event.shiftKey) $store.chat.sendMessage()"
+                ></textarea>
+                <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('chat')">Mic</button>
+                <button class="chat-send-btn-text" @click="$store.chat.sendMessage()" :disabled="!$store.chat.messageInput.trim() && $store.chat.messageAudioDrafts.length === 0">Send</button>
+              </div>
+              <div class="audio-draft-list" x-show="$store.chat.messageAudioDrafts.length > 0">
+                <template x-for="draft in $store.chat.messageAudioDrafts" :key="draft.draft_id">
+                  <div class="audio-card audio-card-draft">
+                    <div class="audio-card-main">
+                      <div class="audio-card-title" x-text="draft.title || 'Voice note'"></div>
+                      <div class="audio-card-meta">
+                        <span x-text="draft.duration_seconds ? $store.chat.formatAudioDuration(draft.duration_seconds) : 'Pending'"></span>
+                        <span>Ready to send</span>
+                      </div>
+                    </div>
+                    <button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('chat', draft.draft_id)">&times;</button>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div class="chat-thread-panel" x-show="$store.chat.activeThreadId" x-transition :class="'thread-' + $store.chat.threadSize">
+              <div class="thread-header">
+                <h3>Thread</h3>
+                <div class="thread-header-actions">
+                  <button class="thread-delete-btn" @click="$store.chat.deleteActiveThread()" type="button" title="Delete thread">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                  </button>
+                  <button class="thread-resize-btn" @click="$store.chat.cycleThreadSize()" type="button"
+                    :title="$store.chat.threadSize === 'default' ? 'Expand thread' : $store.chat.threadSize === 'wide' ? 'Full screen' : 'Collapse'">
+                    <svg x-show="$store.chat.threadSize === 'default'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                    <svg x-show="$store.chat.threadSize === 'wide'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                    <svg x-show="$store.chat.threadSize === 'full'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                  </button>
+                  <button class="thread-close-btn" @click="$store.chat.closeThread()" type="button">&times;</button>
+                </div>
+              </div>
+
+              <div class="thread-replies">
+                <template x-if="$store.chat.getThreadParentMessage()">
+                  <div class="thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage($store.chat.getThreadParentMessage()?.record_id) }">
+                    <span
+                      class="thread-status-dot"
+                      :class="$store.chat.getThreadParentMessage()?.sync_status === 'synced' ? 'thread-status-dot-synced' : $store.chat.getThreadParentMessage()?.sync_status === 'failed' ? 'thread-status-dot-failed' : 'thread-status-dot-pending'"
+                      :title="$store.chat.getThreadParentMessage()?.sync_status === 'synced' ? 'Synced' : $store.chat.getThreadParentMessage()?.sync_status === 'failed' ? 'Sync failed' : 'Pending sync'"
+                    ></span>
+                    <template x-if="$store.chat.getSenderAvatar($store.chat.getThreadParentMessage()?.sender_npub)">
+                      <img class="thread-avatar" :src="$store.chat.getSenderAvatar($store.chat.getThreadParentMessage()?.sender_npub)" alt="Profile picture" />
+                    </template>
+                    <template x-if="!$store.chat.getSenderAvatar($store.chat.getThreadParentMessage()?.sender_npub)">
+                      <div class="thread-avatar thread-avatar-fallback"
+                        x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.getThreadParentMessage()?.sender_npub))"></div>
+                    </template>
+                    <div class="thread-msg-body">
+                      <div class="thread-msg-header">
+                        <span class="chat-sender" x-text="$store.chat.getSenderName($store.chat.getThreadParentMessage()?.sender_npub)"></span>
+                        <span class="chat-time" x-text="new Date($store.chat.getThreadParentMessage()?.updated_at || '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })"></span>
+                      </div>
+                      <div class="thread-msg-text">
+                        <p x-text="$store.chat.getThreadParentMessage()?.body"></p>
+                      </div>
+                      <div class="audio-attachment-list" x-show="($store.chat.getThreadParentMessage()?.attachments || []).length > 0">
+                        <template x-for="attachment in ($store.chat.getThreadParentMessage()?.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
+                          <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
+                            <div class="audio-card-main">
+                              <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
+                              <div class="audio-card-meta">
+                                <span>Voice note</span>
+                                <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
+                              </div>
+                            </div>
+                          </button>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <template x-for="reply in $store.chat.threadMessages" :key="reply.record_id">
+                  <div class="thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage(reply.record_id) }">
+                    <span
+                      class="thread-status-dot"
+                      :class="reply.sync_status === 'synced' ? 'thread-status-dot-synced' : reply.sync_status === 'failed' ? 'thread-status-dot-failed' : 'thread-status-dot-pending'"
+                      :title="reply.sync_status === 'synced' ? 'Synced' : reply.sync_status === 'failed' ? 'Sync failed' : 'Pending sync'"
+                    ></span>
+                    <template x-if="$store.chat.getSenderAvatar(reply.sender_npub)">
+                      <img class="thread-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="Profile picture" />
+                    </template>
+                    <template x-if="!$store.chat.getSenderAvatar(reply.sender_npub)">
+                      <div class="thread-avatar thread-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(reply.sender_npub))"></div>
+                    </template>
+                    <div class="thread-msg-body">
+                      <div class="thread-msg-header">
+                        <span class="chat-sender" x-text="$store.chat.getSenderName(reply.sender_npub)"></span>
+                        <span class="chat-time" x-text="new Date(reply.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })"></span>
+                      </div>
+                      <div class="thread-msg-text">
+                        <p x-text="reply.body"></p>
+                      </div>
+                      <div class="audio-attachment-list" x-show="(reply.attachments || []).length > 0">
+                        <template x-for="attachment in (reply.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
+                          <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
+                            <div class="audio-card-main">
+                              <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
+                              <div class="audio-card-meta">
+                                <span>Voice note</span>
+                                <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
+                              </div>
+                            </div>
+                          </button>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+
+              <div class="thread-input-bar">
+                <textarea
+                  class="chat-input"
+                  placeholder="Reply to thread..."
+                  x-model="$store.chat.threadInput"
+                  @keydown.enter.prevent="if (!$event.shiftKey) $store.chat.sendThreadReply()"
+                ></textarea>
+                <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('thread')">Mic</button>
+                <button class="thread-reply-btn" @click="$store.chat.sendThreadReply()" :disabled="!$store.chat.threadInput.trim() && $store.chat.threadAudioDrafts.length === 0">Reply</button>
+              </div>
+              <div class="audio-draft-list" x-show="$store.chat.threadAudioDrafts.length > 0">
+                <template x-for="draft in $store.chat.threadAudioDrafts" :key="draft.draft_id">
+                  <div class="audio-card audio-card-draft">
+                    <div class="audio-card-main">
+                      <div class="audio-card-title" x-text="draft.title || 'Voice note'"></div>
+                      <div class="audio-card-meta">
+                        <span x-text="draft.duration_seconds ? $store.chat.formatAudioDuration(draft.duration_seconds) : 'Pending'"></span>
+                        <span>Ready to reply</span>
+                      </div>
+                    </div>
+                    <button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('thread', draft.draft_id)">&times;</button>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div x-show="$store.chat.navSection === 'docs'" class="docs-section">
+          <div class="docs-view">
+            <div class="docs-toolbar" x-show="!$store.chat.docsEditorOpen">
+              <input class="docs-search-input" type="text" placeholder="Search docs and folders" x-model="$store.chat.docFilter" />
+              <button type="button" class="btn-add-folder" @click="$store.chat.openNewDocModal('folder')" title="New folder" aria-label="New folder">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                  <path d="M12 11v6"></path>
+                  <path d="M9 14h6"></path>
+                </svg>
+              </button>
+              <button type="button" class="btn-add-doc" @click="$store.chat.openNewDocModal('doc')" title="New document" aria-label="New document">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path>
+                  <path d="M14 3v5h5"></path>
+                  <path d="M12 11v6"></path>
+                  <path d="M9 14h6"></path>
+                </svg>
+              </button>
+            </div>
+
+            <template x-if="!$store.chat.docsEditorOpen">
+              <div class="docs-browser-shell">
+                <div class="folder-breadcrumbs">
+                  <span class="breadcrumb-item breadcrumb-link" @click="$store.chat.navigateToFolder(null)">Docs</span>
+                  <template x-for="folder in $store.chat.currentFolderBreadcrumbs" :key="folder.record_id">
+                    <span>
+                      <span class="breadcrumb-sep">/</span>
+                      <span class="breadcrumb-item breadcrumb-link" x-text="folder.title" @click="$store.chat.navigateToFolder(folder.record_id)"></span>
+                    </span>
+                  </template>
+                </div>
+
+                <ul class="doc-items">
+                  <template x-for="row in ($store.chat.filteredDocBrowserItems || [])" :key="row.type + ':' + row.item.record_id">
+                    <li
+                      class="doc-item"
+                      :class="{ 'doc-item-folder': row.type === 'directory' }"
+                      @click="$store.chat.selectDocItem(row.type, row.item.record_id)"
+                    >
+                      <span class="doc-item-icon">
+                        <template x-if="row.type === 'directory'">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                          </svg>
+                        </template>
+                        <template x-if="row.type !== 'directory'">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path>
+                            <path d="M14 3v5h5"></path>
+                          </svg>
+                        </template>
+                      </span>
+                      <span class="doc-item-title" x-text="row.item.title || (row.type === 'directory' ? 'Untitled folder' : 'Untitled document')"></span>
+                      <div class="doc-item-meta">
+                        <span class="doc-shared-pill" x-show="(row.item.shares || []).length > 0">Shared</span>
+                      </div>
+                    </li>
+                  </template>
+                </ul>
+
+                <div class="docs-empty-panel" x-show="($store.chat.filteredDocBrowserItems || []).length === 0">
+                  <h2>Docs</h2>
+                  <p>No documents or folders here yet.</p>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="$store.chat.docsEditorOpen">
+              <section class="docs-editor-v3">
+                <div class="doc-editor-header">
+                  <div class="doc-editor-primary">
+                    <div class="folder-breadcrumbs doc-editor-breadcrumbs">
+                      <span class="breadcrumb-item breadcrumb-link" @click="$store.chat.closeDocEditor()">Docs</span>
+                      <template x-for="folder in $store.chat.currentFolderBreadcrumbs" :key="folder.record_id">
+                        <span>
+                          <span class="breadcrumb-sep">/</span>
+                          <span class="breadcrumb-item breadcrumb-link" x-text="folder.title" @click="$store.chat.navigateToFolder(folder.record_id)"></span>
+                        </span>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="doc-editor-actions">
+                    <span class="doc-sync-indicator" :title="$store.chat.docSyncStatusLabel">
+                      <span class="doc-sync-dot" :class="$store.chat.docSyncStatusClass"></span>
+                    </span>
+                    <button
+                      type="button"
+                      class="doc-icon-btn doc-mode-btn"
+                      :title="$store.chat.docEditorMode === 'preview' ? 'Preview mode' : ($store.chat.docEditorMode === 'block' ? 'Block edit mode' : 'Source mode')"
+                      :aria-label="$store.chat.docEditorMode === 'preview' ? 'Preview mode' : ($store.chat.docEditorMode === 'block' ? 'Block edit mode' : 'Source mode')"
+                      @click="$store.chat.toggleDocEditorMode()"
+                    >
+                      <span class="doc-code-toggle" x-text="$store.chat.docEditorMode === 'preview' ? 'Preview' : ($store.chat.docEditorMode === 'block' ? 'Edit' : 'Source')"></span>
+                    </button>
+                    <button
+                      type="button"
+                      class="doc-icon-btn"
+                      title="Share"
+                      aria-label="Share"
+                      @click="$store.chat.openDocShareModal()"
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="18" cy="5" r="3"></circle>
+                        <circle cx="6" cy="12" r="3"></circle>
+                        <circle cx="18" cy="19" r="3"></circle>
+                        <path d="M8.6 13.5l6.8 4"></path>
+                        <path d="M15.4 6.5l-6.8 4"></path>
+                      </svg>
+                    </button>
+                    <details class="doc-actions-menu">
+                      <summary title="More actions" aria-label="More actions">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                          <circle cx="12" cy="5" r="1.8"></circle>
+                          <circle cx="12" cy="12" r="1.8"></circle>
+                          <circle cx="12" cy="19" r="1.8"></circle>
+                        </svg>
+                      </summary>
+                      <div class="doc-actions-popover">
+                        <button type="button" @click="$store.chat.toggleDocCommentsVisible()">
+                          <span x-text="$store.chat.docCommentsVisible ? 'Hide comments' : 'Show comments'"></span>
+                        </button>
+                        <button type="button" class="doc-actions-delete" @click="$store.chat.deleteSelectedDocItem()">Delete document</button>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+
+                <div class="doc-title-block">
+                  <template x-if="!$store.chat.docEditingTitle">
+                    <h1 class="doc-title-display" x-text="$store.chat.docEditorTitle || 'Untitled document'" @click="$store.chat.startDocTitleEdit()"></h1>
+                  </template>
+                  <template x-if="$store.chat.docEditingTitle">
+                    <input class="doc-title-input" type="text" x-model="$store.chat.docEditorTitle" @blur="$store.chat.finishDocTitleEdit()" @keydown.enter.prevent="$store.chat.finishDocTitleEdit()" />
+                  </template>
+                </div>
+
+                <!-- Doc scope picker -->
+                <div class="doc-scope-row" @click.outside="$store.chat.closeScopePicker()">
+                  <span class="task-field-label">Scope</span>
+                  <div class="scope-picker-wrapper">
+                    <template x-if="$store.chat.selectedDocument?.scope_id">
+                      <div class="scope-picker-selected">
+                        <span class="scope-level-badge" :class="{
+                          'scope-badge-product': $store.chat.scopesMap.get($store.chat.selectedDocument.scope_id)?.level === 'product',
+                          'scope-badge-project': $store.chat.scopesMap.get($store.chat.selectedDocument.scope_id)?.level === 'project',
+                          'scope-badge-deliverable': $store.chat.scopesMap.get($store.chat.selectedDocument.scope_id)?.level === 'deliverable'
+                        }" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.selectedDocument.scope_id)?.level)"></span>
+                        <span x-text="$store.chat.getScopeBreadcrumb($store.chat.selectedDocument.scope_id)"></span>
+                        <button type="button" class="scope-clear-btn" @click="$store.chat.clearDocScope()" title="Remove scope">x</button>
+                      </div>
+                    </template>
+                    <button type="button" class="scope-picker-toggle" @click="$store.chat.openScopePicker()"
+                      x-text="$store.chat.selectedDocument?.scope_id ? 'Change' : 'Set scope...'"></button>
+                    <div class="scope-picker-popover" x-show="$store.chat.showScopePicker" x-cloak>
+                      <input type="text" class="scope-picker-input" x-model="$store.chat.scopePickerQuery" placeholder="Search scopes..." @keydown.escape="$store.chat.closeScopePicker()" />
+                      <div class="scope-picker-results">
+                        <template x-if="$store.chat.scopePickerResults.product.length > 0">
+                          <div class="scope-picker-group">
+                            <div class="scope-picker-group-label">Product</div>
+                            <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
+                              <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDoc(item.record_id)">
+                                <span class="scope-level-badge scope-badge-product">Product</span>
+                                <span x-text="item.title"></span>
+                              </button>
+                            </template>
+                          </div>
+                        </template>
+                        <template x-if="$store.chat.scopePickerResults.project.length > 0">
+                          <div class="scope-picker-group">
+                            <div class="scope-picker-group-label">Project</div>
+                            <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
+                              <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDoc(item.record_id)">
+                                <span class="scope-level-badge scope-badge-project">Project</span>
+                                <span x-text="item.title"></span>
+                                <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                              </button>
+                            </template>
+                          </div>
+                        </template>
+                        <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
+                          <div class="scope-picker-group">
+                            <div class="scope-picker-group-label">Deliverable</div>
+                            <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
+                              <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDoc(item.record_id)">
+                                <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
+                                <span x-text="item.title"></span>
+                                <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                              </button>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
+                      <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">
+                        <p>No scopes found. <a href="/scopes" @click.prevent="$store.chat.navigateTo('scopes')">Create scopes</a> first.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="doc-content-block">
+                  <template x-if="$store.chat.docEditorMode !== 'source'">
+                    <div
+                      class="doc-content-layout"
+                      data-doc-content-layout
+                      :class="{ 'doc-content-layout-with-thread': $store.chat.docCommentsVisible && $store.chat.selectedDocComment }"
+                    >
+                      <svg class="doc-comment-connector" x-show="$store.chat.hasDocCommentConnector" x-cloak>
+                        <path
+                          :d="$store.chat.docCommentConnector.path"
+                        ></path>
+                      </svg>
+                      <div class="doc-preview-surface">
+                        <template x-if="!$store.chat.docEditorHasBlocks">
+                          <div class="doc-block doc-block-placeholder" @click="$store.chat.appendDocBlock()">
+                            <div class="doc-placeholder">Start writing…</div>
+                          </div>
+                        </template>
+                        <template x-for="(block, index) in $store.chat.docEditorBlocks" :key="block.id || index">
+                          <div class="doc-block-row" :class="{ 'doc-block-row-selected': $store.chat.blockHasSelectedDocComment(block) }">
+                            <template x-if="$store.chat.docEditingBlockIndex !== index">
+                              <div class="doc-block-main">
+                                <div class="doc-block" @click="$store.chat.startDocBlockEdit(index)">
+                                  <div class="doc-block-rendered" x-html="$store.chat.renderMarkdown(block.raw)"></div>
+                                </div>
+                              </div>
+                            </template>
+                            <template x-if="$store.chat.docEditingBlockIndex === index">
+                              <div class="doc-block-main">
+                                <div class="doc-block doc-block-active">
+                                  <textarea
+                                    class="doc-block-editor"
+                                    x-model="$store.chat.docBlockBuffer"
+                                    @input="$store.chat.updateDocBlockBuffer($event.target.value)"
+                                    @blur="$store.chat.commitDocBlockEdit()"
+                                    @keydown.escape.prevent="$store.chat.cancelDocBlockEdit()"
+                                    @keydown.meta.enter.prevent="$store.chat.commitDocBlockEdit()"
+                                    @keydown.ctrl.enter.prevent="$store.chat.commitDocBlockEdit()"
+                                  ></textarea>
+                                </div>
+                              </div>
+                            </template>
+                            <aside class="doc-block-gutter" x-show="$store.chat.docCommentsVisible" @click.stop>
+                              <button
+                                type="button"
+                                class="doc-comment-trigger"
+                                :data-doc-anchor-line="block.start_line || 1"
+                                :class="{
+                                  'doc-comment-trigger-open': $store.chat.getDocBlockCommentState(block) === 'open',
+                                  'doc-comment-trigger-resolved': $store.chat.getDocBlockCommentState(block) === 'resolved',
+                                  'doc-comment-trigger-selected': $store.chat.blockHasSelectedDocComment(block)
+                                }"
+                                :title="$store.chat.getDocCommentsForBlock(block).length > 0 ? `Open comment thread on line ${block.start_line || 1}` : `Comment on line ${block.start_line || 1}`"
+                                :aria-label="$store.chat.getDocCommentsForBlock(block).length > 0 ? `Open comment thread on line ${block.start_line || 1}` : `Comment on line ${block.start_line || 1}`"
+                                @click.stop="$store.chat.getDocCommentsForBlock(block).length > 0 ? $store.chat.selectDocCommentThread($store.chat.getDocCommentsForBlock(block)[0].record_id) : $store.chat.openDocCommentModal(block)"
+                              >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                              </button>
+                              <span class="doc-comment-count" x-show="$store.chat.getDocBlockCommentCount(block) > 0" x-text="$store.chat.getDocBlockCommentCount(block)"></span>
+                            </aside>
+                          </div>
+                        </template>
+                        <div class="doc-block-add" x-show="$store.chat.docEditorMode === 'block'" @click="$store.chat.appendDocBlock()">+ Add block</div>
+                      </div>
+
+                      <aside class="doc-comment-thread-panel" data-doc-thread-panel x-show="$store.chat.docCommentsVisible && $store.chat.selectedDocComment">
+                        <div class="doc-comment-thread-header">
+                          <div>
+                            <h3>Comment thread</h3>
+                            <small x-text="`Line ${$store.chat.selectedDocComment?.anchor_line_number || 1}`"></small>
+                          </div>
+                          <div class="doc-comment-thread-actions">
+                            <button
+                              type="button"
+                              class="doc-thread-icon-btn"
+                              :title="$store.chat.selectedDocComment?.comment_status === 'resolved' ? 'Reopen comment' : 'Resolve comment'"
+                              @click="$store.chat.setDocCommentStatus($store.chat.selectedDocComment.record_id, $store.chat.selectedDocComment.comment_status === 'resolved' ? 'open' : 'resolved')"
+                            >
+                              <span class="doc-thread-icon-glyph" aria-hidden="true">✓</span>
+                            </button>
+                            <button type="button" class="doc-thread-icon-btn" title="Close thread" @click="$store.chat.closeDocCommentThread()">
+                              <span class="doc-thread-icon-glyph" aria-hidden="true">×</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="doc-thread-list">
+                          <div class="doc-thread-entry doc-thread-entry-root">
+                            <div class="doc-thread-entry-header">
+                              <template x-if="$store.chat.getSenderAvatar($store.chat.selectedDocComment?.sender_npub)">
+                                <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar($store.chat.selectedDocComment?.sender_npub)" alt="Profile picture" />
+                              </template>
+                              <template x-if="!$store.chat.getSenderAvatar($store.chat.selectedDocComment?.sender_npub)">
+                                <span class="doc-comment-avatar doc-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.selectedDocComment?.sender_npub))"></span>
+                              </template>
+                              <div class="doc-comment-chip-meta">
+                                <span class="doc-comment-author" x-text="$store.chat.getSenderName($store.chat.selectedDocComment?.sender_npub)"></span>
+                                <span class="doc-comment-time" x-text="$store.chat.formatRelativeTime($store.chat.selectedDocComment?.updated_at)"></span>
+                              </div>
+                              <span class="doc-thread-status-badge" :class="{ 'doc-thread-status-badge-resolved': $store.chat.selectedDocComment?.comment_status === 'resolved' }" x-text="$store.chat.selectedDocComment?.comment_status === 'resolved' ? 'Done' : 'Open'"></span>
+                            </div>
+                            <div class="doc-thread-entry-body" x-html="$store.chat.renderMarkdown($store.chat.selectedDocComment?.body || '')"></div>
+                            <div class="audio-attachment-list" x-show="($store.chat.selectedDocComment?.attachments || []).length > 0">
+                              <template x-for="attachment in ($store.chat.selectedDocComment?.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
+                                <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
+                                  <div class="audio-card-main">
+                                    <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
+                                    <div class="audio-card-meta">
+                                      <span>Voice note</span>
+                                      <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
+                                    </div>
+                                  </div>
+                                </button>
+                              </template>
+                            </div>
+                          </div>
+
+                          <template x-for="reply in $store.chat.selectedDocCommentReplies" :key="reply.record_id">
+                            <div class="doc-thread-entry">
+                              <div class="doc-thread-entry-header">
+                                <template x-if="$store.chat.getSenderAvatar(reply.sender_npub)">
+                                  <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="Profile picture" />
+                                </template>
+                                <template x-if="!$store.chat.getSenderAvatar(reply.sender_npub)">
+                                  <span class="doc-comment-avatar doc-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(reply.sender_npub))"></span>
+                                </template>
+                                <div class="doc-comment-chip-meta">
+                                  <span class="doc-comment-author" x-text="$store.chat.getSenderName(reply.sender_npub)"></span>
+                                  <span class="doc-comment-time" x-text="$store.chat.formatRelativeTime(reply.updated_at)"></span>
+                                </div>
+                              </div>
+                              <div class="doc-thread-entry-body" x-html="$store.chat.renderMarkdown(reply.body)"></div>
+                              <div class="audio-attachment-list" x-show="(reply.attachments || []).length > 0">
+                                <template x-for="attachment in (reply.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
+                                  <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
+                                    <div class="audio-card-main">
+                                      <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
+                                      <div class="audio-card-meta">
+                                        <span>Voice note</span>
+                                        <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
+                                      </div>
+                                    </div>
+                                  </button>
+                                </template>
+                              </div>
+                            </div>
+                          </template>
+                        </div>
+
+                        <div class="doc-thread-reply">
+                          <textarea
+                            class="doc-thread-reply-input"
+                            rows="3"
+                            placeholder="Reply in thread..."
+                            x-model="$store.chat.newDocCommentReplyBody"
+                            @keydown.meta.enter.prevent="$store.chat.addDocCommentReply()"
+                            @keydown.ctrl.enter.prevent="$store.chat.addDocCommentReply()"
+                          ></textarea>
+                          <div class="doc-thread-reply-actions">
+                            <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-reply')">Mic</button>
+                            <button type="button" class="doc-thread-reply-btn" @click="$store.chat.addDocCommentReply()" :disabled="!$store.chat.newDocCommentReplyBody.trim() && $store.chat.docCommentReplyAudioDrafts.length === 0">Reply</button>
+                          </div>
+                          <div class="audio-draft-list" x-show="$store.chat.docCommentReplyAudioDrafts.length > 0">
+                            <template x-for="draft in $store.chat.docCommentReplyAudioDrafts" :key="draft.draft_id">
+                              <div class="audio-card audio-card-draft">
+                                <div class="audio-card-main">
+                                  <div class="audio-card-title" x-text="draft.title || 'Voice note'"></div>
+                                  <div class="audio-card-meta">
+                                    <span x-text="draft.duration_seconds ? $store.chat.formatAudioDuration(draft.duration_seconds) : 'Pending'"></span>
+                                    <span>Ready to reply</span>
+                                  </div>
+                                </div>
+                                <button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('doc-reply', draft.draft_id)">&times;</button>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                      </aside>
+                    </div>
+                  </template>
+                  <template x-if="$store.chat.docEditorMode === 'source'">
+                    <textarea class="doc-source-editor" placeholder="Start writing..." x-model="$store.chat.docEditorContent" @input="$store.chat.handleDocSourceInput($event.target.value)"></textarea>
+                  </template>
+                </div>
+              </section>
+            </template>
+          </div>
+
+          <div class="doc-modal-backdrop" x-show="$store.chat.showDocShareModal" x-cloak @click.self="$store.chat.closeDocShareModal()">
+            <div class="doc-modal-card doc-share-modal">
+              <button class="modal-close" type="button" @click="$store.chat.closeDocShareModal()">&times;</button>
+              <h3>Sharing</h3>
+              <input class="docs-share-input" type="text" placeholder="Share with a person or group" x-model="$store.chat.docShareQuery" />
+              <ul class="docs-share-suggestions" x-show="$store.chat.docShareSuggestions.length > 0">
+                <template x-for="suggestion in $store.chat.docShareSuggestions" :key="suggestion.key">
+                  <li>
+                    <button type="button" class="docs-share-suggestion" @click="$store.chat.addDocShareFromSuggestion(suggestion)">
+                      <template x-if="suggestion.type === 'person' && suggestion.avatarUrl">
+                        <img class="chat-post-avatar" :src="suggestion.avatarUrl" alt="Profile picture" />
+                      </template>
+                      <template x-if="suggestion.type === 'person' && !suggestion.avatarUrl">
+                        <span class="avatar-fallback" x-text="$store.chat.getInitials(suggestion.label)"></span>
+                      </template>
+                      <div class="docs-share-suggestion-copy">
+                        <span x-text="suggestion.label"></span>
+                        <small x-text="suggestion.subtitle"></small>
+                      </div>
+                    </button>
+                  </li>
+                </template>
+              </ul>
+
+              <p class="docs-browser-empty" x-show="$store.chat.docEditorShares.length === 0">
+                Private to you until you add a share target.
+              </p>
+              <ul class="docs-share-list" x-show="$store.chat.docEditorShares.length > 0">
+                <template x-for="share in $store.chat.docEditorShares" :key="share.key">
+                  <li class="docs-share-row">
+                    <div class="docs-share-row-main">
+                      <template x-if="$store.chat.getDocShareAvatar(share)">
+                        <img class="docs-share-row-avatar" :src="$store.chat.getDocShareAvatar(share)" alt="Profile picture" />
+                      </template>
+                      <template x-if="!$store.chat.getDocShareAvatar(share)">
+                        <span class="docs-share-row-avatar docs-share-row-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getDocShareTitle(share))"></span>
+                      </template>
+                      <div class="docs-share-row-copy">
+                      <span class="docs-share-row-title">
+                        <span x-text="$store.chat.getDocShareTitle(share)"></span>
+                        <span class="docs-share-badge" x-show="$store.chat.isInheritedDocShare(share)">Inherited</span>
+                      </span>
+                      <small x-text="$store.chat.getDocShareSubtitle(share)"></small>
+                      </div>
+                    </div>
+                    <select :value="share.access" :disabled="$store.chat.isInheritedDocShare(share)" @change="$store.chat.updateDocShareAccess(share.key, $event.target.value)">
+                      <option value="read">Read</option>
+                      <option value="write">Write</option>
+                    </select>
+                    <button type="button" :disabled="$store.chat.isInheritedDocShare(share)" @click="$store.chat.removeDocShare(share.key)">Remove</button>
+                  </li>
+                </template>
+              </ul>
+            </div>
+          </div>
+
+          <div class="doc-modal-backdrop" x-show="$store.chat.showDocCommentModal" x-cloak @click.self="$store.chat.closeDocCommentModal()">
+            <div class="doc-modal-card doc-comment-modal">
+              <button class="modal-close" type="button" @click="$store.chat.closeDocCommentModal()">&times;</button>
+              <h3>Add comment</h3>
+              <p class="doc-comment-modal-copy" x-text="`This comment will attach to line ${$store.chat.docCommentAnchorLine || 1}.`"></p>
+              <textarea
+                class="doc-comment-modal-input"
+                rows="4"
+                placeholder="Write a comment..."
+                x-model="$store.chat.newDocCommentBody"
+                @keydown.meta.enter.prevent="$store.chat.addDocComment()"
+                @keydown.ctrl.enter.prevent="$store.chat.addDocComment()"
+              ></textarea>
+              <div class="audio-draft-list" x-show="$store.chat.docCommentAudioDrafts.length > 0">
+                <template x-for="draft in $store.chat.docCommentAudioDrafts" :key="draft.draft_id">
+                  <div class="audio-card audio-card-draft">
+                    <div class="audio-card-main">
+                      <div class="audio-card-title" x-text="draft.title || 'Voice note'"></div>
+                      <div class="audio-card-meta">
+                        <span x-text="draft.duration_seconds ? $store.chat.formatAudioDuration(draft.duration_seconds) : 'Pending'"></span>
+                        <span>Ready to post</span>
+                      </div>
+                    </div>
+                    <button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('doc-comment', draft.draft_id)">&times;</button>
+                  </div>
+                </template>
+              </div>
+              <div class="new-doc-modal-actions">
+                <button type="button" class="btn-cancel" @click="$store.chat.closeDocCommentModal()">Cancel</button>
+                <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-comment')">Mic</button>
+                <button type="button" class="btn-confirm" @click="$store.chat.addDocComment()" :disabled="!$store.chat.newDocCommentBody.trim() && $store.chat.docCommentAudioDrafts.length === 0">Post comment</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="doc-modal-backdrop" x-show="$store.chat.newDocModalType" x-cloak>
+            <div class="doc-modal-card new-doc-modal">
+              <h3 x-text="$store.chat.newDocModalType === 'folder' ? 'New folder' : 'New document'"></h3>
+              <input
+                class="new-doc-modal-input"
+                type="text"
+                :placeholder="$store.chat.newDocModalType === 'folder' ? 'Folder name' : 'Document title'"
+                x-model="$store.chat.newDocModalTitle"
+                @keydown.enter.prevent="$store.chat.confirmNewDocModal()"
+              />
+              <div class="new-doc-modal-actions">
+                <button type="button" class="btn-cancel" :disabled="$store.chat.newDocModalSubmitting" @click="$store.chat.closeNewDocModal()">Cancel</button>
+                <button type="button" class="btn-confirm" :disabled="$store.chat.newDocModalSubmitting" @click="$store.chat.confirmNewDocModal()" x-text="$store.chat.newDocModalSubmitting ? 'Creating…' : 'Create'"></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scopes page -->
+        <div x-show="$store.chat.navSection === 'scopes'" class="scopes-section">
+          <div class="scopes-header">
+            <h2>Scopes</h2>
+            <p class="scopes-subtitle">Organize work into Products, Projects, and Deliverables.</p>
+          </div>
+
+          <!-- New scope form -->
+          <div class="scope-create-bar">
+            <template x-if="!$store.chat.showNewScopeForm">
+              <div class="scope-create-actions">
+                <button type="button" class="scope-add-btn" @click="$store.chat.startNewScope('product')">+ Product</button>
+                <button type="button" class="scope-add-btn" @click="$store.chat.startNewScope('project')">+ Project</button>
+                <button type="button" class="scope-add-btn" @click="$store.chat.startNewScope('deliverable')">+ Deliverable</button>
+              </div>
+            </template>
+            <template x-if="$store.chat.showNewScopeForm">
+              <form class="scope-new-form" @submit.prevent="$store.chat.addScope()">
+                <div class="scope-new-fields">
+                  <div class="scope-field">
+                    <label class="scope-field-label">Level</label>
+                    <select x-model="$store.chat.newScopeLevel" @change="$store.chat.newScopeParentId = null">
+                      <option value="product">Product</option>
+                      <option value="project">Project</option>
+                      <option value="deliverable">Deliverable</option>
+                    </select>
+                  </div>
+                  <template x-if="$store.chat.newScopeLevel !== 'product'">
+                    <div class="scope-field">
+                      <label class="scope-field-label" x-text="$store.chat.newScopeLevel === 'project' ? 'Parent Product' : 'Parent Project'"></label>
+                      <select x-model="$store.chat.newScopeParentId">
+                        <option value="">Select...</option>
+                        <template x-for="p in $store.chat.getAvailableParents($store.chat.newScopeLevel)" :key="p.record_id">
+                          <option :value="p.record_id" x-text="p.title"></option>
+                        </template>
+                      </select>
+                    </div>
+                  </template>
+                  <div class="scope-field">
+                    <label class="scope-field-label">Title</label>
+                    <input type="text" x-model="$store.chat.newScopeTitle" placeholder="Scope name..." required />
+                  </div>
+                  <div class="scope-field">
+                    <label class="scope-field-label">Description</label>
+                    <input type="text" x-model="$store.chat.newScopeDescription" placeholder="Optional description..." />
+                  </div>
+                </div>
+                <div class="scope-new-actions">
+                  <button type="submit" class="scope-save-btn">Create</button>
+                  <button type="button" class="scope-cancel-btn" @click="$store.chat.cancelNewScope()">Cancel</button>
+                </div>
+              </form>
+            </template>
+          </div>
+
+          <!-- Scope tree -->
+          <div class="scope-tree" x-show="$store.chat.scopeTree.length > 0">
+            <template x-for="product in $store.chat.scopeTree" :key="product.record_id">
+              <div class="scope-product-node">
+                <div class="scope-node-row scope-level-product">
+                  <template x-if="$store.chat.editingScopeId !== product.record_id">
+                    <div class="scope-node-content">
+                      <span class="scope-level-badge scope-badge-product">Product</span>
+                      <span class="scope-node-title" x-text="product.title"></span>
+                      <span class="scope-node-desc" x-show="product.description" x-text="product.description"></span>
+                      <div class="scope-node-actions">
+                        <button type="button" class="scope-action-btn" @click="$store.chat.startNewScope('project', product.record_id)" title="Add project">+ Project</button>
+                        <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(product.record_id)" title="Edit">Edit</button>
+                        <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this product?')) $store.chat.deleteScope(product.record_id)" title="Delete">Delete</button>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="$store.chat.editingScopeId === product.record_id">
+                    <div class="scope-edit-inline">
+                      <input type="text" x-model="$store.chat.editingScopeTitle" @keydown.enter.prevent="$store.chat.saveEditScope()" @keydown.escape="$store.chat.cancelEditScope()" />
+                      <input type="text" x-model="$store.chat.editingScopeDescription" placeholder="Description..." @keydown.enter.prevent="$store.chat.saveEditScope()" />
+                      <button type="button" @click="$store.chat.saveEditScope()">Save</button>
+                      <button type="button" @click="$store.chat.cancelEditScope()">Cancel</button>
+                    </div>
+                  </template>
+                </div>
+
+                <template x-for="project in product.projects" :key="project.record_id">
+                  <div class="scope-project-node">
+                    <div class="scope-node-row scope-level-project">
+                      <template x-if="$store.chat.editingScopeId !== project.record_id">
+                        <div class="scope-node-content">
+                          <span class="scope-level-badge scope-badge-project">Project</span>
+                          <span class="scope-node-title" x-text="project.title"></span>
+                          <span class="scope-node-desc" x-show="project.description" x-text="project.description"></span>
+                          <div class="scope-node-actions">
+                            <button type="button" class="scope-action-btn" @click="$store.chat.startNewScope('deliverable', project.record_id)" title="Add deliverable">+ Deliverable</button>
+                            <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(project.record_id)" title="Edit">Edit</button>
+                            <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this project?')) $store.chat.deleteScope(project.record_id)" title="Delete">Delete</button>
+                          </div>
+                        </div>
+                      </template>
+                      <template x-if="$store.chat.editingScopeId === project.record_id">
+                        <div class="scope-edit-inline">
+                          <input type="text" x-model="$store.chat.editingScopeTitle" @keydown.enter.prevent="$store.chat.saveEditScope()" @keydown.escape="$store.chat.cancelEditScope()" />
+                          <input type="text" x-model="$store.chat.editingScopeDescription" placeholder="Description..." @keydown.enter.prevent="$store.chat.saveEditScope()" />
+                          <button type="button" @click="$store.chat.saveEditScope()">Save</button>
+                          <button type="button" @click="$store.chat.cancelEditScope()">Cancel</button>
+                        </div>
+                      </template>
+                    </div>
+
+                    <template x-for="del in project.deliverables" :key="del.record_id">
+                      <div class="scope-node-row scope-level-deliverable">
+                        <template x-if="$store.chat.editingScopeId !== del.record_id">
+                          <div class="scope-node-content">
+                            <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
+                            <span class="scope-node-title" x-text="del.title"></span>
+                            <span class="scope-node-desc" x-show="del.description" x-text="del.description"></span>
+                            <div class="scope-node-actions">
+                              <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(del.record_id)" title="Edit">Edit</button>
+                              <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this deliverable?')) $store.chat.deleteScope(del.record_id)" title="Delete">Delete</button>
+                            </div>
+                          </div>
+                        </template>
+                        <template x-if="$store.chat.editingScopeId === del.record_id">
+                          <div class="scope-edit-inline">
+                            <input type="text" x-model="$store.chat.editingScopeTitle" @keydown.enter.prevent="$store.chat.saveEditScope()" @keydown.escape="$store.chat.cancelEditScope()" />
+                            <input type="text" x-model="$store.chat.editingScopeDescription" placeholder="Description..." @keydown.enter.prevent="$store.chat.saveEditScope()" />
+                            <button type="button" @click="$store.chat.saveEditScope()">Save</button>
+                            <button type="button" @click="$store.chat.cancelEditScope()">Cancel</button>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <div class="scope-empty" x-show="$store.chat.scopeTree.length === 0 && !$store.chat.showNewScopeForm">
+            <p>No scopes yet. Create a Product to start organizing your work.</p>
+          </div>
+        </div>
+
+        <div x-show="$store.chat.navSection === 'people'" class="placeholder-panel">
+          <h2>People</h2>
+          <p>People and groups will materialize from the same V4 sync boundary once that slice is added.</p>
+        </div>
+
+        <div x-show="$store.chat.navSection === 'settings'" class="settings-section">
+          <section class="settings-panel">
+            <div class="groups-header">
+              <div>
+                <h2>Groups</h2>
+                <p class="groups-subtitle">Share targets for documents and records.</p>
+              </div>
+              <button type="button" class="groups-new-btn" @click="$store.chat.openNewGroupModal()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                New group
+              </button>
+            </div>
+
+            <p class="groups-empty" x-show="$store.chat.groups.length === 0">No groups yet. Create one to start sharing.</p>
+
+            <ul class="groups-list" x-show="$store.chat.groups.length > 0">
+              <template x-for="group in $store.chat.groups" :key="group.group_id">
+                <li class="group-card">
+                  <div class="group-card-header">
+                    <input
+                      class="group-card-name"
+                      type="text"
+                      :value="group.name"
+                      @blur="$store.chat.renameSharingGroup(group.group_id, $event.target.value)"
+                      @keydown.enter.prevent="$event.target.blur()"
+                    />
+                    <div class="group-card-meta">
+                      <span class="group-member-count" x-text="(group.member_npubs || []).length + ' member' + ((group.member_npubs || []).length !== 1 ? 's' : '')"></span>
+                      <details class="group-actions-menu">
+                        <summary title="Group options">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+                        </summary>
+                        <div class="group-actions-popover">
+                          <button type="button" class="group-action-item group-action-delete" @click="$store.chat.deleteSharingGroup(group.group_id)">Delete group</button>
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                  <div class="group-card-members">
+                    <template x-for="memberNpub in (group.member_npubs || [])" :key="memberNpub">
+                      <div class="group-member-row" x-init="$store.chat.resolveChatProfile(memberNpub)">
+                        <template x-if="$store.chat.getSenderAvatar(memberNpub)">
+                          <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(memberNpub)" alt="" />
+                        </template>
+                        <template x-if="!$store.chat.getSenderAvatar(memberNpub)">
+                          <span class="group-member-avatar group-member-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(memberNpub))"></span>
+                        </template>
+                        <div class="group-member-info">
+                          <span x-text="$store.chat.getSenderName(memberNpub)"></span>
+                          <small x-text="$store.chat.getSenderIdentity(memberNpub)"></small>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </li>
+              </template>
+            </ul>
+          </section>
+        </div>
+
+        <!-- New group modal -->
+        <div class="doc-modal-backdrop" x-show="$store.chat.showNewGroupModal" x-cloak @click.self="$store.chat.closeNewGroupModal()">
+          <div class="doc-modal-card new-group-modal">
+            <button class="modal-close" type="button" @click="$store.chat.closeNewGroupModal()">&times;</button>
+            <h3>New group</h3>
+            <p class="new-group-hint">Groups let you share documents and records with a set of people.</p>
+
+            <label class="docs-field-label">Name</label>
+            <input class="new-group-input" type="text" x-model="$store.chat.newGroupName" placeholder="e.g. Team, Clients, Reviewers" @keydown.enter.prevent="$store.chat.createSharingGroup()" />
+
+            <label class="docs-field-label">Members</label>
+            <input class="new-group-input" type="text" x-model="$store.chat.newGroupMemberQuery" placeholder="Paste npub or comma-separated npubs" @keydown.enter.prevent="$store.chat.addGroupMemberFromQuery()" @input="if($event.target.value.includes(',')) $store.chat.addGroupMemberFromQuery()" />
+
+            <ul class="docs-share-suggestions" x-show="$store.chat.groupMemberSuggestions.length > 0">
+              <template x-for="suggestion in $store.chat.groupMemberSuggestions" :key="suggestion.npub">
+                <li>
+                  <button type="button" class="docs-share-suggestion" @click="$store.chat.addPendingGroupMember(suggestion)">
+                    <template x-if="suggestion.avatarUrl">
+                      <img class="chat-post-avatar" :src="suggestion.avatarUrl" alt="" />
+                    </template>
+                    <template x-if="!suggestion.avatarUrl">
+                      <span class="avatar-fallback" x-text="$store.chat.getInitials(suggestion.label)"></span>
+                    </template>
+                    <div class="docs-share-suggestion-copy">
+                      <span x-text="suggestion.label"></span>
+                      <small x-text="suggestion.npub"></small>
+                    </div>
+                  </button>
+                </li>
+              </template>
+            </ul>
+
+            <div class="new-group-members" x-show="$store.chat.newGroupMembers.length > 0">
+              <template x-for="member in $store.chat.newGroupMembers" :key="member.npub">
+                <div class="new-group-member-row" x-init="$store.chat.resolveChatProfile(member.npub)">
+                  <template x-if="$store.chat.getSenderAvatar(member.npub)">
+                    <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(member.npub)" alt="" />
+                  </template>
+                  <template x-if="!$store.chat.getSenderAvatar(member.npub)">
+                    <span class="group-member-avatar group-member-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(member.npub))"></span>
+                  </template>
+                  <div class="group-member-info">
+                    <span x-text="$store.chat.getSenderName(member.npub)"></span>
+                    <small x-text="$store.chat.getSenderIdentity(member.npub)"></small>
+                  </div>
+                  <button type="button" class="new-group-member-remove" @click="$store.chat.removePendingGroupMember(member.npub)">&times;</button>
+                </div>
+              </template>
+            </div>
+
+            <div class="new-group-modal-actions">
+              <button type="button" class="btn-cancel" @click="$store.chat.closeNewGroupModal()">Cancel</button>
+              <button type="button" class="btn-confirm" @click="$store.chat.createSharingGroup()">Create group</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.showChannelSettingsModal" x-cloak>
+          <div class="doc-modal-card new-doc-modal">
+            <h3>Channel settings</h3>
+            <p class="docs-browser-empty" x-text="$store.chat.selectedChannel ? $store.chat.getChannelLabel($store.chat.selectedChannel) : ''"></p>
+            <p class="docs-browser-empty" x-text="$store.chat.selectedChannel ? (($store.chat.getChannelParticipants($store.chat.selectedChannel) || []).length + ' participants') : ''"></p>
+
+            <!-- Channel scope -->
+            <div class="channel-scope-field" @click.stop>
+              <label class="task-field-label">Scope</label>
+              <div class="scope-picker-wrapper">
+                <template x-if="$store.chat.selectedChannel?.scope_id">
+                  <div class="scope-picker-selected">
+                    <span class="scope-level-badge" :class="{
+                      'scope-badge-product': $store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level === 'product',
+                      'scope-badge-project': $store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level === 'project',
+                      'scope-badge-deliverable': $store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level === 'deliverable'
+                    }" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level)"></span>
+                    <span x-text="$store.chat.getScopeBreadcrumb($store.chat.selectedChannel.scope_id)"></span>
+                    <button type="button" class="scope-clear-btn" @click="$store.chat.clearChannelScope()" title="Remove scope">x</button>
+                  </div>
+                </template>
+                <button type="button" class="scope-picker-toggle" @click="$store.chat.openScopePicker()"
+                  x-text="$store.chat.selectedChannel?.scope_id ? 'Change' : 'Set scope...'"></button>
+                <div class="scope-picker-popover" x-show="$store.chat.showScopePicker" x-cloak>
+                  <input type="text" class="scope-picker-input" x-model="$store.chat.scopePickerQuery" placeholder="Search scopes..." @keydown.escape="$store.chat.closeScopePicker()" />
+                  <div class="scope-picker-results">
+                    <template x-if="$store.chat.scopePickerResults.product.length > 0">
+                      <div class="scope-picker-group">
+                        <div class="scope-picker-group-label">Product</div>
+                        <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
+                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForChannel(item.record_id)">
+                            <span class="scope-level-badge scope-badge-product">Product</span>
+                            <span x-text="item.title"></span>
+                          </button>
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="$store.chat.scopePickerResults.project.length > 0">
+                      <div class="scope-picker-group">
+                        <div class="scope-picker-group-label">Project</div>
+                        <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
+                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForChannel(item.record_id)">
+                            <span class="scope-level-badge scope-badge-project">Project</span>
+                            <span x-text="item.title"></span>
+                            <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                          </button>
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
+                      <div class="scope-picker-group">
+                        <div class="scope-picker-group-label">Deliverable</div>
+                        <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
+                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForChannel(item.record_id)">
+                            <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
+                            <span x-text="item.title"></span>
+                            <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                          </button>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                  <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">
+                    <p>No scopes found. <a href="/scopes" @click.prevent="$store.chat.navigateTo('scopes')">Create scopes</a> first.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="new-doc-modal-actions">
+              <button type="button" class="btn-cancel" @click="$store.chat.closeChannelSettings()">Close</button>
+              <button type="button" class="btn-delete-doc" @click="$store.chat.deleteSelectedChannel()">Delete channel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+        <!-- New channel modal -->
+        <div class="new-channel-modal-overlay" x-show="$store.chat.showNewChannelModal" x-transition.opacity @click.self="$store.chat.closeNewChannelModal()">
+          <div class="new-channel-modal">
+            <div class="new-channel-modal-header">
+              <h3>New channel</h3>
+              <button type="button" class="new-channel-modal-close" @click="$store.chat.closeNewChannelModal()">&times;</button>
+            </div>
+
+            <div class="new-channel-tabs">
+              <button type="button" class="new-channel-tab" :class="{ active: $store.chat.newChannelMode === 'dm' }" @click="$store.chat.newChannelMode = 'dm'">Direct message</button>
+              <button type="button" class="new-channel-tab" :class="{ active: $store.chat.newChannelMode === 'channel' }" @click="$store.chat.newChannelMode = 'channel'">Channel</button>
+            </div>
+
+            <div class="new-channel-body">
+              <!-- DM mode -->
+              <template x-if="$store.chat.newChannelMode === 'dm'">
+                <div class="new-channel-dm-form">
+                  <label class="new-channel-label">Npub</label>
+                  <input class="new-channel-input" type="text" placeholder="npub1..." x-model="$store.chat.newChannelDmNpub"
+                    @input="if($store.chat.newChannelDmNpub.startsWith('npub1') && $store.chat.newChannelDmNpub.length >= 63) $store.chat.resolveChatProfile($store.chat.newChannelDmNpub)" />
+                  <template x-if="$store.chat.newChannelDmNpub.startsWith('npub1') && $store.chat.newChannelDmNpub.length >= 63">
+                    <div class="new-channel-resolved-profile" x-init="$store.chat.resolveChatProfile($store.chat.newChannelDmNpub)">
+                      <template x-if="$store.chat.chatProfiles[$store.chat.newChannelDmNpub]?.picture">
+                        <img class="new-channel-avatar" :src="$store.chat.chatProfiles[$store.chat.newChannelDmNpub]?.picture" />
+                      </template>
+                      <template x-if="!$store.chat.chatProfiles[$store.chat.newChannelDmNpub]?.picture">
+                        <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.chatProfiles[$store.chat.newChannelDmNpub]?.name || $store.chat.newChannelDmNpub.slice(0,8))"></div>
+                      </template>
+                      <span class="new-channel-profile-name" x-text="$store.chat.chatProfiles[$store.chat.newChannelDmNpub]?.name || $store.chat.newChannelDmNpub.slice(0,16) + '...'"></span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- Channel mode -->
+              <template x-if="$store.chat.newChannelMode === 'channel'">
+                <div class="new-channel-form">
+                  <label class="new-channel-label">Channel name</label>
+                  <input class="new-channel-input" type="text" placeholder="e.g. general, design, ops" x-model="$store.chat.newChannelName" />
+
+                  <label class="new-channel-label">Description <span class="new-channel-optional">(optional)</span></label>
+                  <input class="new-channel-input" type="text" placeholder="What's this channel about?" x-model="$store.chat.newChannelDescription" />
+
+                  <label class="new-channel-label">Group</label>
+                  <select class="new-channel-select" x-model="$store.chat.newChannelGroupId">
+                    <option value="">Select a group...</option>
+                    <template x-for="g in $store.chat.groups" :key="g.group_id">
+                      <option :value="g.group_npub || g.group_id" x-text="g.name"></option>
+                    </template>
+                  </select>
+                </div>
+              </template>
+            </div>
+
+            <div class="new-channel-footer">
+              <button type="button" class="new-channel-cancel-btn" @click="$store.chat.closeNewChannelModal()">Cancel</button>
+              <button type="button" class="new-channel-create-btn"
+                @click="$store.chat.newChannelMode === 'dm' ? $store.chat.createDmChannel() : $store.chat.createNamedChannel()"
+                :disabled="$store.chat.newChannelMode === 'dm' ? !($store.chat.newChannelDmNpub.startsWith('npub1') && $store.chat.newChannelDmNpub.length >= 63) : !$store.chat.newChannelName.trim() || !$store.chat.newChannelGroupId">
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.showAudioRecorderModal" x-cloak @click.self="$store.chat.closeAudioRecorder()">
+          <div class="doc-modal-card audio-recorder-modal">
+            <button class="modal-close" type="button" @click="$store.chat.closeAudioRecorder()">&times;</button>
+            <h3>Voice note</h3>
+            <input class="new-doc-modal-input" type="text" x-model="$store.chat.audioRecorderTitle" placeholder="Voice note title" />
+            <p class="doc-comment-modal-copy" x-text="$store.chat.audioRecorderStatusLabel || 'Record and attach an encrypted voice note.'"></p>
+            <template x-if="$store.chat.audioRecorderError">
+              <p class="error-text" x-text="$store.chat.audioRecorderError"></p>
+            </template>
+            <template x-if="$store.chat.audioRecorderPreviewUrl">
+              <audio class="audio-recorder-preview" :src="$store.chat.audioRecorderPreviewUrl" controls></audio>
+            </template>
+            <div class="audio-recorder-meta" x-show="$store.chat.audioRecorderDurationSeconds > 0">
+              <span x-text="`Duration: ${$store.chat.formatAudioDuration($store.chat.audioRecorderDurationSeconds)}`"></span>
+            </div>
+            <div class="new-doc-modal-actions">
+              <button type="button" class="btn-cancel" @click="$store.chat.closeAudioRecorder()">Cancel</button>
+              <button type="button" class="btn-secondary" x-show="$store.chat.audioRecorderState === 'idle'" @click="$store.chat.startAudioRecording()">Start</button>
+              <button type="button" class="btn-secondary" x-show="$store.chat.audioRecorderState === 'recording'" @click="$store.chat.stopAudioRecording()">Stop</button>
+              <button type="button" class="btn-confirm" x-show="$store.chat.audioRecorderState === 'ready'" @click="$store.chat.attachRecordedAudioDraft()">Attach</button>
+            </div>
+          </div>
+        </div>
+  </main>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

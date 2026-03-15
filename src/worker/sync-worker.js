@@ -1,0 +1,152 @@
+/**
+ * Sync worker — runs on a timer or manual trigger.
+ *
+ * Responsibilities:
+ *  1. Flush pending_writes to the V4 backend via POST /api/v4/records/sync
+ *  2. Pull new records from GET /api/v4/records
+ *  3. Translate inbound records through chat translators
+ *  4. Write materialized rows into Dexie
+ *
+ * Communication with the main thread is via postMessage / onmessage.
+ *
+ * NOTE: Because Dexie doesn't work inside a true Web Worker without
+ * workarounds, this file is designed to be imported as a *module* by
+ * the main thread and driven via a simple call interface.  A real
+ * Web Worker upgrade can happen later.
+ */
+
+import db, {
+  getPendingWrites,
+  removePendingWrite,
+  upsertChannel,
+  upsertMessage,
+  upsertDocument,
+  upsertDirectory,
+  upsertTask,
+  upsertComment,
+  upsertAudioNote,
+  upsertScope,
+  getSyncState,
+  setSyncState,
+} from '../db.js';
+
+import { syncRecords, fetchRecords, getBaseUrl } from '../api.js';
+import { inboundChannel, inboundChatMessage, recordFamilyHash } from '../translators/chat.js';
+import { inboundDocument, inboundDirectory } from '../translators/docs.js';
+import { inboundTask } from '../translators/tasks.js';
+import { inboundComment } from '../translators/comments.js';
+import { inboundAudioNote } from '../translators/audio-notes.js';
+import { inboundScope } from '../translators/scopes.js';
+
+const CHANNEL_FAMILY = recordFamilyHash('channel');
+const MESSAGE_FAMILY = recordFamilyHash('chat_message');
+const DOCUMENT_FAMILY = recordFamilyHash('document');
+const DIRECTORY_FAMILY = recordFamilyHash('directory');
+const TASK_FAMILY = recordFamilyHash('task');
+const COMMENT_FAMILY = recordFamilyHash('comment');
+const AUDIO_NOTE_FAMILY = recordFamilyHash('audio_note');
+const SCOPE_FAMILY = recordFamilyHash('scope');
+
+/**
+ * Push all pending writes to the backend then clear them locally.
+ */
+export async function flushPendingWrites(ownerNpub) {
+  const pending = await getPendingWrites();
+  if (pending.length === 0) return { pushed: 0 };
+
+  const envelopes = pending.map(pw => pw.envelope);
+
+  await syncRecords({
+    owner_npub: ownerNpub,
+    records: envelopes,
+  });
+
+  // Remove flushed rows
+  for (const pw of pending) {
+    await removePendingWrite(pw.row_id);
+  }
+
+  return { pushed: pending.length };
+}
+
+/**
+ * Pull records from backend, translate, and materialize locally.
+ */
+export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
+  const families = [CHANNEL_FAMILY, MESSAGE_FAMILY, DIRECTORY_FAMILY, DOCUMENT_FAMILY, TASK_FAMILY, COMMENT_FAMILY, AUDIO_NOTE_FAMILY, SCOPE_FAMILY];
+  let totalPulled = 0;
+
+  for (const family of families) {
+    const sinceKey = `sync_since:${family}`;
+    const since = await getSyncState(sinceKey);
+
+    const result = await fetchRecords({
+      owner_npub: ownerNpub,
+      viewer_npub: viewerNpub,
+      record_family_hash: family,
+      since: since ?? undefined,
+    });
+
+    const records = result.records ?? result ?? [];
+    let latestApplied = since ?? '';
+    let appliedCount = 0;
+    let skippedCount = 0;
+
+    for (const record of records) {
+      try {
+        if (family === CHANNEL_FAMILY) {
+          const row = await inboundChannel(record);
+          await upsertChannel(row);
+        } else if (family === MESSAGE_FAMILY) {
+          const row = await inboundChatMessage(record);
+          await upsertMessage(row);
+        } else if (family === DIRECTORY_FAMILY) {
+          const row = await inboundDirectory(record);
+          await upsertDirectory(row);
+        } else if (family === DOCUMENT_FAMILY) {
+          const row = await inboundDocument(record);
+          await upsertDocument(row);
+        } else if (family === TASK_FAMILY) {
+          const row = await inboundTask(record);
+          await upsertTask(row);
+        } else if (family === COMMENT_FAMILY) {
+          const row = await inboundComment(record);
+          await upsertComment(row);
+        } else if (family === AUDIO_NOTE_FAMILY) {
+          const row = await inboundAudioNote(record);
+          await upsertAudioNote(row);
+        } else if (family === SCOPE_FAMILY) {
+          const row = await inboundScope(record);
+          await upsertScope(row);
+        }
+        appliedCount++;
+        if ((record.updated_at ?? '') > latestApplied) latestApplied = record.updated_at ?? '';
+      } catch (error) {
+        skippedCount++;
+        console.debug('Skipping undecryptable record:', record.record_id, error?.message || error);
+      }
+    }
+
+    totalPulled += records.length;
+
+    if (appliedCount > 0 && skippedCount === 0 && latestApplied) {
+      await setSyncState(sinceKey, latestApplied);
+    } else if (skippedCount > 0) {
+      console.debug('Holding sync cursor due to skipped records:', family, { appliedCount, skippedCount });
+    }
+  }
+
+  return { pulled: totalPulled };
+}
+
+/**
+ * Full sync cycle: push then pull.
+ */
+export async function runSync(ownerNpub, viewerNpub = ownerNpub) {
+  if (!getBaseUrl()) throw new Error('Backend URL not configured');
+
+  const pushResult = await flushPendingWrites(ownerNpub);
+  const pullResult = await pullRecords(ownerNpub, viewerNpub);
+
+  return { ...pushResult, ...pullResult };
+}

@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# Agent discovery hints
+Agent-Connect: /agentconnect.md
+LLM: /llm.txt
+OpenAPI: https://sb4.otherstuff.studio/openapi.json
+Docs: https://sb4.otherstuff.studio/docs
