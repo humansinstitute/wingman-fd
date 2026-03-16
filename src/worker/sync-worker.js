@@ -18,6 +18,7 @@
 import db, {
   getPendingWrites,
   removePendingWrite,
+  upsertWorkspaceSettings,
   upsertChannel,
   upsertMessage,
   upsertDocument,
@@ -37,7 +38,9 @@ import { inboundTask } from '../translators/tasks.js';
 import { inboundComment } from '../translators/comments.js';
 import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
+import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
 
+const SETTINGS_FAMILY = settingsFamilyHash('settings');
 const CHANNEL_FAMILY = recordFamilyHash('channel');
 const MESSAGE_FAMILY = recordFamilyHash('chat_message');
 const DOCUMENT_FAMILY = recordFamilyHash('document');
@@ -73,7 +76,7 @@ export async function flushPendingWrites(ownerNpub) {
  * Pull records from backend, translate, and materialize locally.
  */
 export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
-  const families = [CHANNEL_FAMILY, MESSAGE_FAMILY, DIRECTORY_FAMILY, DOCUMENT_FAMILY, TASK_FAMILY, COMMENT_FAMILY, AUDIO_NOTE_FAMILY, SCOPE_FAMILY];
+  const families = [SETTINGS_FAMILY, CHANNEL_FAMILY, MESSAGE_FAMILY, DIRECTORY_FAMILY, DOCUMENT_FAMILY, TASK_FAMILY, COMMENT_FAMILY, AUDIO_NOTE_FAMILY, SCOPE_FAMILY];
   let totalPulled = 0;
 
   for (const family of families) {
@@ -94,7 +97,10 @@ export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
 
     for (const record of records) {
       try {
-        if (family === CHANNEL_FAMILY) {
+        if (family === SETTINGS_FAMILY) {
+          const row = await inboundWorkspaceSettings(record);
+          await upsertWorkspaceSettings(row);
+        } else if (family === CHANNEL_FAMILY) {
           const row = await inboundChannel(record);
           await upsertChannel(row);
         } else if (family === MESSAGE_FAMILY) {

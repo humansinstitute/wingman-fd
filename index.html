@@ -26,13 +26,19 @@
             <line x1="3" y1="18" x2="21" y2="18"></line>
           </svg>
         </button>
-        <div class="brand-lockup">
-        <img class="brand-logo" src="/wingman-logo.png" alt="Wingman logo" />
-        <div class="brand-copy">
-          <h1>Wingman</h1>
-          <p>Solvitur ambulando</p>
-        </div>
-      </div>
+        <button
+          type="button"
+          class="brand-lockup brand-lockup-button"
+          :class="{ 'brand-lockup-clickable': $store.chat.isLoggedIn }"
+          @click="if ($store.chat.isLoggedIn) $store.chat.navigateTo('status')"
+          :aria-label="$store.chat.isLoggedIn ? 'Go to notifications' : 'Wingman'"
+        >
+          <img class="brand-logo" src="/wingman-logo.png" alt="Wingman logo" />
+          <div class="brand-copy">
+            <h1>Wingman</h1>
+            <p>Solvitur ambulando</p>
+          </div>
+        </button>
       </div>
       <div class="session-controls" x-show="$store.chat.isLoggedIn">
         <button
@@ -345,6 +351,22 @@
               </svg>
             </span>
             <span class="sidebar-label">People</span>
+          </li>
+          <li
+            x-cloak
+            x-show="$store.chat.hasHarnessLink"
+            @click="$store.chat.openHarnessLink()"
+            :title="$store.chat.workspaceHarnessUrl"
+          >
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 12V9.5A5.5 5.5 0 0 1 12.5 4h.5a5.5 5.5 0 0 1 5.5 5.5V12"></path>
+                <path d="M5 13.5A2.5 2.5 0 0 1 7.5 11H10v8H7.5A2.5 2.5 0 0 1 5 16.5z"></path>
+                <path d="M14 11h2.5A2.5 2.5 0 0 1 19 13.5v3a2.5 2.5 0 0 1-2.5 2.5H14z"></path>
+                <path d="M10 18c.6 1 1.7 2 3.5 2"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Harness</span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'settings' }" @click="$store.chat.navigateTo('settings')">
             <span class="sidebar-icon" aria-hidden="true">
@@ -688,6 +710,7 @@
                     <textarea
                       x-model="$store.chat.editingTask.description"
                       @change="$store.chat.saveEditingTask()"
+                      @paste="$store.chat.handleTaskDescriptionPaste($event)"
                       placeholder="Add a description..."
                       rows="4"
                     ></textarea>
@@ -736,12 +759,13 @@
                   <div class="task-comment-add">
                     <textarea
                       x-model="$store.chat.newTaskCommentBody"
+                      @paste="$store.chat.handleTaskCommentPaste($event)"
                       placeholder="Add a comment..."
                       rows="2"
                     ></textarea>
                     <div class="task-comment-actions">
                       <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('task-comment')">Mic</button>
-                      <button type="button" @click="$store.chat.addTaskComment($store.chat.editingTask.record_id)" :disabled="!$store.chat.newTaskCommentBody.trim() && $store.chat.taskCommentAudioDrafts.length === 0">Post</button>
+                      <button type="button" @click="$store.chat.addTaskComment($store.chat.editingTask.record_id)" :disabled="((!$store.chat.newTaskCommentBody.trim() && $store.chat.taskCommentAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newTaskCommentBody))">Post</button>
                     </div>
                   </div>
                   <div class="audio-draft-list" x-show="$store.chat.taskCommentAudioDrafts.length > 0">
@@ -838,7 +862,7 @@
                       <span class="chat-post-time" x-text="new Date(msg.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })"></span>
                     </div>
                     <div class="chat-post-content">
-                      <p x-text="msg.body"></p>
+                      <div class="chat-post-markdown" x-html="$store.chat.renderMarkdown(msg.body)"></div>
                     </div>
                     <div class="audio-attachment-list" x-show="(msg.attachments || []).length > 0">
                       <template x-for="attachment in (msg.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
@@ -872,9 +896,10 @@
                   placeholder="Message channel"
                   x-model="$store.chat.messageInput"
                   @keydown.enter.prevent="if (!$event.shiftKey) $store.chat.sendMessage()"
+                  @paste="$store.chat.handleChatPaste($event, 'message')"
                 ></textarea>
                 <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('chat')">Mic</button>
-                <button class="chat-send-btn-text" @click="$store.chat.sendMessage()" :disabled="!$store.chat.messageInput.trim() && $store.chat.messageAudioDrafts.length === 0">Send</button>
+                <button class="chat-send-btn-text" @click="$store.chat.sendMessage()" :disabled="((!$store.chat.messageInput.trim() && $store.chat.messageAudioDrafts.length === 0) || $store.chat.messageImageUploadCount > 0)">Send</button>
               </div>
               <div class="audio-draft-list" x-show="$store.chat.messageAudioDrafts.length > 0">
                 <template x-for="draft in $store.chat.messageAudioDrafts" :key="draft.draft_id">
@@ -930,7 +955,7 @@
                         <span class="chat-time" x-text="new Date($store.chat.getThreadParentMessage()?.updated_at || '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })"></span>
                       </div>
                       <div class="thread-msg-text">
-                        <p x-text="$store.chat.getThreadParentMessage()?.body"></p>
+                        <div class="chat-post-markdown" x-html="$store.chat.renderMarkdown($store.chat.getThreadParentMessage()?.body || '')"></div>
                       </div>
                       <div class="audio-attachment-list" x-show="($store.chat.getThreadParentMessage()?.attachments || []).length > 0">
                         <template x-for="attachment in ($store.chat.getThreadParentMessage()?.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
@@ -968,7 +993,7 @@
                         <span class="chat-time" x-text="new Date(reply.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })"></span>
                       </div>
                       <div class="thread-msg-text">
-                        <p x-text="reply.body"></p>
+                        <div class="chat-post-markdown" x-html="$store.chat.renderMarkdown(reply.body)"></div>
                       </div>
                       <div class="audio-attachment-list" x-show="(reply.attachments || []).length > 0">
                         <template x-for="attachment in (reply.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
@@ -994,9 +1019,12 @@
                   placeholder="Reply to thread..."
                   x-model="$store.chat.threadInput"
                   @keydown.enter.prevent="if (!$event.shiftKey) $store.chat.sendThreadReply()"
+                  @paste="$store.chat.handleChatPaste($event, 'thread')"
                 ></textarea>
-                <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('thread')">Mic</button>
-                <button class="thread-reply-btn" @click="$store.chat.sendThreadReply()" :disabled="!$store.chat.threadInput.trim() && $store.chat.threadAudioDrafts.length === 0">Reply</button>
+                <div class="thread-input-actions">
+                  <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('thread')">Mic</button>
+                  <button class="thread-reply-btn" @click="$store.chat.sendThreadReply()" :disabled="((!$store.chat.threadInput.trim() && $store.chat.threadAudioDrafts.length === 0) || $store.chat.threadImageUploadCount > 0)">Reply</button>
+                </div>
               </div>
               <div class="audio-draft-list" x-show="$store.chat.threadAudioDrafts.length > 0">
                 <template x-for="draft in $store.chat.threadAudioDrafts" :key="draft.draft_id">
@@ -1020,6 +1048,22 @@
           <div class="docs-view">
             <div class="docs-toolbar" x-show="!$store.chat.docsEditorOpen">
               <input class="docs-search-input" type="text" placeholder="Search docs and folders" x-model="$store.chat.docFilter" />
+              <button
+                type="button"
+                class="btn-add-folder"
+                x-show="$store.chat.currentFolder"
+                @click="$store.chat.openDocShareModal('current-folder')"
+                title="Folder sharing"
+                aria-label="Folder sharing"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="18" cy="5" r="3"></circle>
+                  <circle cx="6" cy="12" r="3"></circle>
+                  <circle cx="18" cy="19" r="3"></circle>
+                  <path d="M8.6 13.5l6.8 4"></path>
+                  <path d="M15.4 6.5l-6.8 4"></path>
+                </svg>
+              </button>
               <button type="button" class="btn-add-folder" @click="$store.chat.openNewDocModal('folder')" title="New folder" aria-label="New folder">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
@@ -1049,12 +1093,33 @@
                   </template>
                 </div>
 
+                <div
+                  class="doc-drop-up"
+                  x-show="$store.chat._dragDocBrowserItem && $store.chat.currentFolder"
+                  @dragover.prevent="$store.chat.handleDocItemDragOver($event, $store.chat.currentFolderParentId, 'up')"
+                  @dragleave="$store.chat.handleDocItemDragLeave($event, 'up')"
+                  @drop.prevent="$store.chat.handleDocItemDrop($event, $store.chat.currentFolderParentId, 'up')"
+                  :class="{ 'doc-drop-up-active': $store.chat.docBrowserDropTarget === 'up' }"
+                >
+                  <span>Up</span>
+                  <small x-text="`Move to ${$store.chat.currentFolderParentLabel}`"></small>
+                </div>
+
                 <ul class="doc-items">
                   <template x-for="row in ($store.chat.filteredDocBrowserItems || [])" :key="row.type + ':' + row.item.record_id">
                     <li
                       class="doc-item"
-                      :class="{ 'doc-item-folder': row.type === 'directory' }"
-                      @click="$store.chat.selectDocItem(row.type, row.item.record_id)"
+                      :class="{
+                        'doc-item-folder': row.type === 'directory',
+                        'doc-item-drop-active': $store.chat.docBrowserDropTarget === `folder:${row.item.record_id}`
+                      }"
+                      draggable="true"
+                      @click="$store.chat.handleDocBrowserRowClick(row.type, row.item.record_id)"
+                      @dragstart="$store.chat.handleDocItemDragStart($event, row.type, row.item.record_id)"
+                      @dragend="$store.chat.handleDocItemDragEnd($event)"
+                      @dragover.prevent="row.type === 'directory' && $store.chat.handleDocItemDragOver($event, row.item.record_id, `folder:${row.item.record_id}`)"
+                      @dragleave="row.type === 'directory' && $store.chat.handleDocItemDragLeave($event, `folder:${row.item.record_id}`)"
+                      @drop.prevent="row.type === 'directory' && $store.chat.handleDocItemDrop($event, row.item.record_id, `folder:${row.item.record_id}`)"
                     >
                       <span class="doc-item-icon">
                         <template x-if="row.type === 'directory'">
@@ -1250,6 +1315,7 @@
                                     class="doc-block-editor"
                                     x-model="$store.chat.docBlockBuffer"
                                     @input="$store.chat.updateDocBlockBuffer($event.target.value)"
+                                    @paste="$store.chat.handleDocBlockPaste($event)"
                                     @blur="$store.chat.commitDocBlockEdit()"
                                     @keydown.escape.prevent="$store.chat.cancelDocBlockEdit()"
                                     @keydown.meta.enter.prevent="$store.chat.commitDocBlockEdit()"
@@ -1373,12 +1439,13 @@
                             rows="3"
                             placeholder="Reply in thread..."
                             x-model="$store.chat.newDocCommentReplyBody"
+                            @paste="$store.chat.handleDocCommentReplyPaste($event)"
                             @keydown.meta.enter.prevent="$store.chat.addDocCommentReply()"
                             @keydown.ctrl.enter.prevent="$store.chat.addDocCommentReply()"
                           ></textarea>
                           <div class="doc-thread-reply-actions">
                             <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-reply')">Mic</button>
-                            <button type="button" class="doc-thread-reply-btn" @click="$store.chat.addDocCommentReply()" :disabled="!$store.chat.newDocCommentReplyBody.trim() && $store.chat.docCommentReplyAudioDrafts.length === 0">Reply</button>
+                            <button type="button" class="doc-thread-reply-btn" @click="$store.chat.addDocCommentReply()" :disabled="((!$store.chat.newDocCommentReplyBody.trim() && $store.chat.docCommentReplyAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newDocCommentReplyBody))">Reply</button>
                           </div>
                           <div class="audio-draft-list" x-show="$store.chat.docCommentReplyAudioDrafts.length > 0">
                             <template x-for="draft in $store.chat.docCommentReplyAudioDrafts" :key="draft.draft_id">
@@ -1399,7 +1466,7 @@
                     </div>
                   </template>
                   <template x-if="$store.chat.docEditorMode === 'source'">
-                    <textarea class="doc-source-editor" placeholder="Start writing..." x-model="$store.chat.docEditorContent" @input="$store.chat.handleDocSourceInput($event.target.value)"></textarea>
+                    <textarea class="doc-source-editor" placeholder="Start writing..." x-model="$store.chat.docEditorContent" @input="$store.chat.handleDocSourceInput($event.target.value)" @paste="$store.chat.handleDocSourcePaste($event)"></textarea>
                   </template>
                 </div>
               </section>
@@ -1409,7 +1476,13 @@
           <div class="doc-modal-backdrop" x-show="$store.chat.showDocShareModal" x-cloak @click.self="$store.chat.closeDocShareModal()">
             <div class="doc-modal-card doc-share-modal">
               <button class="modal-close" type="button" @click="$store.chat.closeDocShareModal()">&times;</button>
-              <h3>Sharing</h3>
+              <h3 x-text="`${$store.chat.activeDocShareTargetTypeLabel} sharing`"></h3>
+              <p class="docs-browser-empty" x-show="$store.chat.activeDocShareTargetName">
+                <span x-text="$store.chat.activeDocShareTargetName"></span>
+              </p>
+              <p class="docs-browser-empty" x-show="$store.chat.isDirectoryShareTarget">
+                New folders and documents created here inherit these permissions.
+              </p>
               <input class="docs-share-input" type="text" placeholder="Share with a person or group" x-model="$store.chat.docShareQuery" />
               <ul class="docs-share-suggestions" x-show="$store.chat.docShareSuggestions.length > 0">
                 <template x-for="suggestion in $store.chat.docShareSuggestions" :key="suggestion.key">
@@ -1459,6 +1532,10 @@
                   </li>
                 </template>
               </ul>
+              <div class="new-doc-modal-actions">
+                <button type="button" class="btn-cancel" @click="$store.chat.closeDocShareModal()">Cancel</button>
+                <button type="button" class="btn-confirm" :disabled="!$store.chat.docEditorSharesDirty" @click="$store.chat.saveDocShareTarget()">Save sharing</button>
+              </div>
             </div>
           </div>
 
@@ -1472,6 +1549,7 @@
                 rows="4"
                 placeholder="Write a comment..."
                 x-model="$store.chat.newDocCommentBody"
+                @paste="$store.chat.handleDocCommentPaste($event)"
                 @keydown.meta.enter.prevent="$store.chat.addDocComment()"
                 @keydown.ctrl.enter.prevent="$store.chat.addDocComment()"
               ></textarea>
@@ -1492,7 +1570,7 @@
               <div class="new-doc-modal-actions">
                 <button type="button" class="btn-cancel" @click="$store.chat.closeDocCommentModal()">Cancel</button>
                 <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-comment')">Mic</button>
-                <button type="button" class="btn-confirm" @click="$store.chat.addDocComment()" :disabled="!$store.chat.newDocCommentBody.trim() && $store.chat.docCommentAudioDrafts.length === 0">Post comment</button>
+                <button type="button" class="btn-confirm" @click="$store.chat.addDocComment()" :disabled="((!$store.chat.newDocCommentBody.trim() && $store.chat.docCommentAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newDocCommentBody))">Post comment</button>
               </div>
             </div>
           </div>
@@ -1662,13 +1740,40 @@
         </div>
 
         <div x-show="$store.chat.navSection === 'settings'" class="settings-section">
+          <section class="settings-panel harness-settings-panel">
+            <div class="settings-panel-header">
+              <div>
+                <h2>Harness</h2>
+                <p>Workspace-level Wingman Harness URL synced through SuperBased settings records.</p>
+              </div>
+            </div>
+            <label class="settings-field-label" for="wingman-harness-input">Wingman Harness URL</label>
+            <input
+              id="wingman-harness-input"
+              type="text"
+              x-model="$store.chat.wingmanHarnessInput"
+              @input="$store.chat.handleHarnessInput($event.target.value)"
+              @keydown.enter.prevent="$store.chat.saveHarnessSettings()"
+              placeholder="wm21.otherstuff.ai or https://wm21.otherstuff.ai"
+            />
+            <p class="settings-field-help">
+              Current workspace:
+              <span x-text="$store.chat.currentWorkspace?.name || $store.chat.workspaceOwnerNpub || 'None selected'"></span>
+            </p>
+            <p class="error-text" x-show="$store.chat.wingmanHarnessError" x-text="$store.chat.wingmanHarnessError"></p>
+            <div class="settings-actions">
+              <button type="button" class="btn-confirm" @click="$store.chat.saveHarnessSettings()" :disabled="!$store.chat.wingmanHarnessDirty">Save Harness</button>
+              <button type="button" class="btn-cancel" @click="$store.chat.openHarnessLink()" :disabled="!$store.chat.hasHarnessLink">Open Harness</button>
+            </div>
+          </section>
+
           <section class="settings-panel">
             <div class="groups-header">
               <div>
                 <h2>Groups</h2>
                 <p class="groups-subtitle">Share targets for documents and records.</p>
               </div>
-              <button type="button" class="groups-new-btn" @click="$store.chat.openNewGroupModal()">
+              <button type="button" class="groups-new-btn" @click="$store.chat.openNewGroupModal()" :disabled="$store.chat.groupActionsLocked">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
                 New group
               </button>
@@ -1680,21 +1785,16 @@
               <template x-for="group in $store.chat.groups" :key="group.group_id">
                 <li class="group-card">
                   <div class="group-card-header">
-                    <input
-                      class="group-card-name"
-                      type="text"
-                      :value="group.name"
-                      @blur="$store.chat.renameSharingGroup(group.group_id, $event.target.value)"
-                      @keydown.enter.prevent="$event.target.blur()"
-                    />
+                    <h3 class="group-card-name" x-text="group.name || 'Untitled group'"></h3>
                     <div class="group-card-meta">
                       <span class="group-member-count" x-text="(group.member_npubs || []).length + ' member' + ((group.member_npubs || []).length !== 1 ? 's' : '')"></span>
                       <details class="group-actions-menu">
-                        <summary title="Group options">
+                        <summary title="Group options" :class="{ 'is-disabled': $store.chat.groupActionsLocked }" @click="$store.chat.groupActionsLocked && $event.preventDefault()">
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
                         </summary>
                         <div class="group-actions-popover">
-                          <button type="button" class="group-action-item group-action-delete" @click="$store.chat.deleteSharingGroup(group.group_id)">Delete group</button>
+                          <button type="button" class="group-action-item" :disabled="$store.chat.groupActionsLocked" @click="$event.currentTarget.closest('details')?.removeAttribute('open'); $store.chat.openEditGroupModal(group.group_id)">Edit group</button>
+                          <button type="button" class="group-action-item group-action-delete" :disabled="$store.chat.groupActionsLocked" @click="$event.currentTarget.closest('details')?.removeAttribute('open'); $store.chat.deleteSharingGroup(group.group_id)" x-text="$store.chat.isGroupDeletePending(group.group_id) ? 'Deleting…' : 'Delete group'"></button>
                         </div>
                       </details>
                     </div>
@@ -1724,20 +1824,20 @@
         <!-- New group modal -->
         <div class="doc-modal-backdrop" x-show="$store.chat.showNewGroupModal" x-cloak @click.self="$store.chat.closeNewGroupModal()">
           <div class="doc-modal-card new-group-modal">
-            <button class="modal-close" type="button" @click="$store.chat.closeNewGroupModal()">&times;</button>
+            <button class="modal-close" type="button" @click="$store.chat.closeNewGroupModal()" :disabled="$store.chat.groupCreatePending">&times;</button>
             <h3>New group</h3>
             <p class="new-group-hint">Groups let you share documents and records with a set of people.</p>
 
             <label class="docs-field-label">Name</label>
-            <input class="new-group-input" type="text" x-model="$store.chat.newGroupName" placeholder="e.g. Team, Clients, Reviewers" @keydown.enter.prevent="$store.chat.createSharingGroup()" />
+            <input class="new-group-input" type="text" x-model="$store.chat.newGroupName" placeholder="e.g. Team, Clients, Reviewers" @keydown.enter.prevent="$store.chat.createSharingGroup()" :disabled="$store.chat.groupCreatePending" />
 
             <label class="docs-field-label">Members</label>
-            <input class="new-group-input" type="text" x-model="$store.chat.newGroupMemberQuery" placeholder="Paste npub or comma-separated npubs" @keydown.enter.prevent="$store.chat.addGroupMemberFromQuery()" @input="if($event.target.value.includes(',')) $store.chat.addGroupMemberFromQuery()" />
+            <input class="new-group-input" type="text" x-model="$store.chat.newGroupMemberQuery" placeholder="Paste npub or comma-separated npubs" @keydown.enter.prevent="$store.chat.addGroupMemberFromQuery()" @input="if($event.target.value.includes(',')) $store.chat.addGroupMemberFromQuery()" :disabled="$store.chat.groupCreatePending" />
 
             <ul class="docs-share-suggestions" x-show="$store.chat.groupMemberSuggestions.length > 0">
               <template x-for="suggestion in $store.chat.groupMemberSuggestions" :key="suggestion.npub">
                 <li>
-                  <button type="button" class="docs-share-suggestion" @click="$store.chat.addPendingGroupMember(suggestion)">
+                  <button type="button" class="docs-share-suggestion" @click="$store.chat.addPendingGroupMember(suggestion)" :disabled="$store.chat.groupCreatePending">
                     <template x-if="suggestion.avatarUrl">
                       <img class="chat-post-avatar" :src="suggestion.avatarUrl" alt="" />
                     </template>
@@ -1766,14 +1866,71 @@
                     <span x-text="$store.chat.getSenderName(member.npub)"></span>
                     <small x-text="$store.chat.getSenderIdentity(member.npub)"></small>
                   </div>
-                  <button type="button" class="new-group-member-remove" @click="$store.chat.removePendingGroupMember(member.npub)">&times;</button>
+                  <button type="button" class="new-group-member-remove" @click="$store.chat.removePendingGroupMember(member.npub)" :disabled="$store.chat.groupCreatePending">&times;</button>
                 </div>
               </template>
             </div>
 
             <div class="new-group-modal-actions">
-              <button type="button" class="btn-cancel" @click="$store.chat.closeNewGroupModal()">Cancel</button>
-              <button type="button" class="btn-confirm" @click="$store.chat.createSharingGroup()">Create group</button>
+              <button type="button" class="btn-cancel" @click="$store.chat.closeNewGroupModal()" :disabled="$store.chat.groupCreatePending">Cancel</button>
+              <button type="button" class="btn-confirm" @click="$store.chat.createSharingGroup()" :disabled="$store.chat.groupCreatePending" x-text="$store.chat.groupCreatePending ? 'Creating…' : 'Create group'"></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.showEditGroupModal" x-cloak @click.self="$store.chat.closeEditGroupModal()">
+          <div class="doc-modal-card new-group-modal">
+            <button class="modal-close" type="button" @click="$store.chat.closeEditGroupModal()" :disabled="$store.chat.groupEditPending">&times;</button>
+            <h3>Edit group</h3>
+            <p class="new-group-hint">Rename the group and manage who can use it for sharing.</p>
+
+            <label class="docs-field-label">Name</label>
+            <input class="new-group-input" type="text" x-model="$store.chat.editGroupName" placeholder="e.g. Team, Clients, Reviewers" @keydown.enter.prevent="$store.chat.saveGroupEdits()" :disabled="$store.chat.groupEditPending" />
+
+            <label class="docs-field-label">Members</label>
+            <input class="new-group-input" type="text" x-model="$store.chat.editGroupMemberQuery" placeholder="Paste npub or comma-separated npubs" @keydown.enter.prevent="$store.chat.addEditGroupMemberFromQuery()" @input="if($event.target.value.includes(',')) $store.chat.addEditGroupMemberFromQuery()" :disabled="$store.chat.groupEditPending" />
+
+            <ul class="docs-share-suggestions" x-show="$store.chat.editGroupMemberSuggestions.length > 0">
+              <template x-for="suggestion in $store.chat.editGroupMemberSuggestions" :key="suggestion.npub">
+                <li>
+                  <button type="button" class="docs-share-suggestion" @click="$store.chat.addPendingEditGroupMember(suggestion)" :disabled="$store.chat.groupEditPending">
+                    <template x-if="suggestion.avatarUrl">
+                      <img class="chat-post-avatar" :src="$store.chat.getSenderAvatar(suggestion.npub)" alt="" />
+                    </template>
+                    <template x-if="!suggestion.avatarUrl">
+                      <span class="avatar-fallback" x-text="$store.chat.getInitials(suggestion.label)"></span>
+                    </template>
+                    <div class="docs-share-suggestion-copy">
+                      <span x-text="suggestion.label"></span>
+                      <small x-text="suggestion.npub"></small>
+                    </div>
+                  </button>
+                </li>
+              </template>
+            </ul>
+
+            <div class="new-group-members" x-show="$store.chat.editGroupMembers.length > 0">
+              <template x-for="member in $store.chat.editGroupMembers" :key="member.npub">
+                <div class="new-group-member-row" x-init="$store.chat.resolveChatProfile(member.npub)">
+                  <template x-if="$store.chat.getSenderAvatar(member.npub)">
+                    <img class="group-member-avatar" :src="$store.chat.getSenderAvatar(member.npub)" alt="" />
+                  </template>
+                  <template x-if="!$store.chat.getSenderAvatar(member.npub)">
+                    <span class="group-member-avatar group-member-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(member.npub))"></span>
+                  </template>
+                  <div class="group-member-info">
+                    <span x-text="$store.chat.getSenderName(member.npub)"></span>
+                    <small x-text="$store.chat.getSenderIdentity(member.npub)"></small>
+                  </div>
+                  <span class="group-member-badge" x-show="!$store.chat.canRemoveEditGroupMember(member.npub)">Required</span>
+                  <button type="button" class="new-group-member-remove" @click="$store.chat.removePendingEditGroupMember(member.npub)" :disabled="$store.chat.groupEditPending || !$store.chat.canRemoveEditGroupMember(member.npub)">&times;</button>
+                </div>
+              </template>
+            </div>
+
+            <div class="new-group-modal-actions">
+              <button type="button" class="btn-cancel" @click="$store.chat.closeEditGroupModal()" :disabled="$store.chat.groupEditPending">Cancel</button>
+              <button type="button" class="btn-confirm" @click="$store.chat.saveGroupEdits()" :disabled="$store.chat.groupEditPending" x-text="$store.chat.groupEditPending ? 'Saving…' : 'Save changes'"></button>
             </div>
           </div>
         </div>
@@ -1925,8 +2082,8 @@
           <div class="doc-modal-card audio-recorder-modal">
             <button class="modal-close" type="button" @click="$store.chat.closeAudioRecorder()">&times;</button>
             <h3>Voice note</h3>
-            <input class="new-doc-modal-input" type="text" x-model="$store.chat.audioRecorderTitle" placeholder="Voice note title" />
-            <p class="doc-comment-modal-copy" x-text="$store.chat.audioRecorderStatusLabel || 'Record and attach an encrypted voice note.'"></p>
+            <p class="doc-comment-modal-copy" x-text="$store.chat.audioRecorderTitle"></p>
+            <p class="doc-comment-modal-copy" x-text="$store.chat.audioRecorderStatusLabel || 'Recording starts immediately and uploads when you stop.'"></p>
             <template x-if="$store.chat.audioRecorderError">
               <p class="error-text" x-text="$store.chat.audioRecorderError"></p>
             </template>
@@ -1940,7 +2097,7 @@
               <button type="button" class="btn-cancel" @click="$store.chat.closeAudioRecorder()">Cancel</button>
               <button type="button" class="btn-secondary" x-show="$store.chat.audioRecorderState === 'idle'" @click="$store.chat.startAudioRecording()">Start</button>
               <button type="button" class="btn-secondary" x-show="$store.chat.audioRecorderState === 'recording'" @click="$store.chat.stopAudioRecording()">Stop</button>
-              <button type="button" class="btn-confirm" x-show="$store.chat.audioRecorderState === 'ready'" @click="$store.chat.attachRecordedAudioDraft()">Attach</button>
+              <button type="button" class="btn-confirm" x-show="$store.chat.audioRecorderState === 'ready'" @click="$store.chat.attachRecordedAudioDraft()">Retry upload</button>
             </div>
           </div>
         </div>

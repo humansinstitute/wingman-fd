@@ -13,6 +13,10 @@ import db, {
   getPendingWrites,
   saveSettings,
   getSettings,
+  upsertWorkspaceSettings,
+  getWorkspaceSettings,
+  cacheStorageImage,
+  getCachedStorageImage,
 } from '../src/db.js';
 
 // Clear all tables between tests
@@ -154,6 +158,41 @@ describe('app DB operations', () => {
     expect(s.backendUrl).toBe('https://api.test');
     expect(s.ownerNpub).toBe('npub_x');
     expect(s.botNpub).toBe('npub_y');
+  });
+
+  it('workspace settings round-trip by workspace owner', async () => {
+    await upsertWorkspaceSettings({
+      workspace_owner_npub: 'npub_workspace',
+      record_id: 'workspace-settings:npub_workspace',
+      owner_npub: 'npub_workspace',
+      wingman_harness_url: 'https://wm21.otherstuff.ai',
+      group_ids: ['gpub_workspace'],
+      version: 3,
+      updated_at: '2026-03-16T00:00:00.000Z',
+    });
+
+    const settings = await getWorkspaceSettings('npub_workspace');
+    expect(settings?.record_id).toBe('workspace-settings:npub_workspace');
+    expect(settings?.wingman_harness_url).toBe('https://wm21.otherstuff.ai');
+    expect(settings?.group_ids).toEqual(['gpub_workspace']);
+    expect(settings?.version).toBe(3);
+  });
+
+  it('storage image cache round-trip', async () => {
+    const blob = new Blob([Uint8Array.from([137, 80, 78, 71])], { type: 'image/png' });
+    await cacheStorageImage({
+      object_id: 'img-1',
+      blob,
+      content_type: 'image/png',
+      cached_at: 123,
+    });
+
+    const cached = await getCachedStorageImage('img-1');
+    expect(cached?.object_id).toBe('img-1');
+    expect(cached?.content_type).toBe('image/png');
+    expect(cached?.cached_at).toBe(123);
+    expect(cached?.blob).toBeInstanceOf(Blob);
+    expect(cached?.blob.size).toBe(blob.size);
   });
 
   it('recent chat changes exclude deleted rows and sort newest first', async () => {

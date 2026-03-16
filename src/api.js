@@ -68,6 +68,13 @@ export async function addGroupMember(groupId, { member_npub, wrapped_group_nsec,
   return json(resp);
 }
 
+export async function deleteGroupMember(groupId, memberNpub) {
+  const resp = await signedFetch(`/api/v4/groups/${groupId}/members/${encodeURIComponent(memberNpub)}`, {
+    method: 'DELETE',
+  });
+  return json(resp);
+}
+
 export async function getGroups(npub) {
   const resp = await signedFetch(`/api/v4/groups?npub=${encodeURIComponent(npub)}`);
   return json(resp);
@@ -172,6 +179,16 @@ export async function downloadStorageObject(objectId) {
     throw new Error(`API ${resp.status}: ${text}`);
   }
   return new Uint8Array(await resp.arrayBuffer());
+}
+
+export async function downloadStorageObjectBlob(objectId) {
+  const { download_url: downloadUrl } = await getStorageDownloadUrl(objectId);
+  const resp = await fetch(downloadUrl);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`API ${resp.status}: ${text}`);
+  }
+  return resp.blob();
 }
 
 // --- Records sync ---

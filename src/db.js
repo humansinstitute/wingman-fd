@@ -82,6 +82,43 @@ db.version(6).stores({
   sync_state:    'key',
 });
 
+db.version(7).stores({
+  app_settings:       '++id',
+  workspace_settings: '&workspace_owner_npub, record_id, updated_at',
+  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
+  groups:             'group_id, owner_npub, *member_npubs',
+  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
+  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+  audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
+  scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+  pending_writes:     '++row_id, record_id, record_family_hash, created_at',
+  profiles:           'pubkey',
+  address_book:       'npub, last_used_at',
+  sync_state:         'key',
+});
+
+db.version(8).stores({
+  app_settings:       '++id',
+  workspace_settings: '&workspace_owner_npub, record_id, updated_at',
+  storage_image_cache:'&object_id, cached_at',
+  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
+  groups:             'group_id, owner_npub, *member_npubs',
+  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
+  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+  audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
+  scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+  pending_writes:     '++row_id, record_id, record_family_hash, created_at',
+  profiles:           'pubkey',
+  address_book:       'npub, last_used_at',
+  sync_state:         'key',
+});
+
 export default db;
 
 function sanitizeForStorage(value) {
@@ -104,6 +141,34 @@ export async function saveSettings(settings) {
   return db.app_settings.add(sanitized);
 }
 
+// --- workspace_settings helpers ---
+
+export async function getWorkspaceSettings(workspaceOwnerNpub) {
+  if (!workspaceOwnerNpub) return null;
+  return db.workspace_settings.get(workspaceOwnerNpub);
+}
+
+export async function upsertWorkspaceSettings(settings) {
+  return db.workspace_settings.put(sanitizeForStorage(settings));
+}
+
+// --- storage_image_cache helpers ---
+
+export async function getCachedStorageImage(objectId) {
+  if (!objectId) return null;
+  return db.storage_image_cache.get(objectId);
+}
+
+export async function cacheStorageImage({ object_id, blob, content_type = '', cached_at = Date.now() }) {
+  if (!object_id || !(blob instanceof Blob)) return null;
+  return db.storage_image_cache.put({
+    object_id,
+    blob,
+    content_type,
+    cached_at,
+  });
+}
+
 // --- channels ---
 
 export async function getChannelsByOwner(ownerNpub) {
@@ -112,7 +177,7 @@ export async function getChannelsByOwner(ownerNpub) {
 }
 
 export async function upsertChannel(channel) {
-  return db.channels.put(channel);
+  return db.channels.put(sanitizeForStorage(channel));
 }
 
 export async function getChannelById(recordId) {
@@ -127,7 +192,7 @@ export async function getDirectoriesByOwner(ownerNpub) {
 }
 
 export async function upsertDirectory(directory) {
-  return db.directories.put(directory);
+  return db.directories.put(sanitizeForStorage(directory));
 }
 
 export async function getDirectoryById(recordId) {
@@ -142,7 +207,7 @@ export async function getDocumentsByOwner(ownerNpub) {
 }
 
 export async function upsertDocument(document) {
-  return db.documents.put(document);
+  return db.documents.put(sanitizeForStorage(document));
 }
 
 export async function getDocumentById(recordId) {
@@ -157,7 +222,7 @@ export async function getMessagesByChannel(channelId) {
 }
 
 export async function upsertMessage(msg) {
-  return db.chat_messages.put(msg);
+  return db.chat_messages.put(sanitizeForStorage(msg));
 }
 
 export async function getMessageById(recordId) {
@@ -196,7 +261,7 @@ export async function getAllGroups() {
 }
 
 export async function upsertGroup(group) {
-  return db.groups.put(group);
+  return db.groups.put(sanitizeForStorage(group));
 }
 
 export async function deleteGroupById(groupId) {
@@ -235,7 +300,7 @@ const PROFILE_CACHE_HOURS = 24;
 export async function cacheProfile(pubkey, profile) {
   return db.profiles.put({
     pubkey,
-    profile,
+    profile: sanitizeForStorage(profile),
     cachedAt: Date.now(),
   });
 }
@@ -256,7 +321,7 @@ export async function getCachedProfile(pubkey) {
 // --- pending_writes ---
 
 export async function addPendingWrite(write) {
-  return db.pending_writes.add({ ...write, created_at: new Date().toISOString() });
+  return db.pending_writes.add(sanitizeForStorage({ ...write, created_at: new Date().toISOString() }));
 }
 
 export async function getPendingWrites() {
@@ -297,7 +362,7 @@ export async function getRecentTaskChangesSince(sinceIso) {
 }
 
 export async function upsertTask(task) {
-  return db.tasks.put(task);
+  return db.tasks.put(sanitizeForStorage(task));
 }
 
 export async function getTaskById(recordId) {
@@ -321,7 +386,7 @@ export async function getRecentCommentsSince(sinceIso) {
 }
 
 export async function upsertComment(comment) {
-  return db.comments.put(comment);
+  return db.comments.put(sanitizeForStorage(comment));
 }
 
 // --- audio notes ---
@@ -332,7 +397,7 @@ export async function getAudioNotesByOwner(ownerNpub) {
 }
 
 export async function upsertAudioNote(audioNote) {
-  return db.audio_notes.put(audioNote);
+  return db.audio_notes.put(sanitizeForStorage(audioNote));
 }
 
 export async function getAudioNoteById(recordId) {
