@@ -50,6 +50,24 @@ async function signedFetch(path, { method = 'GET', body } = {}) {
   });
 }
 
+async function signedFetchBytes(path) {
+  const resp = await signedFetch(path);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`API ${resp.status}: ${text}`);
+  }
+  return new Uint8Array(await resp.arrayBuffer());
+}
+
+async function signedFetchBlob(path) {
+  const resp = await signedFetch(path);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`API ${resp.status}: ${text}`);
+  }
+  return resp.blob();
+}
+
 // --- Groups ---
 
 export async function createGroup({ owner_npub, name, group_npub, member_keys }) {
@@ -64,6 +82,14 @@ export async function addGroupMember(groupId, { member_npub, wrapped_group_nsec,
   const resp = await signedFetch(`/api/v4/groups/${groupId}/members`, {
     method: 'POST',
     body: { member_npub, wrapped_group_nsec, wrapped_by_npub },
+  });
+  return json(resp);
+}
+
+export async function rotateGroup(groupId, { group_npub, member_keys, name }) {
+  const resp = await signedFetch(`/api/v4/groups/${groupId}/rotate`, {
+    method: 'POST',
+    body: { group_npub, member_keys, name },
   });
   return json(resp);
 }
@@ -171,24 +197,17 @@ export async function getStorageDownloadUrl(objectId) {
   return json(resp);
 }
 
+export async function getStorageObject(objectId) {
+  const resp = await signedFetch(`/api/v4/storage/${objectId}`);
+  return json(resp);
+}
+
 export async function downloadStorageObject(objectId) {
-  const { download_url: downloadUrl } = await getStorageDownloadUrl(objectId);
-  const resp = await fetch(downloadUrl);
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`API ${resp.status}: ${text}`);
-  }
-  return new Uint8Array(await resp.arrayBuffer());
+  return signedFetchBytes(`/api/v4/storage/${objectId}/content`);
 }
 
 export async function downloadStorageObjectBlob(objectId) {
-  const { download_url: downloadUrl } = await getStorageDownloadUrl(objectId);
-  const resp = await fetch(downloadUrl);
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`API ${resp.status}: ${text}`);
-  }
-  return resp.blob();
+  return signedFetchBlob(`/api/v4/storage/${objectId}/content`);
 }
 
 // --- Records sync ---
@@ -198,10 +217,10 @@ export async function syncRecords({ owner_npub, records }) {
   const groupWriteTokens = {};
 
   for (const record of records) {
-    const groupNpub = String(record?.write_group_npub || '').trim();
-    if (!groupNpub || groupWriteTokens[groupNpub]) continue;
-    groupWriteTokens[groupNpub] = await createGroupWriteAuthHeader(
-      groupNpub,
+    const groupRef = String(record?.write_group_id || record?.write_group_npub || '').trim();
+    if (!groupRef || groupWriteTokens[groupRef]) continue;
+    groupWriteTokens[groupRef] = await createGroupWriteAuthHeader(
+      groupRef,
       url('/api/v4/records/sync'),
       'POST',
       proofPayload,

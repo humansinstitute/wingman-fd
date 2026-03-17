@@ -4,6 +4,7 @@
  */
 
 import Alpine from 'alpinejs';
+import { commentBelongsToDocBlock } from './doc-comment-anchors.js';
 
 /** Strip Alpine proxy wrappers so objects survive IndexedDB structured clone. */
 function toRaw(obj) {
@@ -24,6 +25,7 @@ import {
   getRecentDocumentChangesSince,
   getRecentDirectoryChangesSince,
   getRecentTaskChangesSince,
+  getRecentScheduleChangesSince,
   getRecentCommentsSince,
   upsertChannel,
   upsertMessage,
@@ -38,6 +40,9 @@ import {
   getTasksByOwner,
   upsertTask,
   getTaskById,
+  getSchedulesByOwner,
+  upsertSchedule,
+  getScheduleById,
   getCommentsByTarget,
   upsertComment,
   upsertAudioNote,
@@ -58,6 +63,7 @@ import {
   setBaseUrl,
   createGroup,
   addGroupMember,
+  rotateGroup,
   deleteGroupMember,
   updateGroup,
   getGroups,
@@ -70,6 +76,7 @@ import {
   completeStorageObject,
   downloadStorageObject,
   downloadStorageObjectBlob,
+  fetchRecords,
 } from './api.js';
 import {
   outboundChatMessage,
@@ -87,8 +94,9 @@ import {
   formatStateLabel,
   parseTags as parseTaskTags,
 } from './translators/tasks.js';
-import { outboundComment } from './translators/comments.js';
-import { outboundAudioNote } from './translators/audio-notes.js';
+import { outboundSchedule } from './translators/schedules.js';
+import { inboundComment, outboundComment } from './translators/comments.js';
+import { inboundAudioNote, outboundAudioNote } from './translators/audio-notes.js';
 import { recordFamilyHash as taskFamilyHash } from './translators/tasks.js';
 import {
   outboundScope,
@@ -128,6 +136,7 @@ import { buildSuperBasedConnectionToken } from './superbased-token.js';
 import { decryptAudioBytes, encryptAudioBlob, measureAudioDuration } from './audio-notes.js';
 
 const TASK_BOARD_STORAGE_KEY = 'coworker:last-task-board-id';
+const WEEKDAY_OPTIONS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 function guessDefaultBackendUrl() {
   return DEFAULT_SUPERBASED_URL || (typeof window === 'undefined' ? '' : window.location.origin);
@@ -218,6 +227,7 @@ function parseRouteLocation() {
   let section = 'chat';
   if (path === '/notifications' || path === '/status') section = 'status';
   else if (path === '/tasks') section = 'tasks';
+  else if (path === '/schedules') section = 'schedules';
   else if (path === '/chat') section = 'chat';
   else if (path === '/docs') section = 'docs';
   else if (path === '/people') section = 'people';
@@ -289,6 +299,7 @@ export function initApp() {
     selectedDocCommentId: null,
     activeTaskId: null,
     tasks: [],
+    schedules: [],
     taskComments: [],
     taskCommentAudioDrafts: [],
     taskFilter: '',
@@ -301,6 +312,20 @@ export function initApp() {
     newTaskCommentBody: '',
     copiedTaskLinkId: null,
     editingTask: null,
+    taskAssigneeQuery: '',
+    showNewScheduleModal: false,
+    newScheduleTitle: '',
+    newScheduleDescription: '',
+    newScheduleStart: '09:00',
+    newScheduleEnd: '10:00',
+    newScheduleDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
+    newScheduleTimezone: 'Australia/Perth',
+    newScheduleRepeat: 'daily',
+    newScheduleAssignedGroupId: null,
+    newScheduleGroupQuery: '',
+    editingScheduleId: null,
+    editingScheduleDraft: null,
+    editingScheduleGroupQuery: '',
     showTaskDetail: false,
     _dragTaskId: null,
     _taskWasDragged: false,
@@ -377,6 +402,8 @@ export function initApp() {
     workspaceSettingsVersion: 0,
     workspaceSettingsGroupIds: [],
     workspaceHarnessUrl: '',
+    defaultAgentNpub: '',
+    defaultAgentQuery: '',
     wingmanHarnessInput: '',
     wingmanHarnessError: null,
     wingmanHarnessDirty: false,
@@ -460,7 +487,11 @@ export function initApp() {
     },
 
     get memberPrivateGroupNpub() {
-      return this.memberPrivateGroup?.group_npub || this.currentWorkspace?.privateGroupNpub || null;
+      return this.memberPrivateGroup?.group_id
+        || this.currentWorkspace?.privateGroupId
+        || this.memberPrivateGroup?.group_npub
+        || this.currentWorkspace?.privateGroupNpub
+        || null;
     },
 
     get superbasedTransportLabel() {
@@ -666,10 +697,10 @@ export function initApp() {
         boards.push({ id: this.memberPrivateGroupNpub, label: 'Private' });
       }
       for (const group of this.currentWorkspaceGroups) {
-        if ((group.group_npub || group.group_id) === this.memberPrivateGroupNpub) continue;
+        if ((group.group_id || group.group_npub) === this.memberPrivateGroupNpub) continue;
         boards.push({
-          id: group.group_npub || group.group_id,
-          label: group.name || group.group_npub || group.group_id,
+          id: group.group_id || group.group_npub,
+          label: group.name || group.group_id || group.group_npub,
         });
       }
       return boards;
@@ -685,6 +716,78 @@ export function initApp() {
       const query = String(this.boardPickerQuery || '').trim().toLowerCase();
       if (!query) return this.taskBoards;
       return this.taskBoards.filter((board) => String(board.label || '').toLowerCase().includes(query));
+    },
+
+    get weekdayOptions() {
+      return WEEKDAY_OPTIONS;
+    },
+
+    resolveGroupId(groupRef) {
+      const value = String(groupRef || '').trim();
+      if (!value) return null;
+      const group = this.groups.find((item) => item.group_id === value || item.group_npub === value);
+      return group?.group_id || group?.group_npub || value;
+    },
+
+    normalizeTaskRowGroupRefs(task) {
+      if (!task || typeof task !== 'object') return task;
+
+      const nextBoardId = this.resolveGroupId(task.board_group_id);
+      const nextGroupIds = [...new Set((task.group_ids || [])
+        .map((value) => this.resolveGroupId(value))
+        .filter(Boolean))];
+      const nextShares = Array.isArray(task.shares)
+        ? task.shares.map((share) => ({
+            ...share,
+            group_npub: this.resolveGroupId(share?.group_npub),
+            via_group_npub: this.resolveGroupId(share?.via_group_npub),
+          }))
+        : task.shares;
+
+      const changed = nextBoardId !== (task.board_group_id ?? null)
+        || JSON.stringify(nextGroupIds) !== JSON.stringify(task.group_ids || [])
+        || JSON.stringify(nextShares) !== JSON.stringify(task.shares || []);
+
+      if (!changed) return task;
+
+      return {
+        ...task,
+        board_group_id: nextBoardId,
+        group_ids: nextGroupIds,
+        shares: nextShares,
+      };
+    },
+
+    normalizeScheduleRowGroupRefs(schedule) {
+      if (!schedule || typeof schedule !== 'object') return schedule;
+
+      const nextAssignedGroupId = this.resolveGroupId(schedule.assigned_group_id);
+      const nextGroupIds = [...new Set((schedule.group_ids || [])
+        .map((value) => this.resolveGroupId(value))
+        .filter(Boolean))];
+      const nextShares = Array.isArray(schedule.shares)
+        ? schedule.shares.map((share) => {
+            if (typeof share === 'string') return this.resolveGroupId(share);
+            return {
+              ...share,
+              group_npub: this.resolveGroupId(share?.group_npub),
+              via_group_npub: this.resolveGroupId(share?.via_group_npub),
+            };
+          })
+        : schedule.shares;
+
+      const changed = nextAssignedGroupId !== (schedule.assigned_group_id ?? null)
+        || JSON.stringify(nextGroupIds) !== JSON.stringify(schedule.group_ids || [])
+        || JSON.stringify(nextShares) !== JSON.stringify(schedule.shares || []);
+
+      if (!changed) return schedule;
+
+      return {
+        ...schedule,
+        assigned_group_id: nextAssignedGroupId,
+        group_ids: nextGroupIds,
+        shares: nextShares,
+      };
     },
 
     toggleBoardPicker() {
@@ -738,7 +841,7 @@ export function initApp() {
 
     get boardScopedTasks() {
       const tasks = this.tasks.filter((task) => task.record_state !== 'deleted');
-      return tasks.filter((task) => task.board_group_id === this.selectedBoardId);
+      return tasks.filter((task) => this.resolveGroupId(task.board_group_id) === this.selectedBoardId);
     },
 
     get filteredTasks() {
@@ -811,8 +914,16 @@ export function initApp() {
     },
 
     getTaskBoardLabel(boardGroupId) {
-      if (boardGroupId && boardGroupId === this.memberPrivateGroupNpub) return 'Private board';
-      return this.taskBoards.find((board) => board.id === boardGroupId)?.label || 'Group board';
+      const resolvedBoardId = this.resolveGroupId(boardGroupId);
+      if (resolvedBoardId && resolvedBoardId === this.memberPrivateGroupNpub) return 'Private board';
+      return this.taskBoards.find((board) => board.id === resolvedBoardId)?.label || 'Group board';
+    },
+
+    getScheduleAssignedGroupLabel(groupId) {
+      const resolvedGroupId = this.resolveGroupId(groupId);
+      if (!resolvedGroupId) return 'Unassigned';
+      if (resolvedGroupId === this.memberPrivateGroupNpub) return 'Private group';
+      return this.scheduleAssignableGroups.find((group) => group.groupId === resolvedGroupId)?.label || resolvedGroupId;
     },
 
     getPreferredChannelWriteGroup(channel) {
@@ -882,7 +993,7 @@ export function initApp() {
         }));
 
       const groups = this.groups
-        .filter((group) => !sharedGroups.has(group.group_npub || group.group_id))
+        .filter((group) => !sharedGroups.has(group.group_id || group.group_npub))
         .filter((group) =>
           String(group.name || '').toLowerCase().includes(needle)
           || (group.member_npubs || []).some((member) => member.toLowerCase().includes(needle))
@@ -890,8 +1001,8 @@ export function initApp() {
         .slice(0, 6)
         .map((group) => ({
           type: 'group',
-          key: `group:${group.group_npub || group.group_id}`,
-          group_npub: group.group_npub || group.group_id,
+          key: `group:${group.group_id || group.group_npub}`,
+          group_npub: group.group_id || group.group_npub,
           label: group.name,
           subtitle: `${(group.member_npubs || []).length} members`,
         }));
@@ -907,8 +1018,71 @@ export function initApp() {
       return this.findGroupMemberSuggestions(this.editGroupMemberQuery, this.editGroupMembers);
     },
 
+    get taskAssigneeSuggestions() {
+      return this.findPeopleSuggestions(this.taskAssigneeQuery, [this.editingTask?.assigned_to_npub]);
+    },
+
+    get scheduleAssignableGroups() {
+      return this.taskBoards.map((board) => ({
+        groupId: board.id,
+        label: board.label,
+        subtitle: board.id === this.memberPrivateGroupNpub ? 'Private group' : board.id,
+      }));
+    },
+
+    get newScheduleGroupSuggestions() {
+      return this.findScheduleGroupSuggestions(
+        this.newScheduleGroupQuery,
+        [this.newScheduleAssignedGroupId],
+      );
+    },
+
+    get editingScheduleGroupSuggestions() {
+      return this.findScheduleGroupSuggestions(
+        this.editingScheduleGroupQuery,
+        [this.editingScheduleDraft?.assigned_group_id],
+      );
+    },
+
+    get defaultAgentSuggestions() {
+      return this.findPeopleSuggestions(this.defaultAgentQuery, [this.defaultAgentNpub]);
+    },
+
+    get defaultAgentLabel() {
+      return this.defaultAgentNpub ? this.getSenderName(this.defaultAgentNpub) : '';
+    },
+
+    get canDoTaskWithDefaultAgent() {
+      return Boolean(this.defaultAgentNpub && this.editingTask);
+    },
+
     get groupActionsLocked() {
       return this.groupCreatePending || this.groupEditPending || !!this.groupDeletePendingId;
+    },
+
+    findPeopleSuggestions(query, excludeNpubs = [], candidateNpubs = null) {
+      const needle = String(query || '').trim().toLowerCase();
+      if (!needle) return [];
+
+      const existing = new Set((excludeNpubs || []).map((value) => String(value || '').trim()).filter(Boolean));
+      const allowed = candidateNpubs?.length
+        ? new Set(candidateNpubs.map((value) => String(value || '').trim()).filter(Boolean))
+        : null;
+      return this.addressBookPeople
+        .filter((person) => !allowed || allowed.has(person.npub))
+        .filter((person) => !existing.has(person.npub))
+        .filter((person) =>
+          String(person.npub || '').toLowerCase().includes(needle)
+          || String(this.getSenderName(person.npub) || '').toLowerCase().includes(needle)
+          || String(person.label || '').toLowerCase().includes(needle)
+        )
+        .slice(0, 8)
+        .map((person) => ({
+          npub: person.npub,
+          label: this.getSenderName(person.npub),
+          subtitle: person.npub,
+          avatarUrl: this.getSenderAvatar(person.npub),
+        }));
     },
 
     findGroupMemberSuggestions(query, selectedMembers = []) {
@@ -929,6 +1103,21 @@ export function initApp() {
           label: this.getSenderName(person.npub),
           avatarUrl: this.getSenderAvatar(person.npub),
         }));
+    },
+
+    findScheduleGroupSuggestions(query, excludeGroupIds = []) {
+      const needle = String(query || '').trim().toLowerCase();
+      if (!needle) return [];
+
+      const existing = new Set((excludeGroupIds || []).map((value) => this.resolveGroupId(value)).filter(Boolean));
+      return this.scheduleAssignableGroups
+        .filter((group) => !existing.has(group.groupId))
+        .filter((group) =>
+          String(group.label || '').toLowerCase().includes(needle)
+          || String(group.groupId || '').toLowerCase().includes(needle)
+          || String(group.subtitle || '').toLowerCase().includes(needle)
+        )
+        .slice(0, 8);
     },
 
     mapGroupDraftMembers(memberNpubs = []) {
@@ -1079,13 +1268,23 @@ export function initApp() {
     },
 
     getWorkspaceSettingsGroupNpub() {
-      return this.currentWorkspace?.defaultGroupNpub || this.memberPrivateGroupNpub || null;
+      return this.currentWorkspace?.defaultGroupId
+        || this.currentWorkspace?.defaultGroupNpub
+        || this.memberPrivateGroupNpub
+        || null;
     },
 
     handleHarnessInput(value) {
       this.wingmanHarnessInput = value;
       this.wingmanHarnessDirty = true;
       this.wingmanHarnessError = null;
+    },
+
+    handleDefaultAgentInput(value) {
+      this.defaultAgentQuery = value;
+      if (this.defaultAgentQuery.startsWith('npub1') && this.defaultAgentQuery.length >= 20) {
+        this.resolveChatProfile(this.defaultAgentQuery);
+      }
     },
 
     async persistWorkspaceSettings() {
@@ -1098,6 +1297,7 @@ export function initApp() {
         useCvmSync: this.useCvmSync,
         knownWorkspaces: this.knownWorkspaces,
         currentWorkspaceOwnerNpub: this.currentWorkspaceOwnerNpub || '',
+        defaultAgentNpub: this.defaultAgentNpub || '',
       });
     },
 
@@ -1121,12 +1321,15 @@ export function initApp() {
         this.documents = [];
         this.directories = [];
         this.tasks = [];
+        this.schedules = [];
         this.audioNotes = [];
         this.taskComments = [];
+        this.showNewScheduleModal = false;
+        this.cancelEditSchedule();
         this.hasForcedInitialBackfill = false;
       }
 
-      this.selectedBoardId = this.readStoredTaskBoardId() || workspace.privateGroupNpub || null;
+      this.selectedBoardId = this.readStoredTaskBoardId() || workspace.privateGroupId || workspace.privateGroupNpub || null;
       this.validateSelectedBoardId();
       await this.persistWorkspaceSettings();
       await this.refreshWorkspaceSettings();
@@ -1138,6 +1341,7 @@ export function initApp() {
         await this.refreshDirectories();
         await this.refreshDocuments();
         await this.refreshTasks();
+        await this.refreshSchedules();
         await this.refreshScopes();
         await this.refreshStatusRecentChanges();
       }
@@ -1260,6 +1464,7 @@ export function initApp() {
         this.backendUrl = normalizeBackendUrl(settings.backendUrl ?? '');
         this.ownerNpub = settings.ownerNpub ?? '';
         this.botNpub = settings.botNpub ?? '';
+        this.defaultAgentNpub = settings.defaultAgentNpub ?? '';
         this.superbasedTokenInput = settings.connectionToken ?? '';
         this.useCvmSync = settings.useCvmSync ?? this.useCvmSync;
         this.currentWorkspaceOwnerNpub = settings.currentWorkspaceOwnerNpub ?? '';
@@ -1301,9 +1506,11 @@ export function initApp() {
       await this.refreshDirectories();
       await this.refreshDocuments();
       await this.refreshTasks();
+      await this.refreshSchedules();
       await this.applyRouteFromLocation();
       await this.refreshSyncStatus();
       await this.refreshStatusRecentChanges();
+      if (this.defaultAgentNpub) this.resolveChatProfile(this.defaultAgentNpub);
     },
 
     initRouteSync() {
@@ -1377,6 +1584,8 @@ export function initApp() {
           return '/notifications';
         case 'tasks':
           return '/tasks';
+        case 'schedules':
+          return '/schedules';
         case 'chat':
           return '/chat';
         case 'docs':
@@ -1455,7 +1664,7 @@ export function initApp() {
             this.loadDocEditorFromSelection();
           }
         } else if (route.section === 'tasks') {
-          this.selectedBoardId = route.params.groupid ?? this.readStoredTaskBoardId() ?? this.memberPrivateGroupNpub;
+          this.selectedBoardId = this.resolveGroupId(route.params.groupid ?? this.readStoredTaskBoardId() ?? this.memberPrivateGroupNpub);
           this.validateSelectedBoardId();
           this.normalizeTaskFilterTags();
           this.persistSelectedBoardId(this.selectedBoardId);
@@ -1464,6 +1673,8 @@ export function initApp() {
           } else {
             this.closeTaskDetail();
           }
+        } else if (route.section === 'schedules') {
+          this.cancelEditSchedule();
         }
       } finally {
         this.routeSyncPaused = false;
@@ -1610,6 +1821,7 @@ export function initApp() {
       this.workspaceSettingsVersion = 0;
       this.workspaceSettingsGroupIds = [];
       this.workspaceHarnessUrl = '';
+      this.defaultAgentQuery = '';
       this.wingmanHarnessInput = '';
       this.wingmanHarnessError = null;
       this.wingmanHarnessDirty = false;
@@ -1696,6 +1908,22 @@ export function initApp() {
       });
       await this.refreshSyncStatus();
       this.ensureBackgroundSync(true);
+    },
+
+    async selectDefaultAgent(npub) {
+      const nextNpub = String(npub || '').trim();
+      this.defaultAgentNpub = nextNpub;
+      this.defaultAgentQuery = '';
+      if (nextNpub) {
+        await this.rememberPeople([nextNpub], 'default-agent');
+      }
+      await this.persistWorkspaceSettings();
+    },
+
+    async clearDefaultAgent() {
+      this.defaultAgentNpub = '';
+      this.defaultAgentQuery = '';
+      await this.persistWorkspaceSettings();
     },
 
     async saveConnectionSettings() {
@@ -1808,6 +2036,10 @@ export function initApp() {
     navigateTo(section, options = {}) {
       this.navSection = section;
       this.mobileNavOpen = false;
+      if (section !== 'schedules') {
+        this.showNewScheduleModal = false;
+        this.cancelEditSchedule();
+      }
       if (section !== 'docs') {
         this.selectedDocCommentId = null;
       }
@@ -1827,6 +2059,7 @@ export function initApp() {
       if (this.navSection === 'chat' && this.selectedChannelId) return this.FAST_SYNC_MS;
       if (this.navSection === 'docs') return this.FAST_SYNC_MS;
       if (this.navSection === 'tasks') return this.FAST_SYNC_MS;
+      if (this.navSection === 'schedules') return this.FAST_SYNC_MS;
       if (this.navSection === 'scopes') return this.FAST_SYNC_MS;
       return this.IDLE_SYNC_MS;
     },
@@ -1916,6 +2149,7 @@ export function initApp() {
         await this.refreshDirectories();
         await this.refreshDocuments();
         await this.refreshTasks();
+        await this.refreshSchedules();
         await this.refreshScopes();
         if (this.docsEditorOpen && this.selectedDocId) {
           await this.loadDocComments(this.selectedDocId);
@@ -1968,6 +2202,7 @@ export function initApp() {
         const mappedGroups = groups.map((group) => ({
           group_id: group.id ?? group.group_id,
           group_npub: group.group_npub ?? group.group_id ?? group.id,
+          current_epoch: Number(group.current_epoch || 1),
           owner_npub: group.owner_npub,
           name: group.name,
           group_kind: group.group_kind || 'shared',
@@ -2009,6 +2244,7 @@ export function initApp() {
       const group = {
         group_id: response.group_id ?? response.id ?? groupNpub,
         group_npub: groupNpub,
+        current_epoch: Number(response.current_epoch || 1),
         owner_npub: ownerNpub,
         name: response.name ?? name,
         group_kind: response.group_kind || 'shared',
@@ -2027,9 +2263,9 @@ export function initApp() {
       if (!ownerNpub) throw new Error('Sign in first');
 
       const group = this.groups.find((item) => item.group_id === groupId || item.group_npub === groupId);
-      if (!group?.group_npub) throw new Error('Group not found');
+      if (!group?.group_id) throw new Error('Group not found');
 
-      await addGroupMember(group.group_id || groupId, await wrapKnownGroupKeyForMember(group.group_npub, memberNpub, ownerNpub));
+      await addGroupMember(group.group_id || groupId, await wrapKnownGroupKeyForMember(group.group_id || group.group_npub, memberNpub, ownerNpub));
       await this.rememberPeople([memberNpub], 'group');
       if (options.refresh !== false) {
         await this.refreshGroups();
@@ -2044,6 +2280,39 @@ export function initApp() {
       if (options.refresh !== false) {
         await this.refreshGroups();
       }
+    },
+
+    async rotateEncryptedGroup(groupId, memberNpubs, options = {}) {
+      const wrappedByNpub = this.session?.npub;
+      const group = this.groups.find((item) => item.group_id === groupId || item.group_npub === groupId);
+      if (!wrappedByNpub) throw new Error('Sign in first');
+      if (!group?.group_id) throw new Error('Group not found');
+
+      const nextMembers = [...new Set((memberNpubs || []).map((value) => String(value || '').trim()).filter(Boolean))];
+      const groupIdentity = createGroupIdentity();
+      const memberKeys = await buildWrappedMemberKeys(groupIdentity, nextMembers, wrappedByNpub);
+      const response = await rotateGroup(group.group_id, {
+        group_npub: groupIdentity.npub,
+        member_keys: memberKeys,
+        name: options.name || group.name,
+      });
+
+      const updatedGroup = {
+        group_id: response.group_id ?? group.group_id,
+        group_npub: response.group_npub ?? groupIdentity.npub,
+        current_epoch: Number(response.current_epoch || ((group.current_epoch || 1) + 1)),
+        owner_npub: response.owner_npub ?? group.owner_npub,
+        name: response.name ?? options.name ?? group.name,
+        group_kind: response.group_kind || group.group_kind || 'shared',
+        private_member_npub: response.private_member_npub ?? group.private_member_npub ?? null,
+        member_npubs: (response.members ?? nextMembers).map((member) => member.member_npub ?? member).filter(Boolean),
+      };
+
+      await upsertGroup(updatedGroup);
+      if (options.refresh !== false) {
+        await this.refreshGroups();
+      }
+      return updatedGroup;
     },
 
     async updateSharingGroupName(groupId, newName, options = {}) {
@@ -2535,6 +2804,7 @@ export function initApp() {
       const documents = await getRecentDocumentChangesSince(sinceIso);
       const directories = await getRecentDirectoryChangesSince(sinceIso);
       const tasks = await getRecentTaskChangesSince(sinceIso);
+      const schedules = await getRecentScheduleChangesSince(sinceIso);
       const comments = await getRecentCommentsSince(sinceIso);
       const items = [];
 
@@ -2607,6 +2877,19 @@ export function initApp() {
         });
       }
 
+      for (const schedule of schedules) {
+        items.push({
+          id: `schedule:${schedule.record_id}:${schedule.version ?? 1}`,
+          section: 'schedules',
+          recordType: 'Schedule',
+          title: schedule.title?.trim() || 'Untitled schedule',
+          subtitle: `${this.formatScheduleDays(schedule.days)} ${schedule.time_start || '??:??'}-${schedule.time_end || '??:??'}`,
+          updatedAt: schedule.updated_at,
+          updatedTs: Date.parse(schedule.updated_at) || 0,
+          recordId: schedule.record_id,
+        });
+      }
+
       for (const comment of comments) {
         if (!String(comment.target_record_family_hash || '').endsWith(':task')) continue;
         const task = await getTaskById(comment.target_record_id);
@@ -2665,6 +2948,13 @@ export function initApp() {
         } else {
           this.syncRoute();
         }
+        return;
+      }
+      if (item.section === 'schedules') {
+        this.navSection = 'schedules';
+        this.mobileNavOpen = false;
+        if (item.recordId) this.startEditSchedule(item.recordId);
+        else this.syncRoute();
         return;
       }
       if (item.section !== 'chat') return;
@@ -2821,8 +3111,266 @@ export function initApp() {
     async refreshTasks() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
-      this.tasks = await getTasksByOwner(ownerNpub);
+      const tasks = await getTasksByOwner(ownerNpub);
+      const normalizedTasks = [];
+      for (const task of tasks) {
+        const normalized = this.normalizeTaskRowGroupRefs(task);
+        normalizedTasks.push(normalized);
+        if (normalized !== task) {
+          await upsertTask(normalized);
+        }
+      }
+      this.tasks = normalizedTasks;
+      const assignedNpubs = [...new Set(normalizedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
+      if (assignedNpubs.length > 0) {
+        await this.rememberPeople(assignedNpubs, 'task-assignee');
+      }
       this.normalizeTaskFilterTags();
+    },
+
+    formatScheduleDays(days = []) {
+      const list = Array.isArray(days) ? days : [];
+      if (list.length === 0 || list.length === 7) return 'Every day';
+      return list.join(', ');
+    },
+
+    toggleNewScheduleDay(day) {
+      if (this.newScheduleDays.includes(day)) {
+        this.newScheduleDays = this.newScheduleDays.filter((value) => value !== day);
+      } else {
+        this.newScheduleDays = [...this.newScheduleDays, day];
+      }
+    },
+
+    toggleEditingScheduleDay(day) {
+      if (!this.editingScheduleDraft) return;
+      const days = Array.isArray(this.editingScheduleDraft.days) ? this.editingScheduleDraft.days : [];
+      this.editingScheduleDraft.days = days.includes(day)
+        ? days.filter((value) => value !== day)
+        : [...days, day];
+    },
+
+    resetNewScheduleForm() {
+      this.newScheduleTitle = '';
+      this.newScheduleDescription = '';
+      this.newScheduleStart = '09:00';
+      this.newScheduleEnd = '10:00';
+      this.newScheduleDays = ['mon', 'tue', 'wed', 'thu', 'fri'];
+      this.newScheduleTimezone = 'Australia/Perth';
+      this.newScheduleRepeat = 'daily';
+      this.newScheduleAssignedGroupId = this.selectedBoardId || this.memberPrivateGroupNpub || this.scheduleAssignableGroups[0]?.groupId || null;
+      this.newScheduleGroupQuery = '';
+    },
+
+    openNewScheduleModal() {
+      this.resetNewScheduleForm();
+      this.showNewScheduleModal = true;
+    },
+
+    closeNewScheduleModal() {
+      this.showNewScheduleModal = false;
+      this.resetNewScheduleForm();
+    },
+
+    handleNewScheduleGroupInput(value) {
+      this.newScheduleGroupQuery = value;
+    },
+
+    assignNewScheduleGroup(groupId) {
+      const nextGroupId = this.resolveGroupId(groupId);
+      this.newScheduleAssignedGroupId = nextGroupId || null;
+      this.newScheduleGroupQuery = '';
+    },
+
+    clearNewScheduleGroup() {
+      this.newScheduleAssignedGroupId = null;
+      this.newScheduleGroupQuery = '';
+    },
+
+    handleEditingScheduleGroupInput(value) {
+      this.editingScheduleGroupQuery = value;
+    },
+
+    assignEditingScheduleGroup(groupId) {
+      if (!this.editingScheduleDraft) return;
+      const nextGroupId = this.resolveGroupId(groupId);
+      this.editingScheduleDraft.assigned_group_id = nextGroupId || null;
+      this.editingScheduleGroupQuery = '';
+    },
+
+    clearEditingScheduleGroup() {
+      if (!this.editingScheduleDraft) return;
+      this.editingScheduleDraft.assigned_group_id = null;
+      this.editingScheduleGroupQuery = '';
+    },
+
+    async refreshSchedules() {
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub) return;
+      const schedules = await getSchedulesByOwner(ownerNpub);
+      const normalizedSchedules = [];
+      for (const schedule of schedules) {
+        const normalized = this.normalizeScheduleRowGroupRefs(schedule);
+        normalizedSchedules.push(normalized);
+        if (normalized !== schedule) {
+          await upsertSchedule(normalized);
+        }
+      }
+      this.schedules = normalizedSchedules;
+    },
+
+    async addSchedule() {
+      const title = String(this.newScheduleTitle || '').trim();
+      if (!title || !this.session?.npub) return;
+      this.error = null;
+      const ownerNpub = this.workspaceOwnerNpub;
+      const groupId = this.resolveGroupId(this.newScheduleAssignedGroupId || this.selectedBoardId || this.memberPrivateGroupNpub || this.groups[0]?.group_id || this.groups[0]?.group_npub);
+      if (!groupId) {
+        this.error = 'Select a group for the schedule.';
+        return;
+      }
+      const now = new Date().toISOString();
+      const localRow = {
+        record_id: crypto.randomUUID(),
+        owner_npub: ownerNpub,
+        title,
+        description: String(this.newScheduleDescription || '').trim(),
+        time_start: this.newScheduleStart,
+        time_end: this.newScheduleEnd,
+        days: [...this.newScheduleDays],
+        timezone: this.newScheduleTimezone || 'Australia/Perth',
+        assigned_group_id: groupId,
+        active: true,
+        last_run: null,
+        repeat: this.newScheduleRepeat || 'daily',
+        shares: groupId ? [groupId] : [],
+        group_ids: groupId ? [groupId] : [],
+        sync_status: 'pending',
+        record_state: 'active',
+        version: 1,
+        created_at: now,
+        updated_at: now,
+      };
+
+      await upsertSchedule(localRow);
+      this.schedules = [localRow, ...this.schedules];
+      this.resetNewScheduleForm();
+
+      const envelope = await outboundSchedule({
+        ...localRow,
+        signature_npub: this.session.npub,
+        write_group_npub: groupId,
+      });
+      await addPendingWrite({
+        record_id: localRow.record_id,
+        record_family_hash: envelope.record_family_hash,
+        envelope,
+      });
+      await this.performSync({ silent: false });
+      await this.refreshSchedules();
+      this.showNewScheduleModal = false;
+    },
+
+    async startEditSchedule(scheduleId) {
+      const schedule = this.schedules.find((item) => item.record_id === scheduleId);
+      if (!schedule) return;
+      this.editingScheduleId = scheduleId;
+      this.editingScheduleDraft = toRaw(schedule);
+      this.editingScheduleGroupQuery = '';
+      this.syncRoute();
+    },
+
+    cancelEditSchedule() {
+      this.editingScheduleId = null;
+      this.editingScheduleDraft = null;
+      this.editingScheduleGroupQuery = '';
+    },
+
+    async saveEditingSchedule() {
+      if (!this.editingScheduleDraft || !this.session?.npub) return;
+      this.error = null;
+      const current = await getScheduleById(this.editingScheduleDraft.record_id);
+      if (!current) {
+        this.error = 'Schedule not found.';
+        return;
+      }
+      const updated = toRaw({
+        ...current,
+        ...this.editingScheduleDraft,
+        days: [...(this.editingScheduleDraft.days || [])],
+        assigned_group_id: this.resolveGroupId(this.editingScheduleDraft.assigned_group_id),
+        group_ids: this.resolveGroupId(this.editingScheduleDraft.assigned_group_id)
+          ? [this.resolveGroupId(this.editingScheduleDraft.assigned_group_id)]
+          : [...(current.group_ids || [])],
+        shares: this.resolveGroupId(this.editingScheduleDraft.assigned_group_id)
+          ? [this.resolveGroupId(this.editingScheduleDraft.assigned_group_id)]
+          : [...(current.shares || [])],
+        version: (current.version ?? 1) + 1,
+        sync_status: 'pending',
+        updated_at: new Date().toISOString(),
+      });
+      const writeGroupId = updated.assigned_group_id || updated.group_ids?.[0] || current.group_ids?.[0] || null;
+      if (!writeGroupId) {
+        this.error = 'Schedule is missing a writable group.';
+        return;
+      }
+      await upsertSchedule(updated);
+      this.schedules = this.schedules.map((item) => item.record_id === updated.record_id ? updated : item);
+      this.editingScheduleDraft = toRaw(updated);
+
+      const envelope = await outboundSchedule({
+        ...updated,
+        previous_version: current.version ?? 1,
+        signature_npub: this.session.npub,
+        write_group_npub: writeGroupId,
+      });
+      await addPendingWrite({
+        record_id: updated.record_id,
+        record_family_hash: envelope.record_family_hash,
+        envelope,
+      });
+      await this.performSync({ silent: false });
+      await this.refreshSchedules();
+      this.cancelEditSchedule();
+    },
+
+    async toggleSchedule(scheduleId) {
+      const schedule = this.schedules.find((item) => item.record_id === scheduleId);
+      if (!schedule) return;
+      this.editingScheduleDraft = toRaw({
+        ...schedule,
+        active: !schedule.active,
+      });
+      await this.saveEditingSchedule();
+      if (this.editingScheduleId !== scheduleId) this.cancelEditSchedule();
+    },
+
+    async deleteSchedule(scheduleId) {
+      const schedule = this.schedules.find((item) => item.record_id === scheduleId);
+      if (!schedule || !this.session?.npub) return;
+      const updated = toRaw({
+        ...schedule,
+        record_state: 'deleted',
+        version: (schedule.version ?? 1) + 1,
+        sync_status: 'pending',
+        updated_at: new Date().toISOString(),
+      });
+      await upsertSchedule(updated);
+      this.schedules = this.schedules.filter((item) => item.record_id !== scheduleId);
+      if (this.editingScheduleId === scheduleId) this.cancelEditSchedule();
+
+      const envelope = await outboundSchedule({
+        ...updated,
+        previous_version: schedule.version ?? 1,
+        signature_npub: this.session.npub,
+        write_group_npub: updated.group_ids?.[0] || null,
+      });
+      await addPendingWrite({
+        record_id: updated.record_id,
+        record_family_hash: envelope.record_family_hash,
+        envelope,
+      });
+      await this.performSync({ silent: false });
     },
 
     async addTask() {
@@ -2842,6 +3390,7 @@ export function initApp() {
         priority: 'sand',
         parent_task_id: null,
         board_group_id: boardId,
+        assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
         shares: boardId ? [boardId] : [],
@@ -2894,6 +3443,7 @@ export function initApp() {
         priority: 'sand',
         parent_task_id: parentId,
         board_group_id: parent?.board_group_id ?? null,
+        assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
         shares: toRaw(parent?.shares ?? []),
@@ -2975,6 +3525,7 @@ export function initApp() {
         priority: this.editingTask.priority,
         scheduled_for: this.editingTask.scheduled_for,
         tags: this.editingTask.tags,
+        assigned_to_npub: this.editingTask.assigned_to_npub ?? null,
         scope_id: this.editingTask.scope_id ?? null,
         scope_product_id: this.editingTask.scope_product_id ?? null,
         scope_project_id: this.editingTask.scope_project_id ?? null,
@@ -3042,6 +3593,10 @@ export function initApp() {
       this.activeTaskId = taskId;
       const task = this.tasks.find(t => t.record_id === taskId);
       this.editingTask = task ? toRaw(task) : null;
+      if (this.editingTask?.assigned_to_npub) {
+        this.resolveChatProfile(this.editingTask.assigned_to_npub);
+      }
+      this.taskAssigneeQuery = '';
       this.showTaskDetail = true;
       this.newSubtaskTitle = '';
       this.newTaskCommentBody = '';
@@ -3053,9 +3608,43 @@ export function initApp() {
     closeTaskDetail() {
       this.activeTaskId = null;
       this.editingTask = null;
+      this.taskAssigneeQuery = '';
       this.showTaskDetail = false;
       this.taskComments = [];
       this.syncRoute();
+    },
+
+    handleTaskAssigneeInput(value) {
+      this.taskAssigneeQuery = value;
+      if (this.taskAssigneeQuery.startsWith('npub1') && this.taskAssigneeQuery.length >= 20) {
+        this.resolveChatProfile(this.taskAssigneeQuery);
+      }
+    },
+
+    async assignEditingTask(npub) {
+      if (!this.editingTask || !this.session?.npub) return;
+      const nextNpub = String(npub || '').trim();
+      this.editingTask.assigned_to_npub = nextNpub || null;
+      this.taskAssigneeQuery = '';
+      if (nextNpub) {
+        await this.rememberPeople([nextNpub], 'task-assignee');
+      }
+      await this.saveEditingTask();
+    },
+
+    async clearEditingTaskAssignee() {
+      await this.assignEditingTask(null);
+    },
+
+    async doTaskWithDefaultAgent() {
+      if (!this.editingTask || !this.defaultAgentNpub || !this.session?.npub) return;
+      this.editingTask.assigned_to_npub = this.defaultAgentNpub;
+      this.editingTask.state = 'ready';
+      this.taskAssigneeQuery = '';
+      await this.rememberPeople([this.defaultAgentNpub], 'task-assignee');
+      const savePromise = this.saveEditingTask();
+      this.closeTaskDetail();
+      await savePromise;
     },
 
     buildTaskUrl(taskId) {
@@ -3911,8 +4500,13 @@ export function initApp() {
         return;
       }
       const documentFamilyHash = recordFamilyHash('document');
-      const comments = (await getCommentsByTarget(docId))
+      let comments = (await getCommentsByTarget(docId))
         .filter((comment) => comment.target_record_family_hash === documentFamilyHash);
+
+      if (comments.length === 0) {
+        comments = await this.backfillDocCommentsFromBackend(docId, documentFamilyHash);
+      }
+
       this.docComments = comments;
       for (const comment of comments) {
         await this.rememberPeople([comment.sender_npub], 'doc-comment');
@@ -3923,6 +4517,53 @@ export function initApp() {
       }
       this.scheduleDocCommentConnectorUpdate();
       this.scheduleStorageImageHydration();
+    },
+
+    async backfillDocCommentsFromBackend(docId, documentFamilyHash) {
+      if (!this.backendUrl || !this.workspaceOwnerNpub || !this.session?.npub) return [];
+
+      const commentFamilyHash = recordFamilyHash('comment');
+      const audioNoteFamilyHash = recordFamilyHash('audio_note');
+
+      try {
+        const commentResult = await fetchRecords({
+          owner_npub: this.workspaceOwnerNpub,
+          viewer_npub: this.session.npub,
+          record_family_hash: commentFamilyHash,
+        });
+        const commentRecords = commentResult.records ?? commentResult ?? [];
+        const matchingComments = [];
+
+        for (const record of commentRecords) {
+          const row = await inboundComment(record);
+          await upsertComment(row);
+          if (row.target_record_id === docId && row.target_record_family_hash === documentFamilyHash) {
+            matchingComments.push(row);
+          }
+        }
+
+        if (matchingComments.length === 0) return [];
+
+        const commentIds = new Set(matchingComments.map((comment) => comment.record_id));
+        const audioResult = await fetchRecords({
+          owner_npub: this.workspaceOwnerNpub,
+          viewer_npub: this.session.npub,
+          record_family_hash: audioNoteFamilyHash,
+        });
+        const audioRecords = audioResult.records ?? audioResult ?? [];
+
+        for (const record of audioRecords) {
+          const row = await inboundAudioNote(record);
+          if (commentIds.has(row.target_record_id)) {
+            await upsertAudioNote(row);
+          }
+        }
+
+        return matchingComments;
+      } catch (error) {
+        console.debug('Doc comment backfill failed:', error?.message || error);
+        return [];
+      }
     },
 
     getDocCommentById(commentId) {
@@ -3943,9 +4584,9 @@ export function initApp() {
     getDocCommentsForBlock(block) {
       const startLine = Number(block?.start_line);
       if (!Number.isFinite(startLine)) return [];
-      return this.docComments.filter((comment) =>
-        !comment.parent_comment_id && Number(comment.anchor_line_number) === startLine && comment.record_state !== 'deleted'
-      ).sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+      return this.docComments
+        .filter((comment) => commentBelongsToDocBlock(comment, block))
+        .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
     },
 
     blockHasSelectedDocComment(block) {
@@ -4476,7 +5117,7 @@ export function initApp() {
       if (!share) return '';
       if (share.type === 'person') return this.getSenderName(share.person_npub);
       const groupNpub = share.group_npub || share.via_group_npub || '';
-      const knownGroup = this.groups.find((group) => group.group_npub === groupNpub);
+      const knownGroup = this.groups.find((group) => group.group_id === groupNpub || group.group_npub === groupNpub);
       return share.label || knownGroup?.name || 'Group';
     },
 
@@ -4605,7 +5246,7 @@ export function initApp() {
           && members[1] === [ownerNpub, personNpub].sort()[1];
       });
       if (existing) {
-        return existing.group_npub || existing.group_id;
+        return existing.group_id || existing.group_npub;
       }
 
       const group = await this.createEncryptedGroup(
@@ -4613,7 +5254,7 @@ export function initApp() {
         [personNpub],
       );
       await this.rememberPeople([personNpub], 'share');
-      return group.group_npub;
+      return group.group_id;
     },
 
     async materializeDocSharesForSync() {
@@ -5445,7 +6086,6 @@ export function initApp() {
         const name = `DM: ${profileName}`;
         const group = await this.createEncryptedGroup(name, [targetNpub]);
         const groupId = group.group_id;
-        const groupNpub = group.group_npub;
         await this.rememberPeople([ownerNpub, targetNpub], 'chat');
 
         const channelId = crypto.randomUUID();
@@ -5454,7 +6094,7 @@ export function initApp() {
           record_id: channelId,
           owner_npub: ownerNpub,
           title: name,
-          group_ids: [groupNpub],
+          group_ids: [groupId],
           participant_npubs: [memberNpub, targetNpub],
           record_state: 'active',
           version: 1,
@@ -5467,11 +6107,11 @@ export function initApp() {
           record_id: channelId,
           owner_npub: ownerNpub,
           title: name,
-          group_ids: [groupNpub],
+          group_ids: [groupId],
           participant_npubs: [memberNpub, targetNpub],
           record_state: 'active',
           signature_npub: this.session?.npub,
-          write_group_npub: groupNpub,
+          write_group_npub: groupId,
         });
 
         await addPendingWrite({
@@ -5493,11 +6133,11 @@ export function initApp() {
     async createNamedChannel() {
       const ownerNpub = this.workspaceOwnerNpub;
       const title = this.newChannelName.trim();
-      const groupNpub = this.newChannelGroupId;
-      if (!ownerNpub || !title || !groupNpub) return;
+      const groupId = this.newChannelGroupId;
+      if (!ownerNpub || !title || !groupId) return;
 
       try {
-        const group = this.groups.find(g => (g.group_npub || g.group_id) === groupNpub);
+        const group = this.groups.find(g => (g.group_id || g.group_npub) === groupId || g.group_npub === groupId);
         const participants = group?.member_npubs ?? [ownerNpub];
 
         const channelId = crypto.randomUUID();
@@ -5506,7 +6146,7 @@ export function initApp() {
           record_id: channelId,
           owner_npub: ownerNpub,
           title,
-          group_ids: [groupNpub],
+          group_ids: [groupId],
           participant_npubs: [...new Set(participants)],
           record_state: 'active',
           version: 1,
@@ -5519,11 +6159,11 @@ export function initApp() {
           record_id: channelId,
           owner_npub: ownerNpub,
           title,
-          group_ids: [groupNpub],
+          group_ids: [groupId],
           participant_npubs: [...new Set(participants)],
           record_state: 'active',
           signature_npub: this.session?.npub,
-          write_group_npub: groupNpub,
+          write_group_npub: groupId,
         });
 
         await addPendingWrite({
@@ -5663,14 +6303,18 @@ export function initApp() {
       this.groupEditPending = true;
 
       try {
-        if (trimmedName !== group.name) {
-          await this.updateSharingGroupName(group.group_id, trimmedName, { refresh: false });
-        }
-        for (const memberNpub of membersToAdd) {
-          await this.addEncryptedGroupMember(group.group_id, memberNpub, { refresh: false });
-        }
-        for (const memberNpub of membersToRemove) {
-          await this.removeEncryptedGroupMember(group.group_id, memberNpub, { refresh: false });
+        if (membersToRemove.length > 0) {
+          await this.rotateEncryptedGroup(group.group_id, desiredMembers, {
+            name: trimmedName,
+            refresh: false,
+          });
+        } else {
+          if (trimmedName !== group.name) {
+            await this.updateSharingGroupName(group.group_id, trimmedName, { refresh: false });
+          }
+          for (const memberNpub of membersToAdd) {
+            await this.addEncryptedGroupMember(group.group_id, memberNpub, { refresh: false });
+          }
         }
 
         await this.rememberPeople(desiredMembers, 'group');
@@ -5734,7 +6378,6 @@ export function initApp() {
         const name = `DM: ${memberNpub.slice(0, 12)}… + bot`;
         const group = await this.createEncryptedGroup(name, [this.botNpub]);
         const groupId = group.group_id;
-        const groupNpub = group.group_npub;
         await this.rememberPeople([memberNpub, this.botNpub], 'chat');
 
         const channelId = crypto.randomUUID();
@@ -5742,7 +6385,7 @@ export function initApp() {
           record_id: channelId,
           owner_npub: ownerNpub,
           title: name,
-          group_ids: [groupNpub],
+          group_ids: [groupId],
           participant_npubs: [memberNpub, this.botNpub],
           record_state: 'active',
           version: 1,
@@ -5755,11 +6398,11 @@ export function initApp() {
           record_id: channelId,
           owner_npub: ownerNpub,
           title: name,
-          group_ids: [groupNpub],
+          group_ids: [groupId],
           participant_npubs: [memberNpub, this.botNpub],
           record_state: 'active',
           signature_npub: this.session?.npub,
-          write_group_npub: groupNpub,
+          write_group_npub: groupId,
         });
 
         await addPendingWrite({

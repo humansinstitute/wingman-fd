@@ -119,6 +119,46 @@ db.version(8).stores({
   sync_state:         'key',
 });
 
+db.version(9).stores({
+  app_settings:       '++id',
+  workspace_settings: '&workspace_owner_npub, record_id, updated_at',
+  storage_image_cache:'&object_id, cached_at',
+  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
+  groups:             'group_id, owner_npub, *member_npubs',
+  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
+  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
+  comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+  audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
+  scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+  pending_writes:     '++row_id, record_id, record_family_hash, created_at',
+  profiles:           'pubkey',
+  address_book:       'npub, last_used_at',
+  sync_state:         'key',
+});
+
+db.version(9).stores({
+  app_settings:       '++id',
+  workspace_settings: '&workspace_owner_npub, record_id, updated_at',
+  storage_image_cache:'&object_id, cached_at',
+  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
+  groups:             'group_id, owner_npub, *member_npubs',
+  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
+  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+  audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
+  scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+  schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
+  pending_writes:     '++row_id, record_id, record_family_hash, created_at',
+  profiles:           'pubkey',
+  address_book:       'npub, last_used_at',
+  sync_state:         'key',
+});
+
 export default db;
 
 function sanitizeForStorage(value) {
@@ -369,6 +409,28 @@ export async function getTaskById(recordId) {
   return db.tasks.get(recordId);
 }
 
+// --- schedules ---
+
+export async function getSchedulesByOwner(ownerNpub) {
+  const rows = await db.schedules.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function getRecentScheduleChangesSince(sinceIso) {
+  const rows = await db.schedules.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  return rows
+    .filter((row) => row.record_state !== 'deleted')
+    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+}
+
+export async function upsertSchedule(schedule) {
+  return db.schedules.put(sanitizeForStorage(schedule));
+}
+
+export async function getScheduleById(recordId) {
+  return db.schedules.get(recordId);
+}
+
 // --- comments ---
 
 export async function getCommentsByTarget(targetRecordId) {
@@ -426,6 +488,7 @@ export async function clearRuntimeData() {
     db.documents.clear(),
     db.directories.clear(),
     db.tasks.clear(),
+    db.schedules.clear(),
     db.comments.clear(),
     db.audio_notes.clear(),
     db.scopes.clear(),

@@ -24,6 +24,7 @@ import db, {
   upsertDocument,
   upsertDirectory,
   upsertTask,
+  upsertSchedule,
   upsertComment,
   upsertAudioNote,
   upsertScope,
@@ -35,6 +36,7 @@ import { syncRecords, fetchRecords, getBaseUrl } from '../api.js';
 import { inboundChannel, inboundChatMessage, recordFamilyHash } from '../translators/chat.js';
 import { inboundDocument, inboundDirectory } from '../translators/docs.js';
 import { inboundTask } from '../translators/tasks.js';
+import { inboundSchedule, recordFamilyHash as scheduleFamilyHash } from '../translators/schedules.js';
 import { inboundComment } from '../translators/comments.js';
 import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
@@ -46,6 +48,7 @@ const MESSAGE_FAMILY = recordFamilyHash('chat_message');
 const DOCUMENT_FAMILY = recordFamilyHash('document');
 const DIRECTORY_FAMILY = recordFamilyHash('directory');
 const TASK_FAMILY = recordFamilyHash('task');
+const SCHEDULE_FAMILY = scheduleFamilyHash('schedule');
 const COMMENT_FAMILY = recordFamilyHash('comment');
 const AUDIO_NOTE_FAMILY = recordFamilyHash('audio_note');
 const SCOPE_FAMILY = recordFamilyHash('scope');
@@ -76,7 +79,7 @@ export async function flushPendingWrites(ownerNpub) {
  * Pull records from backend, translate, and materialize locally.
  */
 export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
-  const families = [SETTINGS_FAMILY, CHANNEL_FAMILY, MESSAGE_FAMILY, DIRECTORY_FAMILY, DOCUMENT_FAMILY, TASK_FAMILY, COMMENT_FAMILY, AUDIO_NOTE_FAMILY, SCOPE_FAMILY];
+  const families = [SETTINGS_FAMILY, CHANNEL_FAMILY, MESSAGE_FAMILY, DIRECTORY_FAMILY, DOCUMENT_FAMILY, TASK_FAMILY, SCHEDULE_FAMILY, COMMENT_FAMILY, AUDIO_NOTE_FAMILY, SCOPE_FAMILY];
   let totalPulled = 0;
 
   for (const family of families) {
@@ -115,6 +118,9 @@ export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
         } else if (family === TASK_FAMILY) {
           const row = await inboundTask(record);
           await upsertTask(row);
+        } else if (family === SCHEDULE_FAMILY) {
+          const row = await inboundSchedule(record);
+          await upsertSchedule(row);
         } else if (family === COMMENT_FAMILY) {
           const row = await inboundComment(record);
           await upsertComment(row);

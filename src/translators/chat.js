@@ -1,5 +1,6 @@
 import { APP_NPUB, recordFamilyNamespace } from '../app-identity.js';
 import { buildGroupPayloads, decryptRecordPayload, encryptOwnerPayload } from './record-crypto.js';
+import { buildWriteGroupFields } from './group-refs.js';
 
 /**
  * Chat translators — convert between V4 record envelopes and local Dexie rows.
@@ -23,7 +24,7 @@ export function recordFamilyHash(collectionSpace) {
 export async function inboundChannel(record) {
   const payload = await decryptRecordPayload(record);
   const data = payload.data ?? payload;
-  const groupIds = (record.group_payloads || []).map(gp => gp.group_npub);
+  const groupIds = (record.group_payloads || []).map((gp) => gp.group_id || gp.group_npub);
   const participantNpubs = Array.isArray(data.participant_npubs)
     ? data.participant_npubs
     : [record.owner_npub];
@@ -108,7 +109,7 @@ export async function outboundChatMessage({
     version,
     previous_version,
     signature_npub: signature_npub,
-    write_group_npub: write_group_npub || undefined,
+    ...buildWriteGroupFields(write_group_npub),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(channel_group_ids || [], innerPayload),
   };
@@ -156,7 +157,7 @@ export async function outboundChannel({
     version,
     previous_version,
     signature_npub,
-    write_group_npub: write_group_npub || undefined,
+    ...buildWriteGroupFields(write_group_npub),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(group_ids || [], innerPayload),
   };

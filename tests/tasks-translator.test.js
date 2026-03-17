@@ -37,6 +37,7 @@ describe('task translator — inbound', () => {
             state: 'in_progress',
             priority: 'rock',
             parent_task_id: null,
+            assigned_to_npub: 'npub_assignee',
             scheduled_for: '2026-03-15',
             tags: 'frontend,ui',
             record_state: 'active',
@@ -57,6 +58,7 @@ describe('task translator — inbound', () => {
     expect(row.state).toBe('in_progress');
     expect(row.priority).toBe('rock');
     expect(row.parent_task_id).toBeNull();
+    expect(row.assigned_to_npub).toBe('npub_assignee');
     expect(row.scheduled_for).toBe('2026-03-15');
     expect(row.tags).toBe('frontend,ui');
     expect(row.group_ids).toEqual(['gpub_abc']);
@@ -89,6 +91,49 @@ describe('task translator — inbound', () => {
     expect(row.title).toBe('Design UI');
   });
 
+  it('normalizes legacy board_group_id and shares to stable group ids when payloads include epoch metadata', async () => {
+    const record = {
+      record_id: 'task-legacy-board',
+      owner_npub: 'npub_owner',
+      version: 3,
+      updated_at: '2026-03-16T08:29:59.365Z',
+      owner_payload: {
+        ciphertext: JSON.stringify({
+          data: {
+            title: 'Legacy board task',
+            board_group_id: 'npub_old_epoch_1',
+            shares: [
+              {
+                type: 'group',
+                group_npub: 'npub_old_epoch_1',
+                access: 'write',
+              },
+            ],
+          },
+        }),
+      },
+      group_payloads: [
+        {
+          group_id: 'group-uuid-1',
+          group_epoch: 1,
+          group_npub: 'npub_old_epoch_1',
+          ciphertext: '{}',
+          write: true,
+        },
+      ],
+    };
+
+    const row = await inboundTask(record);
+
+    expect(row.board_group_id).toBe('group-uuid-1');
+    expect(row.group_ids).toEqual(['group-uuid-1']);
+    expect(row.shares).toEqual([
+      expect.objectContaining({
+        group_npub: 'group-uuid-1',
+      }),
+    ]);
+  });
+
   it('defaults missing fields', async () => {
     const record = {
       record_id: 'task-3',
@@ -115,6 +160,7 @@ describe('task translator — outbound', () => {
       description: 'Port v3',
       state: 'new',
       priority: 'rock',
+      assigned_to_npub: 'npub_assignee',
       group_ids: ['gpub_abc'],
       signature_npub: 'npub_owner',
     });
@@ -133,6 +179,7 @@ describe('task translator — outbound', () => {
     expect(payload.data.title).toBe('Build board');
     expect(payload.data.state).toBe('new');
     expect(payload.data.priority).toBe('rock');
+    expect(payload.data.assigned_to_npub).toBe('npub_assignee');
   });
 
   it('includes soft-delete state', async () => {
@@ -149,6 +196,19 @@ describe('task translator — outbound', () => {
     expect(payload.data.record_state).toBe('deleted');
     expect(envelope.version).toBe(2);
     expect(envelope.previous_version).toBe(1);
+  });
+
+  it('uses write_group_npub when the writable group ref is not a UUID', async () => {
+    const envelope = await outboundTask({
+      record_id: 'task-legacy-group',
+      owner_npub: 'npub_owner',
+      title: 'Legacy group task',
+      group_ids: ['group-uuid-1'],
+      write_group_npub: 'npub1grouprefexample',
+    });
+
+    expect(envelope.write_group_id).toBeUndefined();
+    expect(envelope.write_group_npub).toBe('npub1grouprefexample');
   });
 });
 

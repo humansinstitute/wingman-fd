@@ -2,6 +2,7 @@ import { personalDecryptFromNpub, personalEncryptForNpub } from '../auth/nostr.j
 import {
   decryptPayloadForGroup,
   getActiveSessionNpub,
+  getGroupKey,
   hasGroupKey,
 } from '../crypto/group-keys.js';
 
@@ -40,14 +41,23 @@ export async function buildGroupPayloads(groupNpubs, payload, canWriteByGroup = 
   const senderNpub = getActiveSessionNpub();
   if (!senderNpub) throw new Error('No active session available for group payload encryption.');
 
-  return Promise.all(uniqueGroups.map(async (group_npub) => ({
-    group_npub,
+  return Promise.all(uniqueGroups.map(async (groupRef) => {
+    const groupKey = getGroupKey(groupRef);
+    if (!groupKey?.group_npub) {
+      throw new Error(`No group key loaded for ${groupRef}`);
+    }
+
+    return {
+      group_id: groupKey.group_id || undefined,
+      group_epoch: groupKey.key_version || undefined,
+      group_npub: groupKey.group_npub,
     ciphertext: JSON.stringify({
       encrypted_by_npub: senderNpub,
-      ciphertext: await personalEncryptForNpub(group_npub, plaintext),
+      ciphertext: await personalEncryptForNpub(groupKey.group_npub, plaintext),
     }),
-    write: canWriteByGroup instanceof Map ? canWriteByGroup.get(group_npub) === true : true,
-  })));
+      write: canWriteByGroup instanceof Map ? canWriteByGroup.get(groupRef) === true : true,
+    };
+  }));
 }
 
 export async function decryptRecordPayload(record) {
@@ -71,7 +81,9 @@ export async function decryptRecordPayload(record) {
   }
 
   for (const payload of (record.group_payloads || [])) {
-    if (!payload?.group_npub || !payload?.ciphertext || !hasGroupKey(payload.group_npub)) continue;
+    const groupRef = payload?.group_id || payload?.group_npub;
+    const keyVersion = Number.isInteger(payload?.group_epoch) ? payload.group_epoch : null;
+    if (!groupRef || !payload?.ciphertext || !hasGroupKey(groupRef)) continue;
     try {
       const groupEnvelope = parseCiphertextEnvelope(payload.ciphertext);
       const groupCiphertext = groupEnvelope?.ciphertext || payload.ciphertext;
@@ -83,7 +95,7 @@ export async function decryptRecordPayload(record) {
       let lastError = null;
       for (const senderNpub of candidateSenders) {
         try {
-          decrypted = decryptPayloadForGroup(payload.group_npub, senderNpub, groupCiphertext);
+          decrypted = decryptPayloadForGroup(groupRef, senderNpub, groupCiphertext, { keyVersion });
           break;
         } catch (error) {
           lastError = error;

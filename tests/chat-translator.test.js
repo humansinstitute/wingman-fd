@@ -189,4 +189,17 @@ describe('chat translator — outbound', () => {
     const inner = JSON.parse(envelope.owner_payload.ciphertext);
     expect(inner.data.record_state).toBe('deleted');
   });
+
+  it('uses write_group_npub when a channel write group ref is not a UUID', async () => {
+    const envelope = await outboundChannel({
+      record_id: 'ch-legacy-group',
+      owner_npub: 'npub_owner',
+      title: 'Legacy group channel',
+      group_ids: ['group-uuid-1'],
+      write_group_npub: 'npub1grouprefexample',
+    });
+
+    expect(envelope.write_group_id).toBeUndefined();
+    expect(envelope.write_group_npub).toBe('npub1grouprefexample');
+  });
 });

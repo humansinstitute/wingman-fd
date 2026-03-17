@@ -1,8 +1,52 @@
 import { APP_NPUB, recordFamilyNamespace } from '../app-identity.js';
 import { buildGroupPayloads, decryptRecordPayload, encryptOwnerPayload } from './record-crypto.js';
+import { buildWriteGroupFields } from './group-refs.js';
 
 export function recordFamilyHash(collectionSpace) {
   return `${recordFamilyNamespace()}:${collectionSpace}`;
+}
+
+function buildGroupRefMap(groupPayloads = []) {
+  const map = new Map();
+  for (const payload of groupPayloads || []) {
+    const stableId = payload?.group_id || payload?.group_npub || null;
+    if (!stableId) continue;
+    if (payload?.group_npub) map.set(payload.group_npub, stableId);
+    if (payload?.group_id) map.set(payload.group_id, payload.group_id);
+  }
+  return map;
+}
+
+function normalizeGroupRef(groupRef, groupRefMap) {
+  const value = String(groupRef || '').trim();
+  if (!value) return null;
+  return groupRefMap.get(value) || value;
+}
+
+function normalizeShares(dataShares = [], groupPayloads = []) {
+  const groupRefMap = buildGroupRefMap(groupPayloads);
+
+  if (!Array.isArray(dataShares) || dataShares.length === 0) return [];
+
+  return dataShares.map((share) => {
+    const type = share?.type === 'person' ? 'person' : 'group';
+    const groupRef = normalizeGroupRef(share?.group_id || share?.group_npub, groupRefMap);
+    const viaGroupRef = normalizeGroupRef(share?.via_group_id || share?.via_group_npub, groupRefMap);
+    const key = share?.key
+      ?? (type === 'person' ? share?.person_npub : groupRef);
+
+    return {
+      type,
+      key,
+      access: share?.access === 'write' ? 'write' : 'read',
+      label: share?.label ?? '',
+      person_npub: share?.person_npub ?? null,
+      group_npub: groupRef,
+      via_group_npub: viaGroupRef,
+      inherited: share?.inherited === true,
+      inherited_from_directory_id: share?.inherited_from_directory_id ?? null,
+    };
+  });
 }
 
 // --- inbound ---
@@ -10,7 +54,8 @@ export function recordFamilyHash(collectionSpace) {
 export async function inboundTask(record) {
   const payload = await decryptRecordPayload(record);
   const data = payload.data ?? payload;
-  const groupIds = (record.group_payloads || []).map(gp => gp.group_npub);
+  const groupRefMap = buildGroupRefMap(record.group_payloads || []);
+  const groupIds = (record.group_payloads || []).map((gp) => gp.group_id || gp.group_npub);
 
   return {
     record_id:      record.record_id,
@@ -20,14 +65,15 @@ export async function inboundTask(record) {
     state:          data.state ?? 'new',
     priority:       data.priority ?? 'sand',
     parent_task_id: data.parent_task_id ?? null,
-    board_group_id: data.board_group_id ?? null,
+    board_group_id: normalizeGroupRef(data.board_group_id, groupRefMap),
+    assigned_to_npub: data.assigned_to_npub ?? null,
     scheduled_for:  data.scheduled_for ?? null,
     tags:           data.tags ?? '',
     scope_id:       data.scope_id ?? null,
     scope_product_id: data.scope_product_id ?? null,
     scope_project_id: data.scope_project_id ?? null,
     scope_deliverable_id: data.scope_deliverable_id ?? null,
-    shares:         data.shares ?? [],
+    shares:         normalizeShares(data.shares, record.group_payloads || []),
     group_ids:      groupIds,
     sync_status:    'synced',
     record_state:   data.record_state ?? 'active',
@@ -48,6 +94,7 @@ export async function outboundTask({
   priority = 'sand',
   parent_task_id = null,
   board_group_id = null,
+  assigned_to_npub = null,
   scheduled_for = null,
   tags = '',
   scope_id = null,
@@ -74,6 +121,7 @@ export async function outboundTask({
       priority,
       parent_task_id,
       board_group_id,
+      assigned_to_npub,
       scheduled_for,
       tags,
       scope_id,
@@ -92,7 +140,7 @@ export async function outboundTask({
     version,
     previous_version,
     signature_npub,
-    write_group_npub: write_group_npub || undefined,
+    ...buildWriteGroupFields(write_group_npub),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(group_ids || [], innerPayload),
   };

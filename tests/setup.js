@@ -26,6 +26,14 @@ const localStorageMock = (() => {
 })();
 globalThis.localStorage = localStorageMock;
 
+if (!globalThis.MutationObserver) {
+  globalThis.MutationObserver = class MutationObserver {
+    observe() {}
+    disconnect() {}
+    takeRecords() { return []; }
+  };
+}
+
 beforeEach(() => {
   localStorage.clear();
   vi.clearAllMocks();

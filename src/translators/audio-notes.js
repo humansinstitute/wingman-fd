@@ -1,5 +1,6 @@
 import { APP_NPUB, recordFamilyNamespace } from '../app-identity.js';
 import { buildGroupPayloads, decryptRecordPayload, encryptOwnerPayload } from './record-crypto.js';
+import { buildWriteGroupFields } from './group-refs.js';
 
 export function recordFamilyHash(collectionSpace) {
   return `${recordFamilyNamespace()}:${collectionSpace}`;
@@ -8,7 +9,7 @@ export function recordFamilyHash(collectionSpace) {
 export async function inboundAudioNote(record) {
   const payload = await decryptRecordPayload(record);
   const data = payload.data ?? payload;
-  const groupIds = (record.group_payloads || []).map((gp) => gp.group_npub);
+  const groupIds = (record.group_payloads || []).map((gp) => gp.group_id || gp.group_npub);
 
   return {
     record_id: record.record_id,
@@ -89,7 +90,7 @@ export async function outboundAudioNote({
     version,
     previous_version,
     signature_npub,
-    write_group_npub: write_group_npub || undefined,
+    ...buildWriteGroupFields(write_group_npub),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(target_group_ids || [], innerPayload),
   };

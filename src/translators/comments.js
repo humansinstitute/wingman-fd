@@ -1,5 +1,6 @@
 import { APP_NPUB, recordFamilyNamespace } from '../app-identity.js';
 import { buildGroupPayloads, decryptRecordPayload, encryptOwnerPayload } from './record-crypto.js';
+import { buildWriteGroupFields } from './group-refs.js';
 
 export function recordFamilyHash(collectionSpace) {
   return `${recordFamilyNamespace()}:${collectionSpace}`;
@@ -72,7 +73,7 @@ export async function outboundComment({
     version,
     previous_version,
     signature_npub,
-    write_group_npub: write_group_npub || undefined,
+    ...buildWriteGroupFields(write_group_npub),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(target_group_ids || [], innerPayload),
   };

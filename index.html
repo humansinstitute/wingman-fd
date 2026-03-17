@@ -298,6 +298,16 @@
             </span>
             <span class="sidebar-label">Tasks</span>
           </li>
+          <li :class="{ active: $store.chat.navSection === 'schedules' }" @click="$store.chat.navigateTo('schedules')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M8 2v4M16 2v4"></path>
+                <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+                <path d="M3 10h18"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Schedules</span>
+          </li>
           <li :class="{ active: $store.chat.navSection === 'chat' }" @click="$store.chat.navigateTo('chat')" class="sidebar-chat-row">
             <span class="sidebar-icon" aria-hidden="true">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -566,6 +576,13 @@
                   <button
                     type="button"
                     class="task-copy-btn"
+                    x-show="$store.chat.canDoTaskWithDefaultAgent"
+                    @click="$store.chat.doTaskWithDefaultAgent()"
+                    x-text="`Do it ${$store.chat.defaultAgentLabel || 'Agent'}`"
+                  ></button>
+                  <button
+                    type="button"
+                    class="task-copy-btn"
                     @click="$store.chat.copyTaskLink($store.chat.editingTask.record_id)"
                     x-text="$store.chat.copiedTaskLinkId === $store.chat.editingTask.record_id ? 'Copied link' : 'Copy link'"
                   ></button>
@@ -633,6 +650,49 @@
                         <option :value="board.id || ''" x-text="board.label" :selected="($store.chat.editingTask.board_group_id || null) === board.id"></option>
                       </template>
                     </select>
+                  </div>
+
+                  <div class="task-field task-field-wide">
+                    <label class="task-field-label">Assigned</label>
+                    <template x-if="$store.chat.editingTask.assigned_to_npub">
+                      <div class="new-channel-resolved-profile task-assignee-selected">
+                        <template x-if="$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)">
+                          <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)" />
+                        </template>
+                        <template x-if="!$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)">
+                          <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.editingTask.assigned_to_npub))"></div>
+                        </template>
+                        <div class="docs-share-suggestion-copy">
+                          <span class="new-channel-profile-name" x-text="$store.chat.getSenderName($store.chat.editingTask.assigned_to_npub)"></span>
+                          <small x-text="$store.chat.editingTask.assigned_to_npub"></small>
+                        </div>
+                        <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearEditingTaskAssignee()">Clear</button>
+                      </div>
+                    </template>
+                    <input
+                      type="text"
+                      x-model="$store.chat.taskAssigneeQuery"
+                      @input="$store.chat.handleTaskAssigneeInput($event.target.value)"
+                      placeholder="Type a name or npub"
+                    />
+                    <ul class="docs-share-suggestions" x-show="$store.chat.taskAssigneeSuggestions.length > 0">
+                      <template x-for="person in $store.chat.taskAssigneeSuggestions" :key="`task-assignee-${person.npub}`">
+                        <li>
+                          <button type="button" class="docs-share-suggestion" @click="$store.chat.assignEditingTask(person.npub)">
+                            <template x-if="person.avatarUrl">
+                              <img class="new-channel-avatar" :src="person.avatarUrl" />
+                            </template>
+                            <template x-if="!person.avatarUrl">
+                              <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(person.label)"></div>
+                            </template>
+                            <span class="docs-share-suggestion-copy">
+                              <strong x-text="person.label"></strong>
+                              <small x-text="person.subtitle"></small>
+                            </span>
+                          </button>
+                        </li>
+                      </template>
+                    </ul>
                   </div>
 
                   <!-- Scope -->
@@ -1593,6 +1653,242 @@
           </div>
         </div>
 
+        <div x-show="$store.chat.navSection === 'schedules'" class="schedules-section">
+          <div class="schedules-header">
+            <div>
+              <h2>Schedules</h2>
+              <p class="schedules-subtitle">Recurring windows that can trigger routine work and wake-time prompts.</p>
+            </div>
+            <button type="button" class="schedule-primary-btn schedule-create-open-btn" @click="$store.chat.openNewScheduleModal()">+ New Schedule</button>
+          </div>
+
+          <div class="scope-empty" x-show="$store.chat.schedules.length === 0">
+            <p>No schedules yet. Create one from the button above.</p>
+          </div>
+
+          <div class="schedule-list" x-show="$store.chat.schedules.length > 0">
+            <template x-for="schedule in $store.chat.schedules" :key="schedule.record_id">
+              <div class="schedule-card">
+                <template x-if="$store.chat.editingScheduleId !== schedule.record_id">
+                  <div class="schedule-card-body">
+                    <div class="schedule-card-main">
+                      <div class="schedule-card-title-row">
+                        <h3 x-text="schedule.title || 'Untitled schedule'"></h3>
+                        <span class="badge" :class="schedule.active ? 'state-done' : 'state-new'" x-text="schedule.active ? 'Active' : 'Paused'"></span>
+                      </div>
+                      <p class="schedule-card-meta">
+                        <span x-text="$store.chat.formatScheduleDays(schedule.days)"></span>
+                        <span>•</span>
+                        <span x-text="`${schedule.time_start || '??:??'}-${schedule.time_end || '??:??'}`"></span>
+                        <span>•</span>
+                        <span x-text="schedule.timezone || 'Australia/Perth'"></span>
+                        <span>•</span>
+                        <span x-text="schedule.repeat || 'daily'"></span>
+                        <template x-if="schedule.assigned_group_id">
+                          <span>
+                            • Group:
+                            <strong x-text="$store.chat.getScheduleAssignedGroupLabel(schedule.assigned_group_id)"></strong>
+                          </span>
+                        </template>
+                      </p>
+                      <p x-show="schedule.description" x-text="schedule.description"></p>
+                      <p class="schedule-card-meta" x-show="schedule.last_run">
+                        Last run: <span x-text="new Date(schedule.last_run).toLocaleString()"></span>
+                      </p>
+                    </div>
+                    <div class="schedule-card-actions">
+                      <button type="button" class="scope-action-btn" @click="$store.chat.toggleSchedule(schedule.record_id)" x-text="schedule.active ? 'Pause' : 'Resume'"></button>
+                      <button type="button" class="scope-action-btn" @click="$store.chat.startEditSchedule(schedule.record_id)">Edit</button>
+                      <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this schedule?')) $store.chat.deleteSchedule(schedule.record_id)">Delete</button>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="$store.chat.editingScheduleId === schedule.record_id && $store.chat.editingScheduleDraft">
+                  <div class="schedule-edit-form">
+                    <div class="schedule-grid">
+                      <div class="scope-field">
+                        <label class="scope-field-label">Title</label>
+                        <input type="text" x-model="$store.chat.editingScheduleDraft.title" />
+                      </div>
+                      <div class="scope-field">
+                        <label class="scope-field-label">Timezone</label>
+                        <input type="text" x-model="$store.chat.editingScheduleDraft.timezone" />
+                      </div>
+                      <div class="scope-field">
+                        <label class="scope-field-label">Start</label>
+                        <input type="time" x-model="$store.chat.editingScheduleDraft.time_start" />
+                      </div>
+                      <div class="scope-field">
+                        <label class="scope-field-label">End</label>
+                        <input type="time" x-model="$store.chat.editingScheduleDraft.time_end" />
+                      </div>
+                      <div class="scope-field">
+                        <label class="scope-field-label">Repeat</label>
+                        <select x-model="$store.chat.editingScheduleDraft.repeat">
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="once">Once</option>
+                        </select>
+                      </div>
+                      <div class="scope-field schedule-field-wide">
+                        <label class="scope-field-label">Group</label>
+                        <template x-if="$store.chat.editingScheduleDraft.assigned_group_id">
+                          <div class="schedule-group-selected">
+                            <div class="docs-share-suggestion-copy">
+                              <span class="new-channel-profile-name" x-text="$store.chat.getScheduleAssignedGroupLabel($store.chat.editingScheduleDraft.assigned_group_id)"></span>
+                              <small x-text="$store.chat.editingScheduleDraft.assigned_group_id"></small>
+                            </div>
+                            <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearEditingScheduleGroup()">Clear</button>
+                          </div>
+                        </template>
+                        <input
+                          type="text"
+                          x-model="$store.chat.editingScheduleGroupQuery"
+                          @input="$store.chat.handleEditingScheduleGroupInput($event.target.value)"
+                          placeholder="Type a group name"
+                        />
+                        <ul class="docs-share-suggestions" x-show="$store.chat.editingScheduleGroupSuggestions.length > 0">
+                          <template x-for="group in $store.chat.editingScheduleGroupSuggestions" :key="`schedule-edit-group-${group.groupId}`">
+                            <li>
+                              <button type="button" class="docs-share-suggestion" @click="$store.chat.assignEditingScheduleGroup(group.groupId)">
+                                <span class="docs-share-suggestion-copy">
+                                  <strong x-text="group.label"></strong>
+                                  <small x-text="group.subtitle"></small>
+                                </span>
+                              </button>
+                            </li>
+                          </template>
+                        </ul>
+                      </div>
+                      <div class="scope-field">
+                        <label class="scope-field-label">Last Run</label>
+                        <input type="text" x-model="$store.chat.editingScheduleDraft.last_run" placeholder="ISO timestamp or blank" />
+                      </div>
+                      <div class="scope-field">
+                        <label class="scope-field-label">Active</label>
+                        <label class="schedule-active-toggle">
+                          <input type="checkbox" x-model="$store.chat.editingScheduleDraft.active" />
+                          <span x-text="$store.chat.editingScheduleDraft.active ? 'Active' : 'Paused'"></span>
+                        </label>
+                      </div>
+                      <div class="scope-field schedule-field-wide">
+                        <label class="scope-field-label">Description</label>
+                        <textarea x-model="$store.chat.editingScheduleDraft.description" rows="3"></textarea>
+                      </div>
+                      <div class="scope-field schedule-field-wide">
+                        <label class="scope-field-label">Days</label>
+                        <div class="schedule-days">
+                          <template x-for="day in $store.chat.weekdayOptions" :key="`edit-${day}`">
+                            <button
+                              type="button"
+                              class="tag-chip"
+                              :class="{ 'tag-chip-active': ($store.chat.editingScheduleDraft.days || []).includes(day) }"
+                              @click="$store.chat.toggleEditingScheduleDay(day)"
+                              x-text="day"
+                            ></button>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="scope-new-actions">
+                      <button type="button" class="scope-save-btn schedule-primary-btn" @click="$store.chat.saveEditingSchedule()">Save</button>
+                      <button type="button" class="scope-cancel-btn" @click="$store.chat.cancelEditSchedule()">Cancel</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.showNewScheduleModal" x-cloak @click.self="$store.chat.closeNewScheduleModal()">
+          <div class="doc-modal-card schedule-modal">
+            <button class="modal-close" type="button" @click="$store.chat.closeNewScheduleModal()">&times;</button>
+            <h3>New Schedule</h3>
+            <p class="schedules-subtitle">Recurring windows that can trigger routine work and wake-time prompts.</p>
+            <form class="schedule-create-form" @submit.prevent="$store.chat.addSchedule()">
+              <div class="schedule-grid">
+                <div class="scope-field">
+                  <label class="scope-field-label">Title</label>
+                  <input type="text" x-model="$store.chat.newScheduleTitle" placeholder="Daily wrap-up" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Timezone</label>
+                  <input type="text" x-model="$store.chat.newScheduleTimezone" placeholder="Australia/Perth" />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Start</label>
+                  <input type="time" x-model="$store.chat.newScheduleStart" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">End</label>
+                  <input type="time" x-model="$store.chat.newScheduleEnd" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Repeat</label>
+                  <select x-model="$store.chat.newScheduleRepeat">
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="once">Once</option>
+                  </select>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Group</label>
+                  <template x-if="$store.chat.newScheduleAssignedGroupId">
+                    <div class="schedule-group-selected">
+                      <div class="docs-share-suggestion-copy">
+                        <span class="new-channel-profile-name" x-text="$store.chat.getScheduleAssignedGroupLabel($store.chat.newScheduleAssignedGroupId)"></span>
+                        <small x-text="$store.chat.newScheduleAssignedGroupId"></small>
+                      </div>
+                      <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearNewScheduleGroup()">Clear</button>
+                    </div>
+                  </template>
+                  <input
+                    type="text"
+                    x-model="$store.chat.newScheduleGroupQuery"
+                    @input="$store.chat.handleNewScheduleGroupInput($event.target.value)"
+                    placeholder="Type a group name"
+                  />
+                  <ul class="docs-share-suggestions" x-show="$store.chat.newScheduleGroupSuggestions.length > 0">
+                    <template x-for="group in $store.chat.newScheduleGroupSuggestions" :key="`schedule-new-group-${group.groupId}`">
+                      <li>
+                        <button type="button" class="docs-share-suggestion" @click="$store.chat.assignNewScheduleGroup(group.groupId)">
+                          <span class="docs-share-suggestion-copy">
+                            <strong x-text="group.label"></strong>
+                            <small x-text="group.subtitle"></small>
+                          </span>
+                        </button>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Description</label>
+                  <textarea x-model="$store.chat.newScheduleDescription" placeholder="Optional detail..." rows="3"></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Days</label>
+                  <div class="schedule-days">
+                    <template x-for="day in $store.chat.weekdayOptions" :key="`new-${day}`">
+                      <button
+                        type="button"
+                        class="tag-chip"
+                        :class="{ 'tag-chip-active': $store.chat.newScheduleDays.includes(day) }"
+                        @click="$store.chat.toggleNewScheduleDay(day)"
+                        x-text="day"
+                      ></button>
+                    </template>
+                  </div>
+                </div>
+              </div>
+              <div class="scope-new-actions schedule-modal-actions">
+                <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeNewScheduleModal()">Cancel</button>
+                <button type="submit" class="scope-save-btn schedule-primary-btn">Create schedule</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
         <!-- Scopes page -->
         <div x-show="$store.chat.navSection === 'scopes'" class="scopes-section">
           <div class="scopes-header">
@@ -1765,6 +2061,56 @@
               <button type="button" class="btn-confirm" @click="$store.chat.saveHarnessSettings()" :disabled="!$store.chat.wingmanHarnessDirty">Save Harness</button>
               <button type="button" class="btn-cancel" @click="$store.chat.openHarnessLink()" :disabled="!$store.chat.hasHarnessLink">Open Harness</button>
             </div>
+          </section>
+
+          <section class="settings-panel">
+            <div class="settings-panel-header">
+              <div>
+                <h2>My Agent</h2>
+                <p>Local-only default agent for quick delegation actions.</p>
+              </div>
+            </div>
+            <template x-if="$store.chat.defaultAgentNpub">
+              <div class="new-channel-resolved-profile settings-selected-agent">
+                <template x-if="$store.chat.getSenderAvatar($store.chat.defaultAgentNpub)">
+                  <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.defaultAgentNpub)" />
+                </template>
+                <template x-if="!$store.chat.getSenderAvatar($store.chat.defaultAgentNpub)">
+                  <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.defaultAgentLabel)"></div>
+                </template>
+                <div class="docs-share-suggestion-copy">
+                  <span class="new-channel-profile-name" x-text="$store.chat.defaultAgentLabel"></span>
+                  <small x-text="$store.chat.defaultAgentNpub"></small>
+                </div>
+                <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearDefaultAgent()">Clear</button>
+              </div>
+            </template>
+            <label class="settings-field-label" for="default-agent-input">Default agent</label>
+            <input
+              id="default-agent-input"
+              type="text"
+              x-model="$store.chat.defaultAgentQuery"
+              @input="$store.chat.handleDefaultAgentInput($event.target.value)"
+              placeholder="Type a cached name or npub"
+            />
+            <ul class="docs-share-suggestions" x-show="$store.chat.defaultAgentSuggestions.length > 0">
+              <template x-for="person in $store.chat.defaultAgentSuggestions" :key="`default-agent-${person.npub}`">
+                <li>
+                  <button type="button" class="docs-share-suggestion" @click="$store.chat.selectDefaultAgent(person.npub)">
+                    <template x-if="person.avatarUrl">
+                      <img class="new-channel-avatar" :src="person.avatarUrl" />
+                    </template>
+                    <template x-if="!person.avatarUrl">
+                      <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(person.label)"></div>
+                    </template>
+                    <span class="docs-share-suggestion-copy">
+                      <strong x-text="person.label"></strong>
+                      <small x-text="person.subtitle"></small>
+                    </span>
+                  </button>
+                </li>
+              </template>
+            </ul>
           </section>
 
           <section class="settings-panel">
