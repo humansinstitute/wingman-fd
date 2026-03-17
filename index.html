@@ -2113,6 +2113,41 @@
             </ul>
           </section>
 
+          <section class="settings-panel repair-settings-panel">
+            <div class="settings-panel-header">
+              <div>
+                <h2>Data Repair</h2>
+                <p>Restore selected local record families from SuperBased without wiping the whole browser cache.</p>
+              </div>
+            </div>
+            <p class="settings-field-help">This clears only the selected local families and their sync cursors, then re-pulls them from the backend.</p>
+            <div class="repair-family-actions">
+              <button type="button" class="btn-cancel" @click="$store.chat.selectAllRepairFamilies()">Select all</button>
+              <button type="button" class="btn-cancel" @click="$store.chat.clearRepairFamilies()">Clear</button>
+            </div>
+            <div class="repair-family-list">
+              <template x-for="family in $store.chat.repairFamilyOptions" :key="family.id">
+                <label class="repair-family-row">
+                  <input
+                    type="checkbox"
+                    :checked="$store.chat.isRepairFamilySelected(family.id)"
+                    @change="$store.chat.toggleRepairFamily(family.id)"
+                  />
+                  <span x-text="family.label"></span>
+                </label>
+              </template>
+            </div>
+            <p class="settings-field-help">Documents now auto-repair by force-refreshing `Comments` and `Audio notes` if local comment state is missing.</p>
+            <p class="error-text" x-show="$store.chat.repairError" x-text="$store.chat.repairError"></p>
+            <p class="settings-success" x-show="$store.chat.repairNotice" x-text="$store.chat.repairNotice"></p>
+            <div class="settings-actions">
+              <button type="button" class="btn-confirm" @click="$store.chat.restoreSelectedFamiliesFromSuperBased()" :disabled="$store.chat.repairBusy">
+                <span x-show="!$store.chat.repairBusy">Restore From SuperBased</span>
+                <span x-show="$store.chat.repairBusy">Restoring...</span>
+              </button>
+            </div>
+          </section>
+
           <section class="settings-panel">
             <div class="groups-header">
               <div>

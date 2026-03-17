@@ -1,4 +1,5 @@
 import Dexie from 'dexie';
+import { getSyncFamily, getSyncStateKeyForFamily } from './sync-families.js';
 
 const db = new Dexie('CoworkerV4');
 
@@ -368,6 +369,12 @@ export async function getPendingWrites() {
   return db.pending_writes.toArray();
 }
 
+export async function getPendingWritesByFamilies(familyIds = []) {
+  const hashes = [...new Set(familyIds.map((familyId) => getSyncFamily(familyId)?.hash).filter(Boolean))];
+  if (hashes.length === 0) return [];
+  return db.pending_writes.where('record_family_hash').anyOf(hashes).toArray();
+}
+
 export async function removePendingWrite(rowId) {
   return db.pending_writes.delete(rowId);
 }
@@ -381,6 +388,16 @@ export async function getSyncState(key) {
 
 export async function setSyncState(key, value) {
   return db.sync_state.put({ key, value });
+}
+
+export async function deleteSyncState(key) {
+  return db.sync_state.delete(key);
+}
+
+export async function clearSyncStateForFamilies(familyIds = []) {
+  const keys = [...new Set(familyIds.map((familyId) => getSyncStateKeyForFamily(familyId)).filter(Boolean))];
+  if (keys.length === 0) return;
+  await Promise.all(keys.map((key) => deleteSyncState(key)));
 }
 
 export async function clearSyncState() {
@@ -496,4 +513,12 @@ export async function clearRuntimeData() {
     db.pending_writes.clear(),
     db.sync_state.clear(),
   ]);
+}
+
+export async function clearRuntimeFamilies(familyIds = []) {
+  const tables = [...new Set(familyIds.map((familyId) => getSyncFamily(familyId)?.table).filter(Boolean))];
+  if (tables.length === 0) return;
+  await Promise.all(
+    tables.map((tableName) => db[tableName]?.clear?.()).filter(Boolean)
+  );
 }

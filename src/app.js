@@ -52,12 +52,15 @@ import {
   deleteGroupById,
   addPendingWrite,
   getPendingWrites,
+  getPendingWritesByFamilies,
   upsertGroup,
   getChannelById,
   getAddressBookPeople,
   upsertAddressBookPerson,
   clearRuntimeData,
   clearSyncState,
+  clearRuntimeFamilies,
+  clearSyncStateForFamilies,
 } from './db.js';
 import {
   setBaseUrl,
@@ -76,7 +79,6 @@ import {
   completeStorageObject,
   downloadStorageObject,
   downloadStorageObjectBlob,
-  fetchRecords,
 } from './api.js';
 import {
   outboundChatMessage,
@@ -95,8 +97,8 @@ import {
   parseTags as parseTaskTags,
 } from './translators/tasks.js';
 import { outboundSchedule } from './translators/schedules.js';
-import { inboundComment, outboundComment } from './translators/comments.js';
-import { inboundAudioNote, outboundAudioNote } from './translators/audio-notes.js';
+import { outboundComment } from './translators/comments.js';
+import { outboundAudioNote } from './translators/audio-notes.js';
 import { recordFamilyHash as taskFamilyHash } from './translators/tasks.js';
 import {
   outboundScope,
@@ -107,7 +109,7 @@ import {
   SCOPE_LEVELS,
 } from './translators/scopes.js';
 import { outboundWorkspaceSettings, normalizeHarnessUrl } from './translators/settings.js';
-import { runSync } from './worker/sync-worker.js';
+import { runSync, pullRecordsForFamilies } from './worker/sync-worker.js';
 import { parseSuperBasedToken } from './superbased-token.js';
 import { buildAgentConnectPackage } from './agent-connect.js';
 import {
@@ -134,6 +136,7 @@ import { DEFAULT_SUPERBASED_URL } from './app-identity.js';
 import { mergeWorkspaceEntries, normalizeWorkspaceEntry, workspaceFromToken } from './workspaces.js';
 import { buildSuperBasedConnectionToken } from './superbased-token.js';
 import { decryptAudioBytes, encryptAudioBlob, measureAudioDuration } from './audio-notes.js';
+import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
 
 const TASK_BOARD_STORAGE_KEY = 'coworker:last-task-board-id';
 const WEEKDAY_OPTIONS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -407,6 +410,10 @@ export function initApp() {
     wingmanHarnessInput: '',
     wingmanHarnessError: null,
     wingmanHarnessDirty: false,
+    repairSelectedFamilyIds: ['comment', 'audio_note'],
+    repairBusy: false,
+    repairError: null,
+    repairNotice: '',
     showWorkspaceBootstrapModal: false,
     newWorkspaceName: '',
     newWorkspaceDescription: '',
@@ -1272,6 +1279,36 @@ export function initApp() {
         || this.currentWorkspace?.defaultGroupNpub
         || this.memberPrivateGroupNpub
         || null;
+    },
+
+    get repairFamilyOptions() {
+      return SYNC_FAMILY_OPTIONS;
+    },
+
+    isRepairFamilySelected(familyId) {
+      return this.repairSelectedFamilyIds.includes(familyId);
+    },
+
+    toggleRepairFamily(familyId) {
+      this.repairError = null;
+      this.repairNotice = '';
+      if (this.isRepairFamilySelected(familyId)) {
+        this.repairSelectedFamilyIds = this.repairSelectedFamilyIds.filter((candidate) => candidate !== familyId);
+        return;
+      }
+      this.repairSelectedFamilyIds = [...this.repairSelectedFamilyIds, familyId];
+    },
+
+    selectAllRepairFamilies() {
+      this.repairError = null;
+      this.repairNotice = '';
+      this.repairSelectedFamilyIds = SYNC_FAMILY_OPTIONS.map((family) => family.id);
+    },
+
+    clearRepairFamilies() {
+      this.repairError = null;
+      this.repairNotice = '';
+      this.repairSelectedFamilyIds = [];
     },
 
     handleHarnessInput(value) {
@@ -2173,6 +2210,79 @@ export function initApp() {
       }
       const pending = await getPendingWrites();
       this.syncStatus = pending.length > 0 ? 'unsynced' : 'synced';
+    },
+
+    async pullFamiliesFromBackend(familyIds, options = {}) {
+      if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) {
+        throw new Error('Configure settings first');
+      }
+      const hashes = getSyncFamilyHashes(familyIds);
+      if (hashes.length === 0) return { pulled: 0 };
+      return pullRecordsForFamilies(this.workspaceOwnerNpub, this.session.npub, hashes, options);
+    },
+
+    async refreshStateForFamilies(familyIds = []) {
+      const selected = new Set(familyIds);
+      if (selected.has('settings')) {
+        await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
+      }
+      if (selected.has('channel')) await this.refreshChannels();
+      if (selected.has('chat_message')) await this.refreshMessages();
+      if (selected.has('audio_note')) await this.refreshAudioNotes();
+      if (selected.has('directory')) await this.refreshDirectories();
+      if (selected.has('document')) await this.refreshDocuments();
+      if (selected.has('task')) await this.refreshTasks();
+      if (selected.has('schedule')) await this.refreshSchedules();
+      if (selected.has('scope')) await this.refreshScopes();
+      if (selected.has('comment') && this.activeTaskId) {
+        await this.loadTaskComments(this.activeTaskId);
+      }
+      if ((selected.has('comment') || selected.has('audio_note')) && this.docsEditorOpen && this.selectedDocId) {
+        await this.loadDocComments(this.selectedDocId);
+      }
+      await this.refreshStatusRecentChanges();
+      await this.refreshSyncStatus();
+    },
+
+    async restoreSelectedFamiliesFromSuperBased() {
+      const familyIds = [...new Set(this.repairSelectedFamilyIds)];
+      if (familyIds.length === 0) {
+        this.repairError = 'Select at least one record family.';
+        return;
+      }
+
+      this.repairError = null;
+      this.repairNotice = '';
+
+      const pending = await getPendingWritesByFamilies(familyIds);
+      if (pending.length > 0) {
+        const blockingFamilies = [...new Set(
+          pending
+            .map((row) => getSyncFamily(row.record_family_hash)?.label)
+            .filter(Boolean)
+        )];
+        this.repairError = `Cannot restore while unsynced local changes exist in: ${blockingFamilies.join(', ')}. Sync or resolve them first.`;
+        return;
+      }
+
+      if (typeof window !== 'undefined') {
+        const labels = familyIds.map((familyId) => getSyncFamily(familyId)?.label || familyId);
+        const confirmed = window.confirm(`Restore ${labels.join(', ')} from SuperBased? This clears local cache for the selected families and rebuilds it from the backend.`);
+        if (!confirmed) return;
+      }
+
+      this.repairBusy = true;
+      try {
+        await clearRuntimeFamilies(familyIds);
+        await clearSyncStateForFamilies(familyIds);
+        await this.pullFamiliesFromBackend(familyIds, { forceFull: true });
+        await this.refreshStateForFamilies(familyIds);
+        this.repairNotice = `Restored ${familyIds.length} record ${familyIds.length === 1 ? 'family' : 'families'} from SuperBased.`;
+      } catch (error) {
+        this.repairError = error?.message || 'Failed to restore selected record families.';
+      } finally {
+        this.repairBusy = false;
+      }
     },
 
     // --- channels ---
@@ -4503,7 +4613,7 @@ export function initApp() {
       let comments = (await getCommentsByTarget(docId))
         .filter((comment) => comment.target_record_family_hash === documentFamilyHash);
 
-      if (comments.length === 0) {
+      if (comments.length === 0 || await this.hasMissingDocCommentAudio(comments)) {
         comments = await this.backfillDocCommentsFromBackend(docId, documentFamilyHash);
       }
 
@@ -4519,47 +4629,24 @@ export function initApp() {
       this.scheduleStorageImageHydration();
     },
 
+    async hasMissingDocCommentAudio(comments = []) {
+      for (const comment of comments) {
+        for (const attachment of comment.attachments || []) {
+          if (attachment?.kind !== 'audio' || !attachment?.audio_note_record_id) continue;
+          const note = await getAudioNoteById(attachment.audio_note_record_id);
+          if (!note || note.record_state === 'deleted') return true;
+        }
+      }
+      return false;
+    },
+
     async backfillDocCommentsFromBackend(docId, documentFamilyHash) {
       if (!this.backendUrl || !this.workspaceOwnerNpub || !this.session?.npub) return [];
 
-      const commentFamilyHash = recordFamilyHash('comment');
-      const audioNoteFamilyHash = recordFamilyHash('audio_note');
-
       try {
-        const commentResult = await fetchRecords({
-          owner_npub: this.workspaceOwnerNpub,
-          viewer_npub: this.session.npub,
-          record_family_hash: commentFamilyHash,
-        });
-        const commentRecords = commentResult.records ?? commentResult ?? [];
-        const matchingComments = [];
-
-        for (const record of commentRecords) {
-          const row = await inboundComment(record);
-          await upsertComment(row);
-          if (row.target_record_id === docId && row.target_record_family_hash === documentFamilyHash) {
-            matchingComments.push(row);
-          }
-        }
-
-        if (matchingComments.length === 0) return [];
-
-        const commentIds = new Set(matchingComments.map((comment) => comment.record_id));
-        const audioResult = await fetchRecords({
-          owner_npub: this.workspaceOwnerNpub,
-          viewer_npub: this.session.npub,
-          record_family_hash: audioNoteFamilyHash,
-        });
-        const audioRecords = audioResult.records ?? audioResult ?? [];
-
-        for (const record of audioRecords) {
-          const row = await inboundAudioNote(record);
-          if (commentIds.has(row.target_record_id)) {
-            await upsertAudioNote(row);
-          }
-        }
-
-        return matchingComments;
+        await this.pullFamiliesFromBackend(['comment', 'audio_note'], { forceFull: true });
+        return (await getCommentsByTarget(docId))
+          .filter((comment) => comment.target_record_family_hash === documentFamilyHash);
       } catch (error) {
         console.debug('Doc comment backfill failed:', error?.message || error);
         return [];

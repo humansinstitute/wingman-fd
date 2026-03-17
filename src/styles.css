@@ -2877,6 +2877,43 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.repair-settings-panel {
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+}
+
+.repair-family-actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.repair-family-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+}
+
+.repair-family-row {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.repair-family-row input {
+  margin: 0;
+}
+
+.settings-success {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--success, #207245);
+}
+
 /* ── Groups redesign ── */
 
 .groups-header {

@@ -41,6 +41,7 @@ import { inboundComment } from '../translators/comments.js';
 import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
+import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash } from '../sync-families.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
 const CHANNEL_FAMILY = recordFamilyHash('channel');
@@ -52,6 +53,41 @@ const SCHEDULE_FAMILY = scheduleFamilyHash('schedule');
 const COMMENT_FAMILY = recordFamilyHash('comment');
 const AUDIO_NOTE_FAMILY = recordFamilyHash('audio_note');
 const SCOPE_FAMILY = recordFamilyHash('scope');
+const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
+
+async function materializeRecordForFamily(family, record) {
+  if (family === SETTINGS_FAMILY) {
+    const row = await inboundWorkspaceSettings(record);
+    await upsertWorkspaceSettings(row);
+  } else if (family === CHANNEL_FAMILY) {
+    const row = await inboundChannel(record);
+    await upsertChannel(row);
+  } else if (family === MESSAGE_FAMILY) {
+    const row = await inboundChatMessage(record);
+    await upsertMessage(row);
+  } else if (family === DIRECTORY_FAMILY) {
+    const row = await inboundDirectory(record);
+    await upsertDirectory(row);
+  } else if (family === DOCUMENT_FAMILY) {
+    const row = await inboundDocument(record);
+    await upsertDocument(row);
+  } else if (family === TASK_FAMILY) {
+    const row = await inboundTask(record);
+    await upsertTask(row);
+  } else if (family === SCHEDULE_FAMILY) {
+    const row = await inboundSchedule(record);
+    await upsertSchedule(row);
+  } else if (family === COMMENT_FAMILY) {
+    const row = await inboundComment(record);
+    await upsertComment(row);
+  } else if (family === AUDIO_NOTE_FAMILY) {
+    const row = await inboundAudioNote(record);
+    await upsertAudioNote(row);
+  } else if (family === SCOPE_FAMILY) {
+    const row = await inboundScope(record);
+    await upsertScope(row);
+  }
+}
 
 /**
  * Push all pending writes to the backend then clear them locally.
@@ -79,12 +115,16 @@ export async function flushPendingWrites(ownerNpub) {
  * Pull records from backend, translate, and materialize locally.
  */
 export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
-  const families = [SETTINGS_FAMILY, CHANNEL_FAMILY, MESSAGE_FAMILY, DIRECTORY_FAMILY, DOCUMENT_FAMILY, TASK_FAMILY, SCHEDULE_FAMILY, COMMENT_FAMILY, AUDIO_NOTE_FAMILY, SCOPE_FAMILY];
+  return pullRecordsForFamilies(ownerNpub, viewerNpub, DEFAULT_FAMILIES);
+}
+
+export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, families = DEFAULT_FAMILIES, options = {}) {
+  const forceFull = options.forceFull === true;
   let totalPulled = 0;
 
   for (const family of families) {
     const sinceKey = `sync_since:${family}`;
-    const since = await getSyncState(sinceKey);
+    const since = forceFull ? null : await getSyncState(sinceKey);
 
     const result = await fetchRecords({
       owner_npub: ownerNpub,
@@ -100,37 +140,7 @@ export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
 
     for (const record of records) {
       try {
-        if (family === SETTINGS_FAMILY) {
-          const row = await inboundWorkspaceSettings(record);
-          await upsertWorkspaceSettings(row);
-        } else if (family === CHANNEL_FAMILY) {
-          const row = await inboundChannel(record);
-          await upsertChannel(row);
-        } else if (family === MESSAGE_FAMILY) {
-          const row = await inboundChatMessage(record);
-          await upsertMessage(row);
-        } else if (family === DIRECTORY_FAMILY) {
-          const row = await inboundDirectory(record);
-          await upsertDirectory(row);
-        } else if (family === DOCUMENT_FAMILY) {
-          const row = await inboundDocument(record);
-          await upsertDocument(row);
-        } else if (family === TASK_FAMILY) {
-          const row = await inboundTask(record);
-          await upsertTask(row);
-        } else if (family === SCHEDULE_FAMILY) {
-          const row = await inboundSchedule(record);
-          await upsertSchedule(row);
-        } else if (family === COMMENT_FAMILY) {
-          const row = await inboundComment(record);
-          await upsertComment(row);
-        } else if (family === AUDIO_NOTE_FAMILY) {
-          const row = await inboundAudioNote(record);
-          await upsertAudioNote(row);
-        } else if (family === SCOPE_FAMILY) {
-          const row = await inboundScope(record);
-          await upsertScope(row);
-        }
+        await materializeRecordForFamily(family, record);
         appliedCount++;
         if ((record.updated_at ?? '') > latestApplied) latestApplied = record.updated_at ?? '';
       } catch (error) {
