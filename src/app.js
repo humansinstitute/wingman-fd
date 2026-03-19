@@ -76,6 +76,10 @@ import {
   clearSyncState,
   clearRuntimeFamilies,
   clearSyncStateForFamilies,
+  getSyncQuarantineEntries,
+  deleteSyncQuarantineEntry,
+  clearSyncQuarantineForFamilies,
+  deleteRuntimeRecordByFamily,
 } from './db.js';
 import {
   setBaseUrl,
@@ -212,6 +216,11 @@ function workspaceSettingsRecordId(workspaceOwnerNpub) {
   return `workspace-settings:${workspaceOwnerNpub}`;
 }
 
+function storageObjectIdFromRef(value) {
+  const match = String(value || '').trim().match(/^storage:\/\/([A-Za-z0-9-]+)$/);
+  return match?.[1] || '';
+}
+
 function parseMarkdownBlocks(content) {
   const source = String(content || '').replace(/\r\n?/g, '\n');
   if (!source.trim()) return [];
@@ -305,6 +314,7 @@ export function initApp() {
     ownerNpub: '',
     botNpub: '',
     session: null,
+    settingsTab: 'workspace',
     navSection: 'chat',
     calendarViews: CALENDAR_VIEWS,
     calendarView: 'month',
@@ -360,6 +370,8 @@ export function initApp() {
     taskCommentAudioDrafts: [],
     taskFilter: '',
     taskFilterTags: [],
+    selectedTaskIds: [],
+    bulkTaskBusy: false,
     selectedBoardId: null,
     showBoardPicker: false,
     boardPickerQuery: '',
@@ -477,6 +489,15 @@ export function initApp() {
     workspaceSettingsVersion: 0,
     workspaceSettingsGroupIds: [],
     workspaceHarnessUrl: '',
+    workspaceProfileNameInput: '',
+    workspaceProfileDescriptionInput: '',
+    workspaceProfileAvatarInput: '',
+    workspaceProfileAvatarPreviewUrl: '',
+    workspaceProfilePendingAvatarFile: null,
+    workspaceProfilePendingAvatarObjectUrl: '',
+    workspaceProfileDirty: false,
+    workspaceProfileSaving: false,
+    workspaceProfileError: null,
     defaultAgentNpub: '',
     defaultAgentQuery: '',
     wingmanHarnessInput: '',
@@ -486,6 +507,10 @@ export function initApp() {
     repairBusy: false,
     repairError: null,
     repairNotice: '',
+    syncQuarantine: [],
+    syncQuarantineBusy: false,
+    syncQuarantineError: null,
+    syncQuarantineNotice: '',
 
     // triggers
     workspaceTriggers: [],
@@ -590,7 +615,7 @@ export function initApp() {
     },
 
     get currentWorkspaceAvatarUrl() {
-      return this.activeWorkspaceOwnerNpub ? this.getSenderAvatar(this.activeWorkspaceOwnerNpub) : null;
+      return this.getWorkspaceAvatar(this.currentWorkspace || this.activeWorkspaceOwnerNpub);
     },
 
     get currentWorkspaceInitials() {
@@ -859,8 +884,8 @@ export function initApp() {
       ).map((scope) => ({
         id: scope.record_id,
         level: scope.level,
-        label: `${this.scopeLevelLabel(scope.level)}: ${getTaskBoardScopeLabel(scope, this.scopesMap)}`,
-        breadcrumb: getTaskBoardScopeLabel(scope, this.scopesMap),
+        label: this.formatTaskBoardScopeDisplay(scope),
+        breadcrumb: this.getScopeAncestorPath(scope.record_id),
         description: scope.description || '',
       }));
       const hasUnscopedTasks = this.tasks.some((task) => task.record_state !== 'deleted' && isTaskUnscoped(task, this.scopesMap));
@@ -888,7 +913,7 @@ export function initApp() {
     get selectedBoardLabel() {
       if (this.selectedBoardIsUnscoped) return 'Unscoped';
       if (!this.selectedBoardScope) return 'Scope board';
-      return `${this.scopeLevelLabel(this.selectedBoardScope.level)}: ${getTaskBoardScopeLabel(this.selectedBoardScope, this.scopesMap)}`;
+      return this.formatTaskBoardScopeDisplay(this.selectedBoardScope);
     },
 
     get canToggleBoardDescendants() {
@@ -901,7 +926,23 @@ export function initApp() {
     },
 
     get preferredTaskBoardId() {
-      if (this.tasks.some((task) => task.record_state !== 'deleted' && isTaskUnscoped(task, this.scopesMap))) {
+      const activeTasks = this.tasks.filter((task) => task.record_state !== 'deleted');
+      const boards = this.taskBoards.filter((b) => b.id !== UNSCOPED_TASK_BOARD_ID);
+      if (boards.length > 0) {
+        let bestBoard = boards[0];
+        let bestCount = 0;
+        for (const board of boards) {
+          const scope = this.scopesMap.get(board.id);
+          if (!scope) continue;
+          const count = activeTasks.filter((task) => matchesTaskBoardScope(task, scope, this.scopesMap, { includeDescendants: true })).length;
+          if (count > bestCount) {
+            bestCount = count;
+            bestBoard = board;
+          }
+        }
+        return bestBoard.id;
+      }
+      if (activeTasks.some((task) => isTaskUnscoped(task, this.scopesMap))) {
         return UNSCOPED_TASK_BOARD_ID;
       }
       return this.taskBoards[0]?.id || null;
@@ -928,7 +969,17 @@ export function initApp() {
     },
 
     getWorkspaceAvatar(workspace) {
+      const entry = typeof workspace === 'string' ? this.getWorkspaceByOwner(workspace) : workspace;
       const workspaceOwnerNpub = typeof workspace === 'string' ? workspace : workspace?.workspaceOwnerNpub;
+      const storedAvatar = String(entry?.avatarUrl || entry?.avatar_url || '').trim();
+      const storedObjectId = storageObjectIdFromRef(storedAvatar);
+      if (storedObjectId) {
+        const resolved = this.storageImageUrlCache?.[storedObjectId];
+        if (resolved) return resolved;
+        this.resolveStorageImageUrl(storedObjectId).catch(() => {});
+      } else if (storedAvatar) {
+        return storedAvatar;
+      }
       return workspaceOwnerNpub ? this.getSenderAvatar(workspaceOwnerNpub) : null;
     },
 
@@ -949,17 +1000,32 @@ export function initApp() {
 
     async handleWorkspaceSwitcherSelect(workspaceOwnerNpub) {
       if (!workspaceOwnerNpub || this.isWorkspaceSwitching) return;
-      this.closeWorkspaceSwitcherMenu();
+      if (workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) {
+        this.closeWorkspaceSwitcherMenu();
+        return;
+      }
+      // Keep the switcher visible during the switch so the user sees progress.
+      this.workspaceSwitchPendingNpub = workspaceOwnerNpub;
       this.mobileNavOpen = false;
-      if (workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) return;
-      await this.selectWorkspace(workspaceOwnerNpub);
+
+      // Persist the new workspace selection, then hard-reload so no stale
+      // in-memory state from the previous workspace leaks through.
+      const workspace = this.knownWorkspaces.find((w) => w.workspaceOwnerNpub === workspaceOwnerNpub);
+      if (!workspace) return;
+      this.currentWorkspaceOwnerNpub = workspace.workspaceOwnerNpub;
+      this.superbasedTokenInput = workspace.connectionToken || this.superbasedTokenInput;
+      this.backendUrl = normalizeBackendUrl(workspace.directHttpsUrl || this.backendUrl || guessDefaultBackendUrl());
+      this.ownerNpub = workspace.workspaceOwnerNpub;
+      setBaseUrl(this.backendUrl);
+      await this.persistWorkspaceSettings();
+      window.location.reload();
     },
 
     getTaskBoardOptionLabel(scopeId) {
       if (scopeId === UNSCOPED_TASK_BOARD_ID) return 'Unscoped';
       const scope = this.scopesMap.get(scopeId);
       if (!scope) return 'Scope board';
-      return `${this.scopeLevelLabel(scope.level)}: ${getTaskBoardScopeLabel(scope, this.scopesMap)}`;
+      return this.formatTaskBoardScopeDisplay(scope);
     },
 
     getTaskBoardSearchText(scopeId) {
@@ -971,7 +1037,27 @@ export function initApp() {
         scope.description,
         scope.level,
         getTaskBoardScopeLabel(scope, this.scopesMap),
+        this.getScopeAncestorPath(scope.record_id),
       ].filter(Boolean).join(' ').toLowerCase();
+    },
+
+    getScopeAncestorPath(scopeId) {
+      const parts = [];
+      let current = scopeId ? this.scopesMap.get(scopeId) || null : null;
+      current = current?.parent_id ? this.scopesMap.get(current.parent_id) || null : null;
+      while (current) {
+        parts.unshift(current.title);
+        current = current.parent_id ? this.scopesMap.get(current.parent_id) || null : null;
+      }
+      return parts.length > 0 ? `${parts.join(' > ')} >` : '';
+    },
+
+    formatTaskBoardScopeDisplay(scope) {
+      if (!scope?.record_id) return '';
+      const title = String(scope.title || '').trim() || 'Untitled scope';
+      const level = this.scopeLevelLabel(scope.level) || 'Scope';
+      const ancestorPath = this.getScopeAncestorPath(scope.record_id);
+      return ancestorPath ? `${title} (${level}): ${ancestorPath}` : `${title} (${level})`;
     },
 
     getTaskBoardWriteGroup(scopeId) {
@@ -1153,6 +1239,7 @@ export function initApp() {
       this.selectedBoardId = boardId;
       this.persistSelectedBoardId(boardId);
       this.showBoardDescendantTasks = false;
+      this.clearSelectedTasks();
       this.normalizeTaskFilterTags();
       this.closeBoardPicker();
       if (this.showTaskDetail) this.closeTaskDetail();
@@ -1237,14 +1324,33 @@ export function initApp() {
       );
     },
 
+    get selectedTasks() {
+      return this.tasks.filter((task) => this.selectedTaskIds.includes(task.record_id));
+    },
+
+    get selectedTaskCount() {
+      return this.selectedTasks.length;
+    },
+
+    get canBulkAssignToDefaultAgent() {
+      return Boolean(this.defaultAgentNpub && this.selectedTaskCount > 0 && !this.bulkTaskBusy);
+    },
+
     get boardColumns() {
       const cols = [];
       const summary = this.summaryTasks;
       if (summary.length > 0) {
         cols.push({ state: 'summary', label: 'Summary', tasks: summary });
       }
-      const states = ['new', 'ready', 'in_progress', 'review', 'done'];
-      const labels = { new: 'New', ready: 'Ready', in_progress: 'In Progress', review: 'Review', done: 'Done' };
+      const states = ['new', 'ready', 'definition', 'in_progress', 'review', 'done'];
+      const labels = {
+        new: 'New',
+        ready: 'Ready',
+        definition: 'Definition',
+        in_progress: 'In Progress',
+        review: 'Review',
+        done: 'Done',
+      };
       for (const state of states) {
         const tasks = state === 'done'
           ? this.doneTasks
@@ -1699,6 +1805,84 @@ export function initApp() {
 
     mergeKnownWorkspaces(entries = []) {
       this.knownWorkspaces = mergeWorkspaceEntries(this.knownWorkspaces, entries);
+      this.syncWorkspaceProfileDraft();
+    },
+
+    revokeWorkspaceAvatarPreviewObjectUrl() {
+      if (this.workspaceProfilePendingAvatarObjectUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(this.workspaceProfilePendingAvatarObjectUrl);
+      }
+      this.workspaceProfilePendingAvatarObjectUrl = '';
+    },
+
+    setWorkspaceAvatarPreview(url = '') {
+      this.workspaceProfileAvatarPreviewUrl = String(url || '').trim();
+    },
+
+    syncWorkspaceProfileDraft(options = {}) {
+      if (this.workspaceProfileDirty && !options.force) return;
+      const workspace = this.currentWorkspace;
+      const storedAvatar = String(workspace?.avatarUrl || '').trim();
+      const storedObjectId = storageObjectIdFromRef(storedAvatar);
+      this.revokeWorkspaceAvatarPreviewObjectUrl();
+      this.workspaceProfilePendingAvatarFile = null;
+      this.workspaceProfileNameInput = String(workspace?.name || '').trim();
+      this.workspaceProfileDescriptionInput = String(workspace?.description || '').trim();
+      this.workspaceProfileAvatarInput = storedAvatar;
+      this.setWorkspaceAvatarPreview(storedObjectId ? '' : (this.getWorkspaceAvatar(workspace) || ''));
+      if (storedObjectId) {
+        this.resolveStorageImageUrl(storedObjectId)
+          .then((url) => {
+            if (this.workspaceProfileDirty) return;
+            if (this.workspaceProfileAvatarInput !== storedAvatar) return;
+            this.setWorkspaceAvatarPreview(url);
+          })
+          .catch(() => {});
+      }
+      this.workspaceProfileDirty = false;
+      this.workspaceProfileError = null;
+    },
+
+    markWorkspaceProfileDirty() {
+      this.workspaceProfileDirty = true;
+      this.workspaceProfileError = null;
+    },
+
+    handleWorkspaceProfileField(field, value) {
+      if (field === 'name') this.workspaceProfileNameInput = value;
+      if (field === 'description') this.workspaceProfileDescriptionInput = value;
+      this.markWorkspaceProfileDirty();
+    },
+
+    async handleWorkspaceAvatarSelection(event) {
+      const [file] = [...(event?.target?.files || [])];
+      if (!file) return;
+      if (!String(file.type || '').startsWith('image/')) {
+        this.workspaceProfileError = 'Choose an image file for the workspace avatar.';
+        event.target.value = '';
+        return;
+      }
+      this.revokeWorkspaceAvatarPreviewObjectUrl();
+      const objectUrl = URL.createObjectURL(file);
+      this.workspaceProfilePendingAvatarFile = file;
+      this.workspaceProfilePendingAvatarObjectUrl = objectUrl;
+      this.workspaceProfileAvatarInput = '';
+      this.setWorkspaceAvatarPreview(objectUrl);
+      this.markWorkspaceProfileDirty();
+      event.target.value = '';
+    },
+
+    clearWorkspaceAvatarDraft() {
+      this.revokeWorkspaceAvatarPreviewObjectUrl();
+      this.workspaceProfilePendingAvatarFile = null;
+      this.workspaceProfileAvatarInput = '';
+      this.setWorkspaceAvatarPreview('');
+      this.markWorkspaceProfileDirty();
+    },
+
+    resetWorkspaceProfileDraft() {
+      if (this.workspaceProfileSaving) return;
+      this.syncWorkspaceProfileDraft({ force: true });
     },
 
     applyWorkspaceSettingsRow(row, options = {}) {
@@ -1708,6 +1892,14 @@ export function initApp() {
       this.workspaceSettingsGroupIds = Array.isArray(row?.group_ids) ? [...row.group_ids] : [];
       this.workspaceHarnessUrl = String(row?.wingman_harness_url || '').trim();
       this.workspaceTriggers = Array.isArray(row?.triggers) ? [...row.triggers] : [];
+      if (row?.workspace_owner_npub) {
+        this.mergeKnownWorkspaces([{
+          workspaceOwnerNpub: row.workspace_owner_npub,
+          ...(row.workspace_name ? { name: row.workspace_name } : {}),
+          ...(row.workspace_description ? { description: row.workspace_description } : {}),
+          ...(row.workspace_avatar_url ? { avatarUrl: row.workspace_avatar_url } : {}),
+        }]);
+      }
       if (overwriteInput || !this.wingmanHarnessDirty) {
         this.wingmanHarnessInput = this.workspaceHarnessUrl;
         this.wingmanHarnessDirty = false;
@@ -1761,6 +1953,32 @@ export function initApp() {
       this.repairError = null;
       this.repairNotice = '';
       this.repairSelectedFamilyIds = [];
+    },
+
+    get hasSyncQuarantine() {
+      return this.syncQuarantine.length > 0;
+    },
+
+    syncQuarantineFamilyLabel(entry) {
+      return getSyncFamily(entry?.family_id || entry?.family_hash)?.label || entry?.family_id || entry?.family_hash || 'Unknown family';
+    },
+
+    syncQuarantineRecordLabel(entry) {
+      const recordId = String(entry?.record_id || '').trim();
+      if (!recordId) return 'Unknown record';
+      return recordId.length > 16 ? `${recordId.slice(0, 8)}…${recordId.slice(-4)}` : recordId;
+    },
+
+    formatSyncQuarantineTimestamp(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString();
+    },
+
+    async refreshSyncQuarantine() {
+      this.syncQuarantine = await getSyncQuarantineEntries();
+      return this.syncQuarantine;
     },
 
     handleHarnessInput(value) {
@@ -1826,6 +2044,7 @@ export function initApp() {
         this.validateSelectedBoardId();
         await this.persistWorkspaceSettings();
         await this.refreshWorkspaceSettings();
+        this.syncWorkspaceProfileDraft({ force: true });
 
         if (this.session?.npub) {
           await this.refreshGroups();
@@ -1851,11 +2070,11 @@ export function initApp() {
       try {
         const serviceNpub = await this.fetchBackendServiceNpub();
         const result = await getWorkspaces(this.session.npub);
-        const workspaces = (result.workspaces || []).map((entry) => normalizeWorkspaceEntry({
+        const workspaces = (result.workspaces || []).map((entry) => ({
           ...entry,
           serviceNpub,
           appNpub: this.superbasedConnectionConfig?.appNpub || null,
-        })).filter(Boolean);
+        }));
         this.mergeKnownWorkspaces(workspaces);
       } catch (error) {
         console.debug('loadRemoteWorkspaces failed:', error?.message || error);
@@ -2346,6 +2565,15 @@ export function initApp() {
       this.workspaceSettingsVersion = 0;
       this.workspaceSettingsGroupIds = [];
       this.workspaceHarnessUrl = '';
+      this.revokeWorkspaceAvatarPreviewObjectUrl();
+      this.workspaceProfileNameInput = '';
+      this.workspaceProfileDescriptionInput = '';
+      this.workspaceProfileAvatarInput = '';
+      this.workspaceProfileAvatarPreviewUrl = '';
+      this.workspaceProfilePendingAvatarFile = null;
+      this.workspaceProfileDirty = false;
+      this.workspaceProfileSaving = false;
+      this.workspaceProfileError = null;
       this.defaultAgentQuery = '';
       this.hasForcedTaskFamilyBackfill = false;
       this.wingmanHarnessInput = '';
@@ -2369,6 +2597,117 @@ export function initApp() {
       setBaseUrl(this.backendUrl);
       await this.persistWorkspaceSettings();
       this.ensureBackgroundSync();
+    },
+
+    async uploadWorkspaceAvatarFile(file) {
+      const workspaceOwnerNpub = this.workspaceOwnerNpub;
+      if (!workspaceOwnerNpub) {
+        throw new Error('Select a workspace first');
+      }
+      if (!file || !String(file.type || '').startsWith('image/')) {
+        throw new Error('Choose an image file for the workspace avatar.');
+      }
+
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const writeGroupNpub = this.getWorkspaceSettingsGroupNpub();
+      try {
+        const prepared = await prepareStorageObject({
+          owner_npub: workspaceOwnerNpub,
+          content_type: file.type || 'image/png',
+          size_bytes: file.size || bytes.byteLength,
+          file_name: this.defaultPastedImageName(file, 'workspace-avatar'),
+          access_group_npubs: writeGroupNpub ? [writeGroupNpub] : [],
+        });
+        await uploadStorageObject(prepared, bytes, file.type || 'image/png');
+        await completeStorageObject(prepared.object_id, {
+          size_bytes: bytes.byteLength,
+          sha256_hex: await this.sha256HexForBytes(bytes),
+        });
+        return `storage://${prepared.object_id}`;
+      } catch (error) {
+        const message = String(error?.message || error);
+        if (message.includes('404')) {
+          throw new Error(`Workspace avatar upload requires SuperBased storage on ${this.backendUrl || 'the workspace backend'}, but /api/v4/storage is not available there.`);
+        }
+        throw error;
+      }
+    },
+
+    async saveWorkspaceProfile() {
+      const workspace = this.currentWorkspace;
+      if (!workspace) {
+        this.workspaceProfileError = 'Select a workspace first';
+        return;
+      }
+
+      const name = String(this.workspaceProfileNameInput || '').trim();
+      if (!name) {
+        this.workspaceProfileError = 'Workspace name is required';
+        return;
+      }
+
+      this.workspaceProfileSaving = true;
+      this.workspaceProfileError = null;
+      try {
+        let avatarUrl = String(this.workspaceProfileAvatarInput || '').trim() || null;
+        if (this.workspaceProfilePendingAvatarFile) {
+          avatarUrl = await this.uploadWorkspaceAvatarFile(this.workspaceProfilePendingAvatarFile);
+        }
+        const workspaceOwnerNpub = workspace.workspaceOwnerNpub;
+        const now = new Date().toISOString();
+        const writeGroupNpub = this.getWorkspaceSettingsGroupNpub();
+        const groupIds = writeGroupNpub ? [writeGroupNpub] : [...(this.workspaceSettingsGroupIds || [])];
+        const nextVersion = Math.max(1, Number(this.workspaceSettingsVersion || 0) + 1);
+        const recordId = this.workspaceSettingsRecordId || workspaceSettingsRecordId(workspaceOwnerNpub);
+        const description = String(this.workspaceProfileDescriptionInput || '').trim();
+        const localRow = {
+          workspace_owner_npub: workspaceOwnerNpub,
+          record_id: recordId,
+          owner_npub: workspaceOwnerNpub,
+          workspace_name: name,
+          workspace_description: description,
+          workspace_avatar_url: avatarUrl,
+          wingman_harness_url: this.workspaceHarnessUrl,
+          triggers: toRaw(this.workspaceTriggers || []),
+          group_ids: groupIds,
+          sync_status: 'pending',
+          record_state: 'active',
+          version: nextVersion,
+          updated_at: now,
+        };
+
+        await upsertWorkspaceSettings(localRow);
+        this.applyWorkspaceSettingsRow(localRow);
+
+        const envelope = await outboundWorkspaceSettings({
+          record_id: recordId,
+          owner_npub: workspaceOwnerNpub,
+          workspace_owner_npub: workspaceOwnerNpub,
+          workspace_name: name,
+          workspace_description: description,
+          workspace_avatar_url: avatarUrl,
+          wingman_harness_url: this.workspaceHarnessUrl,
+          triggers: toRaw(this.workspaceTriggers || []),
+          group_ids: groupIds,
+          version: nextVersion,
+          previous_version: Math.max(0, nextVersion - 1),
+          signature_npub: this.session?.npub || workspaceOwnerNpub,
+          write_group_npub: writeGroupNpub,
+        });
+        await addPendingWrite({
+          record_id: recordId,
+          record_family_hash: envelope.record_family_hash,
+          envelope,
+        });
+        await this.refreshSyncStatus();
+        this.ensureBackgroundSync(true);
+        await this.persistWorkspaceSettings();
+        this.syncWorkspaceProfileDraft({ force: true });
+      } catch (error) {
+        this.workspaceProfileError = error?.message || 'Failed to save workspace settings';
+      } finally {
+        this.workspaceProfileSaving = false;
+      }
     },
 
     openHarnessLink() {
@@ -2888,7 +3227,8 @@ export function initApp() {
         return;
       }
       const pending = await getPendingWrites();
-      this.syncStatus = pending.length > 0 ? 'unsynced' : 'synced';
+      const quarantine = await this.refreshSyncQuarantine();
+      this.syncStatus = pending.length > 0 ? 'unsynced' : quarantine.length > 0 ? 'quarantined' : 'synced';
       if (pending.length > 0) {
         flightDeckLog('debug', 'sync', 'pending writes remain after sync status refresh', {
           pendingCount: pending.length,
@@ -2926,6 +3266,37 @@ export function initApp() {
       });
 
       return true;
+    },
+
+    async restoreFamiliesFromSuperBased(familyIds, options = {}) {
+      const dedupedFamilyIds = [...new Set((familyIds || []).filter(Boolean))];
+      if (dedupedFamilyIds.length === 0) {
+        throw new Error('Select at least one record family.');
+      }
+
+      const pending = await getPendingWritesByFamilies(dedupedFamilyIds);
+      if (pending.length > 0) {
+        const blockingFamilies = [...new Set(
+          pending
+            .map((row) => getSyncFamily(row.record_family_hash)?.label)
+            .filter(Boolean)
+        )];
+        throw new Error(`Cannot restore while unsynced local changes exist in: ${blockingFamilies.join(', ')}. Sync or resolve them first.`);
+      }
+
+      if (options.confirm !== false && typeof window !== 'undefined') {
+        const labels = dedupedFamilyIds.map((familyId) => getSyncFamily(familyId)?.label || familyId);
+        const confirmed = window.confirm(`Restore ${labels.join(', ')} from SuperBased? This clears local cache for the selected families and rebuilds it from the backend.`);
+        if (!confirmed) return { cancelled: true, restored: 0 };
+      }
+
+      await clearRuntimeFamilies(dedupedFamilyIds);
+      await clearSyncStateForFamilies(dedupedFamilyIds);
+      await clearSyncQuarantineForFamilies(dedupedFamilyIds);
+      await this.pullFamiliesFromBackend(dedupedFamilyIds, { forceFull: true });
+      await this.refreshStateForFamilies(dedupedFamilyIds);
+      await this.refreshSyncQuarantine();
+      return { cancelled: false, restored: dedupedFamilyIds.length };
     },
 
     async pullFamiliesFromBackend(familyIds, options = {}) {
@@ -2971,34 +3342,79 @@ export function initApp() {
       this.repairError = null;
       this.repairNotice = '';
 
-      const pending = await getPendingWritesByFamilies(familyIds);
-      if (pending.length > 0) {
-        const blockingFamilies = [...new Set(
-          pending
-            .map((row) => getSyncFamily(row.record_family_hash)?.label)
-            .filter(Boolean)
-        )];
-        this.repairError = `Cannot restore while unsynced local changes exist in: ${blockingFamilies.join(', ')}. Sync or resolve them first.`;
-        return;
-      }
-
-      if (typeof window !== 'undefined') {
-        const labels = familyIds.map((familyId) => getSyncFamily(familyId)?.label || familyId);
-        const confirmed = window.confirm(`Restore ${labels.join(', ')} from SuperBased? This clears local cache for the selected families and rebuilds it from the backend.`);
-        if (!confirmed) return;
-      }
-
       this.repairBusy = true;
       try {
-        await clearRuntimeFamilies(familyIds);
-        await clearSyncStateForFamilies(familyIds);
-        await this.pullFamiliesFromBackend(familyIds, { forceFull: true });
-        await this.refreshStateForFamilies(familyIds);
-        this.repairNotice = `Restored ${familyIds.length} record ${familyIds.length === 1 ? 'family' : 'families'} from SuperBased.`;
+        const result = await this.restoreFamiliesFromSuperBased(familyIds);
+        if (result.cancelled) return;
+        this.repairNotice = `Restored ${result.restored} record ${result.restored === 1 ? 'family' : 'families'} from SuperBased.`;
       } catch (error) {
         this.repairError = error?.message || 'Failed to restore selected record families.';
       } finally {
         this.repairBusy = false;
+      }
+    },
+
+    async dismissSyncQuarantineIssue(entry) {
+      this.syncQuarantineError = null;
+      this.syncQuarantineNotice = '';
+      this.syncQuarantineBusy = true;
+      try {
+        await deleteSyncQuarantineEntry(entry.family_hash, entry.record_id);
+        await this.refreshSyncStatus();
+        this.syncQuarantineNotice = `Dismissed quarantine issue for ${this.syncQuarantineRecordLabel(entry)}.`;
+      } catch (error) {
+        this.syncQuarantineError = error?.message || 'Failed to dismiss quarantine issue.';
+      } finally {
+        this.syncQuarantineBusy = false;
+      }
+    },
+
+    async retrySyncQuarantineIssue(entry) {
+      const familyId = getSyncFamily(entry?.family_id || entry?.family_hash)?.id;
+      if (!familyId) {
+        this.syncQuarantineError = 'Unknown sync family for this quarantine issue.';
+        return;
+      }
+
+      this.syncQuarantineError = null;
+      this.syncQuarantineNotice = '';
+      this.syncQuarantineBusy = true;
+      try {
+        const result = await this.restoreFamiliesFromSuperBased([familyId], { confirm: false });
+        if (result.cancelled) return;
+        this.syncQuarantineNotice = `Rebuilt ${this.syncQuarantineFamilyLabel(entry)} from SuperBased.`;
+      } catch (error) {
+        this.syncQuarantineError = error?.message || 'Failed to retry quarantined family.';
+      } finally {
+        this.syncQuarantineBusy = false;
+      }
+    },
+
+    async deleteLocalQuarantinedRecord(entry) {
+      const family = getSyncFamily(entry?.family_id || entry?.family_hash);
+      if (!family?.id) {
+        this.syncQuarantineError = 'Unknown sync family for this quarantine issue.';
+        return;
+      }
+
+      if (typeof window !== 'undefined') {
+        const confirmed = window.confirm(`Delete local ${this.syncQuarantineFamilyLabel(entry)} record ${this.syncQuarantineRecordLabel(entry)}? This only affects browser state.`);
+        if (!confirmed) return;
+      }
+
+      this.syncQuarantineError = null;
+      this.syncQuarantineNotice = '';
+      this.syncQuarantineBusy = true;
+      try {
+        await deleteRuntimeRecordByFamily(family.id, entry.record_id);
+        await deleteSyncQuarantineEntry(entry.family_hash, entry.record_id);
+        await this.refreshStateForFamilies([family.id]);
+        await this.refreshSyncStatus();
+        this.syncQuarantineNotice = `Deleted local ${this.syncQuarantineFamilyLabel(entry)} record ${this.syncQuarantineRecordLabel(entry)}.`;
+      } catch (error) {
+        this.syncQuarantineError = error?.message || 'Failed to delete local quarantined record.';
+      } finally {
+        this.syncQuarantineBusy = false;
       }
     },
 
@@ -4052,6 +4468,9 @@ export function initApp() {
       if (assignedNpubs.length > 0) {
         await this.rememberPeople(assignedNpubs, 'task-assignee');
       }
+      this.selectedTaskIds = this.selectedTaskIds.filter((taskId) =>
+        normalizedTasks.some((task) => task.record_id === taskId && task.record_state !== 'deleted' && !this.isParentTask(taskId))
+      );
       this.normalizeTaskFilterTags();
       this.updatePageTitle();
     },
@@ -4137,7 +4556,7 @@ export function initApp() {
         level,
         parentId,
         scopesMap: this.scopesMap,
-        fallbackGroupId: this.memberPrivateGroupNpub || this.scheduleAssignableGroups[0]?.groupId || null,
+        fallbackGroupId: this.memberPrivateGroupNpub || this.scopeAssignableGroups[0]?.groupId || null,
       }).map((groupId) => this.resolveGroupId(groupId));
     },
 
@@ -4447,6 +4866,54 @@ export function initApp() {
       });
     },
 
+    async applyTaskPatch(taskId, patch = {}, options = {}) {
+      const task = this.tasks.find((entry) => entry.record_id === taskId);
+      if (!task || !this.session?.npub) return null;
+
+      const nextVersion = (task.version ?? 1) + 1;
+      const updated = toRaw({
+        ...task,
+        ...patch,
+        assigned_to_npub: patch.assigned_to_npub === undefined ? (task.assigned_to_npub ?? null) : (patch.assigned_to_npub ?? null),
+        version: nextVersion,
+        sync_status: 'pending',
+        updated_at: new Date().toISOString(),
+      });
+
+      if (updated.state === 'done' || updated.state === 'archive') {
+        updated.assigned_to_npub = null;
+      }
+
+      await upsertTask(updated);
+      this.tasks = this.tasks.map((entry) => entry.record_id === taskId ? updated : entry);
+
+      if (this.editingTask?.record_id === taskId) {
+        this.editingTask = { ...updated };
+      }
+
+      await this.queueTaskWrite(updated, task);
+
+      const newAssignee = updated.assigned_to_npub;
+      if (newAssignee && newAssignee !== task.assigned_to_npub) {
+        await this.rememberPeople([newAssignee], 'task-assignee');
+        for (const trigger of (this.workspaceTriggers || [])) {
+          if (!trigger.enabled || !trigger.botNpub || trigger.triggerType !== 'chat_bot_tagged') continue;
+          if (newAssignee === trigger.botNpub) {
+            this._checkTriggerRules('chat_bot_tagged', trigger.botPubkeyHex,
+              `Task assigned to bot: "${updated.title}" [${updated.state}]`);
+          }
+        }
+      }
+
+      if (options.sync !== false) {
+        await this.performSync({ silent: options.silent !== false });
+      }
+      if (options.refresh) {
+        await this.refreshTasks();
+      }
+      return updated;
+    },
+
     async cascadeTaskScopeToSubtasks(parentTask, nextParentTask) {
       const subtasks = this.tasks.filter((task) =>
         task.parent_task_id === parentTask.record_id
@@ -4540,37 +5007,7 @@ export function initApp() {
     },
 
     async updateTaskField(taskId, field, value) {
-      const task = this.tasks.find(t => t.record_id === taskId);
-      if (!task || !this.session?.npub) return;
-
-      const nextVersion = (task.version ?? 1) + 1;
-      const updated = toRaw({
-        ...task,
-        [field]: value,
-        version: nextVersion,
-        sync_status: 'pending',
-        updated_at: new Date().toISOString(),
-      });
-
-      await upsertTask(updated);
-      this.tasks = this.tasks.map(t => t.record_id === taskId ? updated : t);
-
-      if (this.editingTask?.record_id === taskId) {
-        this.editingTask = { ...updated };
-      }
-
-      const envelope = await outboundTask({
-        ...updated,
-        previous_version: task.version ?? 1,
-        signature_npub: this.session.npub,
-        write_group_npub: updated.board_group_id || updated.group_ids?.[0] || null,
-      });
-      await addPendingWrite({
-        record_id: taskId,
-        record_family_hash: envelope.record_family_hash,
-        envelope,
-      });
-      await this.performSync({ silent: true });
+      await this.applyTaskPatch(taskId, { [field]: value }, { silent: true, sync: true });
     },
 
     setTaskDueToday() {
@@ -4591,6 +5028,15 @@ export function initApp() {
       this.saveEditingTask();
     },
 
+    async quickSetTaskState(state) {
+      if (!this.editingTask) return;
+      this.editingTask.state = state;
+      this.editingTask.assigned_to_npub = null;
+      const savePromise = this.saveEditingTask();
+      this.closeTaskDetail();
+      await savePromise;
+    },
+
     async saveEditingTask() {
       if (!this.editingTask || !this.session?.npub) return;
       if (this.containsInlineImageUploadToken(this.editingTask.description)) {
@@ -4599,6 +5045,10 @@ export function initApp() {
       }
       const task = this.tasks.find(t => t.record_id === this.editingTask.record_id);
       if (!task) return;
+
+      if (this.editingTask.state === 'done' || this.editingTask.state === 'archive') {
+        this.editingTask.assigned_to_npub = null;
+      }
 
       const nextVersion = (task.version ?? 1) + 1;
       const updated = toRaw({
@@ -4859,7 +5309,7 @@ export function initApp() {
       };
 
       await upsertComment(localRow);
-      this.taskComments = [...this.taskComments, localRow];
+      this.taskComments = [localRow, ...this.taskComments];
       this.newTaskCommentBody = '';
       this.taskCommentAudioDrafts = [];
       this.scheduleStorageImageHydration();
@@ -5472,6 +5922,67 @@ export function initApp() {
       if (!task || task.state === targetState) return;
       if (this.isParentTask(taskId)) return;
       await this.updateTaskField(taskId, 'state', targetState);
+    },
+
+    isTaskSelected(taskId) {
+      return this.selectedTaskIds.includes(taskId);
+    },
+
+    toggleTaskSelection(taskId) {
+      if (!taskId || this.isParentTask(taskId)) return;
+      if (this.isTaskSelected(taskId)) {
+        this.selectedTaskIds = this.selectedTaskIds.filter((candidate) => candidate !== taskId);
+      } else {
+        this.selectedTaskIds = [...this.selectedTaskIds, taskId];
+      }
+    },
+
+    selectVisibleTasks() {
+      const visibleTaskIds = this.activeTasks.map((task) => task.record_id);
+      this.selectedTaskIds = [...new Set([...this.selectedTaskIds, ...visibleTaskIds])];
+    },
+
+    clearSelectedTasks() {
+      this.selectedTaskIds = [];
+    },
+
+    async applyBulkTaskAction(action) {
+      if (this.bulkTaskBusy || this.selectedTaskIds.length === 0) return;
+      const selectedIds = [...this.selectedTaskIds];
+      const today = new Date().toISOString().slice(0, 10);
+      const patchForAction = (taskId) => {
+        switch (action) {
+          case 'archive':
+            return { state: 'archive', assigned_to_npub: null };
+          case 'done':
+            return { state: 'done', assigned_to_npub: null };
+          case 'ready':
+            return { state: 'ready', assigned_to_npub: this.defaultAgentNpub || null };
+          case 'today':
+            return { scheduled_for: today };
+          default:
+            return null;
+        }
+      };
+
+      if (action === 'ready' && !this.defaultAgentNpub) {
+        this.error = 'Set a default agent in Settings first.';
+        return;
+      }
+
+      this.bulkTaskBusy = true;
+      try {
+        for (const taskId of selectedIds) {
+          const patch = patchForAction(taskId);
+          if (!patch) continue;
+          await this.applyTaskPatch(taskId, patch, { sync: false });
+        }
+        await this.performSync({ silent: true });
+        await this.refreshTasks();
+        this.clearSelectedTasks();
+      } finally {
+        this.bulkTaskBusy = false;
+      }
     },
 
     handleTaskCardClick(taskId) {

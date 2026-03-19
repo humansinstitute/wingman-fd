@@ -46,11 +46,12 @@
           :class="{
             'sync-status-synced': $store.chat.syncStatus === 'synced',
             'sync-status-unsynced': $store.chat.syncStatus === 'unsynced',
-            'sync-status-syncing': $store.chat.syncStatus === 'syncing'
+            'sync-status-syncing': $store.chat.syncStatus === 'syncing',
+            'sync-status-quarantined': $store.chat.syncStatus === 'quarantined'
           }"
           type="button"
           @click="$store.chat.showAvatarMenu = !$store.chat.showAvatarMenu"
-          :title="$store.chat.syncStatus === 'synced' ? 'Synced with SuperBased' : $store.chat.syncStatus === 'unsynced' ? 'Local changes not synced' : 'Syncing...'"
+          :title="$store.chat.syncStatus === 'synced' ? 'Synced with SuperBased' : $store.chat.syncStatus === 'unsynced' ? 'Local changes not synced' : $store.chat.syncStatus === 'quarantined' ? 'Sync quarantine needs review' : 'Syncing...'"
         >
           <template x-if="$store.chat.avatarUrl">
             <img class="chat-post-avatar" :src="$store.chat.avatarUrl" alt="Your profile picture" />
@@ -548,34 +549,31 @@
               </div>
             </template>
 
-            <div class="board-selector board-selector-inline" @click.outside="$store.chat.closeBoardPicker()">
-              <button
-                type="button"
-                class="board-picker-toggle"
-                @click="$store.chat.toggleBoardPicker()"
-              >
-                <span class="board-picker-label" x-text="$store.chat.selectedBoardLabel"></span>
-                <span class="board-picker-caret">▾</span>
-              </button>
-              <div class="board-picker-popover" x-show="$store.chat.showBoardPicker" x-cloak>
+            <div class="board-selector board-selector-inline" x-data="{ bpIdx: 0 }" @click.outside="$store.chat.closeBoardPicker()">
+              <div class="board-picker-typeahead-wrapper">
                 <input
-                  class="board-picker-input"
+                  class="board-picker-typeahead-input"
                   type="text"
                   x-model="$store.chat.boardPickerQuery"
-                  placeholder="Type to filter scopes..."
+                  :placeholder="$store.chat.selectedBoardLabel || 'Select scope...'"
+                  @focus="$store.chat.showBoardPicker = true; bpIdx = 0"
+                  @keydown.escape="$store.chat.closeBoardPicker(); $el.blur()"
+                  @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filteredTaskBoards.length - 1)"
+                  @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
+                  @keydown.enter.prevent="if ($store.chat.filteredTaskBoards[bpIdx]) { $store.chat.selectBoard($store.chat.filteredTaskBoards[bpIdx].id); $el.blur() }"
                 />
-                <div class="board-picker-options" x-show="$store.chat.filteredTaskBoards.length > 0">
-                  <template x-for="board in $store.chat.filteredTaskBoards" :key="board.id ?? '__personal'">
-                    <button
-                      type="button"
-                      class="board-picker-option"
-                      :class="{ 'board-picker-option-active': $store.chat.selectedBoardId === board.id }"
+                <ul class="board-picker-typeahead-results" x-show="$store.chat.showBoardPicker && $store.chat.filteredTaskBoards.length > 0" x-cloak>
+                  <template x-for="(board, idx) in $store.chat.filteredTaskBoards" :key="board.id ?? '__personal'">
+                    <li
+                      class="board-picker-typeahead-option"
+                      :class="{ 'board-picker-typeahead-active': $store.chat.selectedBoardId === board.id, 'board-picker-typeahead-highlight': idx === bpIdx }"
                       @click="$store.chat.selectBoard(board.id)"
+                      @mouseenter="bpIdx = idx"
                       x-text="board.label"
-                    ></button>
+                    ></li>
                   </template>
-                </div>
-                <p class="board-picker-empty" x-show="$store.chat.filteredTaskBoards.length === 0">No scopes match.</p>
+                </ul>
+                <div class="board-picker-typeahead-empty" x-show="$store.chat.showBoardPicker && $store.chat.filteredTaskBoards.length === 0">No scopes match.</div>
               </div>
             </div>
 
@@ -607,6 +605,18 @@
             </button>
           </div>
 
+          <div class="task-bulk-bar" x-show="!$store.chat.showTaskDetail && $store.chat.selectedTaskCount > 0">
+            <span class="task-bulk-count" x-text="$store.chat.selectedTaskCount + ' selected'"></span>
+            <div class="task-bulk-actions">
+              <button type="button" class="task-bulk-btn" @click="$store.chat.selectVisibleTasks()" :disabled="$store.chat.bulkTaskBusy">Select visible</button>
+              <button type="button" class="task-bulk-btn" @click="$store.chat.clearSelectedTasks()" :disabled="$store.chat.bulkTaskBusy">Clear</button>
+              <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('archive')" :disabled="$store.chat.bulkTaskBusy" x-text="$store.chat.bulkTaskBusy ? 'Working...' : 'Archive'"></button>
+              <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('done')" :disabled="$store.chat.bulkTaskBusy">Done</button>
+              <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('ready')" :disabled="!$store.chat.canBulkAssignToDefaultAgent" :title="$store.chat.defaultAgentNpub ? '' : 'Set a default agent in Settings first'">Ready</button>
+              <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkTaskAction('today')" :disabled="$store.chat.bulkTaskBusy">Today</button>
+            </div>
+          </div>
+
           <!-- Kanban board -->
           <div class="kanban-board" x-show="!$store.chat.showTaskDetail">
             <template x-for="col in $store.chat.boardColumns" :key="col.state">
@@ -623,13 +633,22 @@
                   <template x-for="task in col.tasks" :key="task.record_id">
                     <div
                       class="kanban-card"
-                      :class="{ 'summary-card': col.state === 'summary' }"
+                      :class="{ 'summary-card': col.state === 'summary', 'kanban-card-selected': $store.chat.isTaskSelected(task.record_id) }"
                       :draggable="col.state !== 'summary'"
                       @dragstart="col.state !== 'summary' && $store.chat.handleTaskDragStart($event, task.record_id)"
                       @dragend="$store.chat.handleTaskDragEnd($event)"
                       @click="$store.chat.handleTaskCardClick(task.record_id)"
                     >
                       <div class="kanban-card-header">
+                        <template x-if="col.state !== 'summary'">
+                          <label class="task-card-select" @click.stop>
+                            <input
+                              type="checkbox"
+                              :checked="$store.chat.isTaskSelected(task.record_id)"
+                              @change="$store.chat.toggleTaskSelection(task.record_id)"
+                            />
+                          </label>
+                        </template>
                         <span class="kanban-card-title" x-text="task.title"></span>
                         <template x-if="task.assigned_to_npub">
                           <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(task.assigned_to_npub)">
@@ -730,11 +749,17 @@
                       <select x-model="$store.chat.editingTask.state" @change="$store.chat.saveEditingTask()">
                         <option value="new">New</option>
                         <option value="ready">Ready</option>
+                        <option value="definition">Definition</option>
                         <option value="in_progress">In Progress</option>
                         <option value="review">Review</option>
                         <option value="done">Done</option>
                         <option value="archive">Archive</option>
                       </select>
+                      <span class="task-quick-date-links">
+                        <button type="button" class="task-quick-date-link" @click="$store.chat.quickSetTaskState('done')">Done</button>
+                        <span class="task-quick-date-sep">|</span>
+                        <button type="button" class="task-quick-date-link" @click="$store.chat.quickSetTaskState('archive')">Archive</button>
+                      </span>
                     </div>
                     <div class="task-field">
                       <label class="task-field-label">Priority</label>
@@ -926,7 +951,9 @@
                       rows="2"
                     ></textarea>
                     <div class="task-comment-actions">
-                      <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('task-comment')">Mic</button>
+                      <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('task-comment')" title="Record voice note">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+                      </button>
                       <button type="button" @click="$store.chat.addTaskComment($store.chat.editingTask.record_id)" :disabled="((!$store.chat.newTaskCommentBody.trim() && $store.chat.taskCommentAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newTaskCommentBody))">Post</button>
                     </div>
                   </div>
@@ -1077,7 +1104,7 @@
                   @keydown.enter.exact.prevent="if (!$store.chat.mentionActive) $store.chat.sendMessage()"
                   @paste="$store.chat.handleChatPaste($event, 'message')"
                 ></textarea>
-                <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('chat')">Mic</button>
+                <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('chat')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
                 <button class="chat-send-btn-text" @click="$store.chat.sendMessage()" :disabled="((!$store.chat.messageInput.trim() && $store.chat.messageAudioDrafts.length === 0) || $store.chat.messageImageUploadCount > 0)">Send</button>
               </div>
               <div class="audio-draft-list" x-show="$store.chat.messageAudioDrafts.length > 0">
@@ -1212,7 +1239,7 @@
                   @paste="$store.chat.handleChatPaste($event, 'thread')"
                 ></textarea>
                 <div class="thread-input-actions">
-                  <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('thread')">Mic</button>
+                  <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('thread')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
                   <button class="thread-reply-btn" @click="$store.chat.sendThreadReply()" :disabled="((!$store.chat.threadInput.trim() && $store.chat.threadAudioDrafts.length === 0) || $store.chat.threadImageUploadCount > 0)">Reply</button>
                 </div>
               </div>
@@ -1650,7 +1677,7 @@
                             @keydown.ctrl.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocCommentReply()"
                           ></textarea>
                           <div class="doc-thread-reply-actions">
-                            <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-reply')">Mic</button>
+                            <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-reply')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
                             <button type="button" class="doc-thread-reply-btn" @click="$store.chat.addDocCommentReply()" :disabled="((!$store.chat.newDocCommentReplyBody.trim() && $store.chat.docCommentReplyAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newDocCommentReplyBody))">Reply</button>
                           </div>
                           <div class="audio-draft-list" x-show="$store.chat.docCommentReplyAudioDrafts.length > 0">
@@ -1777,7 +1804,7 @@
               </div>
               <div class="new-doc-modal-actions">
                 <button type="button" class="btn-cancel" @click="$store.chat.closeDocCommentModal()">Cancel</button>
-                <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-comment')">Mic</button>
+                <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-comment')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
                 <button type="button" class="btn-confirm" @click="$store.chat.addDocComment()" :disabled="((!$store.chat.newDocCommentBody.trim() && $store.chat.docCommentAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newDocCommentBody))">Post comment</button>
               </div>
             </div>
@@ -1834,34 +1861,31 @@
               </div>
             </template>
 
-            <div class="board-selector board-selector-inline" @click.outside="$store.chat.closeBoardPicker()">
-              <button
-                type="button"
-                class="board-picker-toggle"
-                @click="$store.chat.toggleBoardPicker()"
-              >
-                <span class="board-picker-label" x-text="$store.chat.selectedBoardLabel"></span>
-                <span class="board-picker-caret">▾</span>
-              </button>
-              <div class="board-picker-popover" x-show="$store.chat.showBoardPicker" x-cloak>
+            <div class="board-selector board-selector-inline" x-data="{ bpIdx: 0 }" @click.outside="$store.chat.closeBoardPicker()">
+              <div class="board-picker-typeahead-wrapper">
                 <input
-                  class="board-picker-input"
+                  class="board-picker-typeahead-input"
                   type="text"
                   x-model="$store.chat.boardPickerQuery"
-                  placeholder="Type to filter scopes..."
+                  :placeholder="$store.chat.selectedBoardLabel || 'Select scope...'"
+                  @focus="$store.chat.showBoardPicker = true; bpIdx = 0"
+                  @keydown.escape="$store.chat.closeBoardPicker(); $el.blur()"
+                  @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filteredTaskBoards.length - 1)"
+                  @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
+                  @keydown.enter.prevent="if ($store.chat.filteredTaskBoards[bpIdx]) { $store.chat.selectBoard($store.chat.filteredTaskBoards[bpIdx].id); $el.blur() }"
                 />
-                <div class="board-picker-options" x-show="$store.chat.filteredTaskBoards.length > 0">
-                  <template x-for="board in $store.chat.filteredTaskBoards" :key="board.id ?? '__personal'">
-                    <button
-                      type="button"
-                      class="board-picker-option"
-                      :class="{ 'board-picker-option-active': $store.chat.selectedBoardId === board.id }"
+                <ul class="board-picker-typeahead-results" x-show="$store.chat.showBoardPicker && $store.chat.filteredTaskBoards.length > 0" x-cloak>
+                  <template x-for="(board, idx) in $store.chat.filteredTaskBoards" :key="board.id ?? '__personal'">
+                    <li
+                      class="board-picker-typeahead-option"
+                      :class="{ 'board-picker-typeahead-active': $store.chat.selectedBoardId === board.id, 'board-picker-typeahead-highlight': idx === bpIdx }"
                       @click="$store.chat.selectBoard(board.id)"
+                      @mouseenter="bpIdx = idx"
                       x-text="board.label"
-                    ></button>
+                    ></li>
                   </template>
-                </div>
-                <p class="board-picker-empty" x-show="$store.chat.filteredTaskBoards.length === 0">No scopes match.</p>
+                </ul>
+                <div class="board-picker-typeahead-empty" x-show="$store.chat.showBoardPicker && $store.chat.filteredTaskBoards.length === 0">No scopes match.</div>
               </div>
             </div>
 
@@ -2533,6 +2557,80 @@
         </div>
 
         <div x-show="$store.chat.navSection === 'settings'" class="settings-section">
+          <div class="settings-tabs">
+            <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'workspace' }" @click="$store.chat.settingsTab = 'workspace'">Workspace</button>
+            <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'connection' }" @click="$store.chat.settingsTab = 'connection'">Connection</button>
+            <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'automation' }" @click="$store.chat.settingsTab = 'automation'">Automation</button>
+            <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'data' }" @click="$store.chat.settingsTab = 'data'">Data</button>
+            <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'sharing' }" @click="$store.chat.settingsTab = 'sharing'">Sharing</button>
+          </div>
+          <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'workspace'">
+          <section class="settings-panel workspace-settings-panel">
+            <div class="settings-panel-header">
+              <div>
+                <h2>Workspace</h2>
+                <p>Edit the current workspace name, description, and avatar.</p>
+              </div>
+            </div>
+            <p class="settings-field-help">
+              Current workspace:
+              <span x-text="$store.chat.currentWorkspace?.name || $store.chat.workspaceOwnerNpub || 'None selected'"></span>
+            </p>
+            <div class="workspace-avatar-settings-row">
+              <template x-if="$store.chat.workspaceProfileAvatarPreviewUrl">
+                <img class="workspace-avatar-settings-preview" :src="$store.chat.workspaceProfileAvatarPreviewUrl" alt="Workspace avatar preview" />
+              </template>
+              <template x-if="!$store.chat.workspaceProfileAvatarPreviewUrl">
+                <span class="workspace-avatar-settings-preview workspace-avatar-settings-fallback avatar-fallback" x-text="$store.chat.currentWorkspaceInitials"></span>
+              </template>
+              <div class="workspace-avatar-settings-actions">
+                <input
+                  x-ref="workspaceAvatarInput"
+                  class="workspace-avatar-settings-input"
+                  type="file"
+                  accept="image/*"
+                  @change="$store.chat.handleWorkspaceAvatarSelection($event)"
+                />
+                <button type="button" class="btn-confirm" @click="$refs.workspaceAvatarInput.click()">Choose avatar</button>
+                <button type="button" class="btn-cancel" @click="$store.chat.clearWorkspaceAvatarDraft()">Clear avatar</button>
+              </div>
+            </div>
+            <label class="settings-field-label" for="workspace-name-input">Workspace name</label>
+            <input
+              id="workspace-name-input"
+              type="text"
+              x-model="$store.chat.workspaceProfileNameInput"
+              @input="$store.chat.handleWorkspaceProfileField('name', $event.target.value)"
+              placeholder="Workspace name"
+            />
+            <label class="settings-field-label" for="workspace-description-input">Description</label>
+            <textarea
+              id="workspace-description-input"
+              x-model="$store.chat.workspaceProfileDescriptionInput"
+              @input="$store.chat.handleWorkspaceProfileField('description', $event.target.value)"
+              rows="3"
+              placeholder="What this workspace is for"
+            ></textarea>
+            <p class="error-text" x-show="$store.chat.workspaceProfileError" x-text="$store.chat.workspaceProfileError"></p>
+            <div class="settings-actions">
+              <button
+                type="button"
+                class="btn-confirm"
+                @click="$store.chat.saveWorkspaceProfile()"
+                :disabled="!$store.chat.workspaceProfileDirty || $store.chat.workspaceProfileSaving"
+                x-text="$store.chat.workspaceProfileSaving ? 'Saving...' : 'Save workspace'"
+              ></button>
+              <button
+                type="button"
+                class="btn-cancel"
+                @click="$store.chat.resetWorkspaceProfileDraft()"
+                :disabled="$store.chat.workspaceProfileSaving || !$store.chat.workspaceProfileDirty"
+              >Reset</button>
+            </div>
+          </section>
+          </div>
+
+          <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'connection'">
           <section class="settings-panel harness-settings-panel">
             <div class="settings-panel-header">
               <div>
@@ -2609,7 +2707,9 @@
               </template>
             </ul>
           </section>
+          </div>
 
+          <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'automation'">
           <section class="settings-panel">
             <div class="settings-panel-header">
               <div>
@@ -2710,6 +2810,44 @@
               <button type="button" class="btn-confirm" @click="$store.chat.addTrigger()">Add Trigger</button>
             </div>
           </section>
+          </div>
+
+          <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'data'">
+          <section class="settings-panel repair-settings-panel">
+            <div class="settings-panel-header">
+              <div>
+                <h2>Sync Quarantine</h2>
+                <p>Skipped or undecryptable records are parked here so one bad record does not stall the whole family cursor.</p>
+              </div>
+              <span class="sync-quarantine-badge" x-text="$store.chat.syncQuarantine.length"></span>
+            </div>
+            <p class="settings-field-help">Use this to inspect the broken record, rebuild the family from SuperBased, or dismiss a known issue after you have handled it elsewhere.</p>
+            <p class="error-text" x-show="$store.chat.syncQuarantineError" x-text="$store.chat.syncQuarantineError"></p>
+            <p class="settings-success" x-show="$store.chat.syncQuarantineNotice" x-text="$store.chat.syncQuarantineNotice"></p>
+            <p class="settings-field-help" x-show="!$store.chat.hasSyncQuarantine">No quarantined sync issues.</p>
+            <div class="sync-quarantine-list" x-show="$store.chat.hasSyncQuarantine">
+              <template x-for="issue in $store.chat.syncQuarantine" :key="issue.key">
+                <article class="sync-quarantine-card">
+                  <div class="sync-quarantine-card-header">
+                    <div>
+                      <h3 x-text="$store.chat.syncQuarantineRecordLabel(issue)"></h3>
+                      <p class="sync-quarantine-meta">
+                        <span x-text="$store.chat.syncQuarantineFamilyLabel(issue)"></span>
+                        <span x-show="issue.updated_at">Updated <span x-text="$store.chat.formatSyncQuarantineTimestamp(issue.updated_at)"></span></span>
+                        <span>Seen <span x-text="issue.skip_count || 1"></span>x</span>
+                      </p>
+                    </div>
+                  </div>
+                  <p class="sync-quarantine-error" x-text="issue.error"></p>
+                  <div class="settings-actions">
+                    <button type="button" class="btn-cancel" :disabled="$store.chat.syncQuarantineBusy" @click="$store.chat.retrySyncQuarantineIssue(issue)">Rebuild Family</button>
+                    <button type="button" class="btn-cancel" :disabled="$store.chat.syncQuarantineBusy" @click="$store.chat.deleteLocalQuarantinedRecord(issue)">Delete Local Copy</button>
+                    <button type="button" class="btn-confirm" :disabled="$store.chat.syncQuarantineBusy" @click="$store.chat.dismissSyncQuarantineIssue(issue)">Dismiss</button>
+                  </div>
+                </article>
+              </template>
+            </div>
+          </section>
 
           <section class="settings-panel repair-settings-panel">
             <div class="settings-panel-header">
@@ -2745,7 +2883,9 @@
               </button>
             </div>
           </section>
+          </div>
 
+          <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'sharing'">
           <section class="settings-panel">
             <div class="groups-header">
               <div>
@@ -2798,6 +2938,7 @@
               </template>
             </ul>
           </section>
+          </div>
         </div>
 
         <!-- New group modal -->
