@@ -29,6 +29,7 @@ export async function inboundWorkspaceSettings(record) {
     record_id: record.record_id,
     owner_npub: record.owner_npub,
     wingman_harness_url: normalizeHarnessUrl(data.wingman_harness_url),
+    triggers: Array.isArray(data.triggers) ? data.triggers : [],
     group_ids: (record.group_payloads || []).map((groupPayload) => groupPayload.group_id || groupPayload.group_npub),
     sync_status: 'synced',
     record_state: data.record_state ?? 'active',
@@ -42,6 +43,7 @@ export async function outboundWorkspaceSettings({
   owner_npub,
   workspace_owner_npub = owner_npub,
   wingman_harness_url = '',
+  triggers = [],
   group_ids = [],
   version = 1,
   previous_version = 0,
@@ -57,6 +59,7 @@ export async function outboundWorkspaceSettings({
     data: {
       workspace_owner_npub,
       wingman_harness_url: normalizeHarnessUrl(wingman_harness_url),
+      triggers: Array.isArray(triggers) ? triggers : [],
       record_state,
     },
   };

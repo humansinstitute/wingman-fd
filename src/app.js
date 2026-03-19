@@ -5,6 +5,21 @@
 
 import Alpine from 'alpinejs';
 import { commentBelongsToDocBlock } from './doc-comment-anchors.js';
+import {
+  rankMainFeedMessages,
+  rankThreadReplies,
+  sortMessagesByUpdatedAt,
+} from './chat-order.js';
+import { renderMarkdownToHtml } from './markdown.js';
+import { resolveChannelLabel } from './channel-labels.js';
+import { buildFlightDeckDocumentTitle } from './page-title.js';
+import { signAndPublishTrigger, npubToHex } from './nostr-trigger.js';
+import {
+  CALENDAR_VIEWS,
+  buildTaskCalendar,
+  getTodayDateKey,
+  shiftCalendarDate,
+} from './task-calendar.js';
 
 /** Strip Alpine proxy wrappers so objects survive IndexedDB structured clone. */
 function toRaw(obj) {
@@ -108,7 +123,29 @@ import {
   levelLabel,
   SCOPE_LEVELS,
 } from './translators/scopes.js';
+import {
+  buildScopeLineage,
+  buildScopeShares,
+  buildScopeTags,
+  defaultScopeGroupIds,
+  deriveScopeHierarchy,
+  findActiveDirectoryByScopeId,
+  findActiveRootDirectoryByTitle,
+  normalizeGroupIds,
+} from './scope-delivery.js';
+import {
+  getTaskBoardScopeLabel,
+  inferTaskScopeLevel,
+  isTaskUnscoped,
+  matchesTaskBoardScope,
+  sortTaskBoardScopes,
+} from './task-board-scopes.js';
+import {
+  buildCascadedSubtaskUpdate,
+  taskScopeAssignmentChanged,
+} from './task-scope-cascade.js';
 import { outboundWorkspaceSettings, normalizeHarnessUrl } from './translators/settings.js';
+import { flightDeckLog } from './logging.js';
 import { runSync, pullRecordsForFamilies } from './worker/sync-worker.js';
 import { parseSuperBasedToken } from './superbased-token.js';
 import { buildAgentConnectPackage } from './agent-connect.js';
@@ -139,6 +176,7 @@ import { decryptAudioBytes, encryptAudioBlob, measureAudioDuration } from './aud
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
 
 const TASK_BOARD_STORAGE_KEY = 'coworker:last-task-board-id';
+const UNSCOPED_TASK_BOARD_ID = '__unscoped__';
 const WEEKDAY_OPTIONS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 function guessDefaultBackendUrl() {
@@ -230,6 +268,7 @@ function parseRouteLocation() {
   let section = 'chat';
   if (path === '/notifications' || path === '/status') section = 'status';
   else if (path === '/tasks') section = 'tasks';
+  else if (path === '/calendar') section = 'calendar';
   else if (path === '/schedules') section = 'schedules';
   else if (path === '/chat') section = 'chat';
   else if (path === '/docs') section = 'docs';
@@ -245,6 +284,8 @@ function parseRouteLocation() {
       folderid: url.searchParams.get('folderid') || null,
       docid: url.searchParams.get('docid') || null,
       commentid: url.searchParams.get('commentid') || null,
+      scopeid: url.searchParams.get('scopeid') || null,
+      descendants: url.searchParams.get('descendants') || null,
       groupid: url.searchParams.get('groups') || url.searchParams.get('groupid') || null,
       taskid: url.searchParams.get('taskid') || null,
     },
@@ -255,6 +296,9 @@ export function initApp() {
   Alpine.store('chat', {
     FAST_SYNC_MS: 1000,
     IDLE_SYNC_MS: 5000,
+    MESSAGE_PREVIEW_MAX_LINES: 15,
+    COMPOSER_MAX_LINES: 12,
+    THREAD_REPLY_PAGE_SIZE: 6,
 
     // settings
     backendUrl: '',
@@ -262,6 +306,9 @@ export function initApp() {
     botNpub: '',
     session: null,
     navSection: 'chat',
+    calendarViews: CALENDAR_VIEWS,
+    calendarView: 'month',
+    calendarAnchorDate: getTodayDateKey(),
     navCollapsed: false,
     mobileNavOpen: false,
     routeSyncPaused: false,
@@ -272,12 +319,15 @@ export function initApp() {
     showAgentConnectModal: false,
     syncStatus: 'synced',
     hasForcedInitialBackfill: false,
+    hasForcedTaskFamilyBackfill: false,
     backgroundSyncTimer: null,
     backgroundSyncInFlight: false,
     visibilityHandler: null,
     docConnectorFrame: null,
     docConnectorScrollHandler: null,
     docConnectorResizeHandler: null,
+    chatFeedScrollFrame: null,
+    chatPreviewMeasureFrame: null,
 
     // data
     channels: [],
@@ -292,8 +342,11 @@ export function initApp() {
     threadInput: '',
     threadAudioDrafts: [],
     threadImageUploadCount: 0,
+    threadVisibleReplyCount: 6,
     threadSize: 'default',
     focusMessageId: null,
+    expandedChatMessageIds: [],
+    truncatedChatMessageIds: [],
     chatProfiles: {},
     statusTimeRange: '1h',
     statusRecentChanges: [],
@@ -310,12 +363,16 @@ export function initApp() {
     selectedBoardId: null,
     showBoardPicker: false,
     boardPickerQuery: '',
+    showBoardDescendantTasks: false,
+    taskBoardScopeSetupInFlight: false,
     newTaskTitle: '',
     newSubtaskTitle: '',
     newTaskCommentBody: '',
     copiedTaskLinkId: null,
     editingTask: null,
     taskAssigneeQuery: '',
+    taskScopeCascadePending: false,
+    taskScopeCascadeMessage: '',
     showNewScheduleModal: false,
     newScheduleTitle: '',
     newScheduleDescription: '',
@@ -345,10 +402,23 @@ export function initApp() {
     newScopeDescription: '',
     newScopeLevel: 'product',
     newScopeParentId: null,
+    newScopeAssignedGroupIds: [],
+    newScopeGroupQuery: '',
     showNewScopeForm: false,
+    scopeNavFocus: null,
     editingScopeId: null,
     editingScopeTitle: '',
     editingScopeDescription: '',
+    editingScopeAssignedGroupIds: [],
+    editingScopeGroupQuery: '',
+    // @mentions
+    mentionActive: false,
+    mentionQuery: '',
+    mentionResults: [],
+    mentionSelectedIndex: 0,
+    _mentionTargetEl: null,
+    _mentionStartPos: -1,
+
     currentFolderId: null,
     docFilter: '',
     docEditorTitle: '',
@@ -401,6 +471,8 @@ export function initApp() {
     superbasedError: null,
     knownWorkspaces: [],
     currentWorkspaceOwnerNpub: '',
+    showWorkspaceSwitcherMenu: false,
+    workspaceSwitchPendingNpub: '',
     workspaceSettingsRecordId: '',
     workspaceSettingsVersion: 0,
     workspaceSettingsGroupIds: [],
@@ -414,6 +486,18 @@ export function initApp() {
     repairBusy: false,
     repairError: null,
     repairNotice: '',
+
+    // triggers
+    workspaceTriggers: [],
+    newTriggerType: 'manual',
+    newTriggerName: '',
+    newTriggerId: '',
+    newTriggerBotNpub: '',
+    newTriggerBotQuery: '',
+    triggerMessage: {},
+    triggerFiring: {},
+    triggerError: null,
+    triggerSuccess: null,
     showWorkspaceBootstrapModal: false,
     newWorkspaceName: '',
     newWorkspaceDescription: '',
@@ -481,6 +565,38 @@ export function initApp() {
       return this.knownWorkspaces.find((workspace) => workspace.workspaceOwnerNpub === this.workspaceOwnerNpub) || null;
     },
 
+    get activeWorkspaceOwnerNpub() {
+      return this.currentWorkspace?.workspaceOwnerNpub || this.currentWorkspaceOwnerNpub || '';
+    },
+
+    get isWorkspaceSwitching() {
+      return Boolean(this.workspaceSwitchPendingNpub);
+    },
+
+    get currentWorkspaceName() {
+      if (this.currentWorkspace?.name) return this.currentWorkspace.name;
+      if (this.activeWorkspaceOwnerNpub) return 'Workspace';
+      return 'No workspace selected';
+    },
+
+    get currentWorkspaceMeta() {
+      if (this.isWorkspaceSwitching) {
+        const pendingWorkspace = this.getWorkspaceByOwner(this.workspaceSwitchPendingNpub);
+        return `Switching to ${pendingWorkspace?.name || this.getShortNpub(this.workspaceSwitchPendingNpub) || 'workspace'}...`;
+      }
+      if (this.currentWorkspace?.description) return this.currentWorkspace.description;
+      if (this.activeWorkspaceOwnerNpub) return this.activeWorkspaceOwnerNpub;
+      return 'Choose or create a workspace';
+    },
+
+    get currentWorkspaceAvatarUrl() {
+      return this.activeWorkspaceOwnerNpub ? this.getSenderAvatar(this.activeWorkspaceOwnerNpub) : null;
+    },
+
+    get currentWorkspaceInitials() {
+      return this.getInitials(this.currentWorkspace?.name || this.activeWorkspaceOwnerNpub || 'WS');
+    },
+
     get currentWorkspaceGroups() {
       return this.groups.filter((group) => group.owner_npub === this.workspaceOwnerNpub);
     },
@@ -511,12 +627,30 @@ export function initApp() {
     },
 
     get mainFeedMessages() {
-      return this.messages.filter(msg => !msg.parent_message_id);
+      return rankMainFeedMessages(this.messages);
     },
 
     get threadMessages() {
       if (!this.activeThreadId) return [];
-      return this.messages.filter(msg => msg.parent_message_id === this.activeThreadId);
+      return [...rankThreadReplies(this.messages, this.activeThreadId)].reverse();
+    },
+
+    get resolvedThreadVisibleReplyCount() {
+      const focusIndex = this.threadMessages.findIndex((message) => message.record_id === this.focusMessageId);
+      if (focusIndex >= 0) return Math.max(this.threadVisibleReplyCount, focusIndex + 1);
+      return this.threadVisibleReplyCount;
+    },
+
+    get visibleThreadMessages() {
+      return this.threadMessages.slice(0, this.resolvedThreadVisibleReplyCount);
+    },
+
+    get hiddenThreadReplyCount() {
+      return Math.max(0, this.threadMessages.length - this.resolvedThreadVisibleReplyCount);
+    },
+
+    get hasMoreThreadMessages() {
+      return this.hiddenThreadReplyCount > 0;
     },
 
     get selectedDocument() {
@@ -601,6 +735,26 @@ export function initApp() {
         folderId = folder.parent_directory_id || null;
       }
       return breadcrumbs;
+    },
+
+    get currentFolderTitleLabel() {
+      if (this.currentFolderBreadcrumbs.length === 0) return '';
+      return this.currentFolderBreadcrumbs
+        .map((folder) => folder.title || 'Untitled folder')
+        .join(' / ');
+    },
+
+    get currentDocumentTitle() {
+      return buildFlightDeckDocumentTitle({
+        section: this.navSection,
+        channelLabel: this.navSection === 'chat' && this.selectedChannel
+          ? this.getChannelLabel(this.selectedChannel)
+          : '',
+        folderLabel: this.navSection === 'docs' ? this.currentFolderTitleLabel : '',
+        docTitle: this.navSection === 'docs'
+          ? (this.selectedDocument?.title || this.selectedDirectory?.title || '')
+          : '',
+      });
     },
 
     get currentFolderContents() {
@@ -699,30 +853,183 @@ export function initApp() {
     },
 
     get taskBoards() {
-      const boards = [];
-      if (this.memberPrivateGroupNpub) {
-        boards.push({ id: this.memberPrivateGroupNpub, label: 'Private' });
-      }
-      for (const group of this.currentWorkspaceGroups) {
-        if ((group.group_id || group.group_npub) === this.memberPrivateGroupNpub) continue;
-        boards.push({
-          id: group.group_id || group.group_npub,
-          label: group.name || group.group_id || group.group_npub,
+      const boards = sortTaskBoardScopes(
+        this.scopes.filter((scope) => scope.record_state !== 'deleted'),
+        this.scopesMap,
+      ).map((scope) => ({
+        id: scope.record_id,
+        level: scope.level,
+        label: `${this.scopeLevelLabel(scope.level)}: ${getTaskBoardScopeLabel(scope, this.scopesMap)}`,
+        breadcrumb: getTaskBoardScopeLabel(scope, this.scopesMap),
+        description: scope.description || '',
+      }));
+      const hasUnscopedTasks = this.tasks.some((task) => task.record_state !== 'deleted' && isTaskUnscoped(task, this.scopesMap));
+      if (hasUnscopedTasks) {
+        boards.unshift({
+          id: UNSCOPED_TASK_BOARD_ID,
+          level: 'system',
+          label: 'Unscoped',
+          breadcrumb: 'Unscoped',
+          description: 'Tasks with no scope assignment',
         });
       }
       return boards;
     },
 
+    get selectedBoardScope() {
+      if (!this.selectedBoardId || this.selectedBoardId === UNSCOPED_TASK_BOARD_ID) return null;
+      return this.scopesMap.get(this.selectedBoardId) || null;
+    },
+
+    get selectedBoardIsUnscoped() {
+      return this.selectedBoardId === UNSCOPED_TASK_BOARD_ID;
+    },
+
     get selectedBoardLabel() {
-      if (!this.selectedBoardId) return 'Board';
-      const board = this.taskBoards.find(b => b.id === this.selectedBoardId);
-      return board ? board.label : 'Board';
+      if (this.selectedBoardIsUnscoped) return 'Unscoped';
+      if (!this.selectedBoardScope) return 'Scope board';
+      return `${this.scopeLevelLabel(this.selectedBoardScope.level)}: ${getTaskBoardScopeLabel(this.selectedBoardScope, this.scopesMap)}`;
+    },
+
+    get canToggleBoardDescendants() {
+      return this.selectedBoardScope?.level === 'product' || this.selectedBoardScope?.level === 'project';
+    },
+
+    get boardDescendantToggleTitle() {
+      if (!this.canToggleBoardDescendants) return '';
+      return this.showBoardDescendantTasks ? 'Hide deliverables' : 'Show deliverables';
+    },
+
+    get preferredTaskBoardId() {
+      if (this.tasks.some((task) => task.record_state !== 'deleted' && isTaskUnscoped(task, this.scopesMap))) {
+        return UNSCOPED_TASK_BOARD_ID;
+      }
+      return this.taskBoards[0]?.id || null;
+    },
+
+    toggleBoardDescendantTasks() {
+      this.showBoardDescendantTasks = !this.showBoardDescendantTasks;
+      this.normalizeTaskFilterTags();
+      if (this.showTaskDetail) this.closeTaskDetail();
+      else this.syncRoute();
+    },
+
+    getWorkspaceByOwner(workspaceOwnerNpub) {
+      if (!workspaceOwnerNpub) return null;
+      return this.knownWorkspaces.find((entry) => entry.workspaceOwnerNpub === workspaceOwnerNpub) || null;
+    },
+
+    getWorkspaceName(workspace) {
+      return String(workspace?.name || '').trim() || 'Untitled workspace';
+    },
+
+    getWorkspaceMeta(workspace) {
+      return String(workspace?.description || '').trim() || workspace?.workspaceOwnerNpub || '';
+    },
+
+    getWorkspaceAvatar(workspace) {
+      const workspaceOwnerNpub = typeof workspace === 'string' ? workspace : workspace?.workspaceOwnerNpub;
+      return workspaceOwnerNpub ? this.getSenderAvatar(workspaceOwnerNpub) : null;
+    },
+
+    getWorkspaceInitials(workspace) {
+      if (!workspace) return this.getInitials('WS');
+      if (typeof workspace === 'string') return this.getInitials(workspace);
+      return this.getInitials(this.getWorkspaceName(workspace) || workspace.workspaceOwnerNpub || 'WS');
+    },
+
+    toggleWorkspaceSwitcherMenu() {
+      if (this.isWorkspaceSwitching) return;
+      this.showWorkspaceSwitcherMenu = !this.showWorkspaceSwitcherMenu;
+    },
+
+    closeWorkspaceSwitcherMenu() {
+      this.showWorkspaceSwitcherMenu = false;
+    },
+
+    async handleWorkspaceSwitcherSelect(workspaceOwnerNpub) {
+      if (!workspaceOwnerNpub || this.isWorkspaceSwitching) return;
+      this.closeWorkspaceSwitcherMenu();
+      this.mobileNavOpen = false;
+      if (workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) return;
+      await this.selectWorkspace(workspaceOwnerNpub);
+    },
+
+    getTaskBoardOptionLabel(scopeId) {
+      if (scopeId === UNSCOPED_TASK_BOARD_ID) return 'Unscoped';
+      const scope = this.scopesMap.get(scopeId);
+      if (!scope) return 'Scope board';
+      return `${this.scopeLevelLabel(scope.level)}: ${getTaskBoardScopeLabel(scope, this.scopesMap)}`;
+    },
+
+    getTaskBoardSearchText(scopeId) {
+      if (scopeId === UNSCOPED_TASK_BOARD_ID) return 'unscoped no scope unsorted';
+      const scope = this.scopesMap.get(scopeId);
+      if (!scope) return '';
+      return [
+        scope.title,
+        scope.description,
+        scope.level,
+        getTaskBoardScopeLabel(scope, this.scopesMap),
+      ].filter(Boolean).join(' ').toLowerCase();
+    },
+
+    getTaskBoardWriteGroup(scopeId) {
+      if (scopeId === UNSCOPED_TASK_BOARD_ID) return this.getWorkspaceSettingsGroupNpub();
+      const scope = this.scopesMap.get(scopeId);
+      if (!scope) return null;
+      return this.getScopeShareGroupIds(scope)[0] || null;
+    },
+
+    buildTaskBoardAssignment(scopeId, fallbackTask = null) {
+      if (scopeId === UNSCOPED_TASK_BOARD_ID) {
+        const groupId = this.getWorkspaceSettingsGroupNpub();
+        const shares = groupId ? this.buildScopeDefaultShares([groupId]) : this.getDefaultPrivateShares();
+        return {
+          scope_id: null,
+          scope_product_id: null,
+          scope_project_id: null,
+          scope_deliverable_id: null,
+          board_group_id: groupId || fallbackTask?.board_group_id || null,
+          group_ids: this.getShareGroupIds(shares),
+          shares: toRaw(shares),
+        };
+      }
+      const scope = this.scopesMap.get(scopeId) || null;
+      if (!scope) {
+        return {
+          scope_id: fallbackTask?.scope_id ?? null,
+          scope_product_id: fallbackTask?.scope_product_id ?? null,
+          scope_project_id: fallbackTask?.scope_project_id ?? null,
+          scope_deliverable_id: fallbackTask?.scope_deliverable_id ?? null,
+          board_group_id: fallbackTask?.board_group_id ?? null,
+          group_ids: toRaw(fallbackTask?.group_ids ?? []),
+          shares: toRaw(fallbackTask?.shares ?? []),
+        };
+      }
+
+      const groupIds = this.getScopeShareGroupIds(scope);
+      return {
+        ...buildScopeTags(scope),
+        board_group_id: groupIds[0] || null,
+        group_ids: groupIds,
+        shares: this.buildScopeDefaultShares(groupIds),
+      };
+    },
+
+    getTaskBoardScopeFromTask(task) {
+      if (!task) return null;
+      if (task.scope_id && this.scopesMap.has(task.scope_id)) return this.scopesMap.get(task.scope_id) || null;
+      if (task.scope_deliverable_id && this.scopesMap.has(task.scope_deliverable_id)) return this.scopesMap.get(task.scope_deliverable_id) || null;
+      if (task.scope_project_id && this.scopesMap.has(task.scope_project_id)) return this.scopesMap.get(task.scope_project_id) || null;
+      if (task.scope_product_id && this.scopesMap.has(task.scope_product_id)) return this.scopesMap.get(task.scope_product_id) || null;
+      return null;
     },
 
     get filteredTaskBoards() {
       const query = String(this.boardPickerQuery || '').trim().toLowerCase();
       if (!query) return this.taskBoards;
-      return this.taskBoards.filter((board) => String(board.label || '').toLowerCase().includes(query));
+      return this.taskBoards.filter((board) => this.getTaskBoardSearchText(board.id).includes(query));
     },
 
     get weekdayOptions() {
@@ -765,6 +1072,25 @@ export function initApp() {
       };
     },
 
+    normalizeTaskRowScopeRefs(task) {
+      if (!task || typeof task !== 'object') return task;
+      if (!task.scope_id || !this.scopesMap.has(task.scope_id)) return task;
+
+      const chain = resolveScopeChain(task.scope_id, this.scopesMap);
+      const changed = (task.scope_product_id ?? null) !== (chain.scope_product_id ?? null)
+        || (task.scope_project_id ?? null) !== (chain.scope_project_id ?? null)
+        || (task.scope_deliverable_id ?? null) !== (chain.scope_deliverable_id ?? null);
+
+      if (!changed) return task;
+
+      return {
+        ...task,
+        scope_product_id: chain.scope_product_id,
+        scope_project_id: chain.scope_project_id,
+        scope_deliverable_id: chain.scope_deliverable_id,
+      };
+    },
+
     normalizeScheduleRowGroupRefs(schedule) {
       if (!schedule || typeof schedule !== 'object') return schedule;
 
@@ -797,6 +1123,22 @@ export function initApp() {
       };
     },
 
+    normalizeScopeRowGroupRefs(scope) {
+      if (!scope || typeof scope !== 'object') return scope;
+
+      const nextGroupIds = normalizeGroupIds((scope.group_ids || [])
+        .map((value) => this.resolveGroupId(value))
+        .filter(Boolean));
+
+      const changed = JSON.stringify(nextGroupIds) !== JSON.stringify(scope.group_ids || []);
+      if (!changed) return scope;
+
+      return {
+        ...scope,
+        group_ids: nextGroupIds,
+      };
+    },
+
     toggleBoardPicker() {
       this.showBoardPicker = !this.showBoardPicker;
       if (!this.showBoardPicker) this.boardPickerQuery = '';
@@ -810,6 +1152,7 @@ export function initApp() {
     selectBoard(boardId) {
       this.selectedBoardId = boardId;
       this.persistSelectedBoardId(boardId);
+      this.showBoardDescendantTasks = false;
       this.normalizeTaskFilterTags();
       this.closeBoardPicker();
       if (this.showTaskDetail) this.closeTaskDetail();
@@ -828,15 +1171,14 @@ export function initApp() {
     },
 
     validateSelectedBoardId() {
-      if (!this.selectedBoardId && this.memberPrivateGroupNpub) {
-        this.selectedBoardId = this.memberPrivateGroupNpub;
+      if (!this.selectedBoardId) {
+        this.selectedBoardId = this.preferredTaskBoardId;
         this.persistSelectedBoardId(this.selectedBoardId);
         return;
       }
-      if (!this.selectedBoardId) return;
       const exists = this.taskBoards.some((board) => board.id === this.selectedBoardId);
       if (!exists) {
-        this.selectedBoardId = this.memberPrivateGroupNpub || null;
+        this.selectedBoardId = this.preferredTaskBoardId;
         this.persistSelectedBoardId(this.selectedBoardId);
       }
     },
@@ -848,7 +1190,13 @@ export function initApp() {
 
     get boardScopedTasks() {
       const tasks = this.tasks.filter((task) => task.record_state !== 'deleted');
-      return tasks.filter((task) => this.resolveGroupId(task.board_group_id) === this.selectedBoardId);
+      if (this.selectedBoardIsUnscoped) {
+        return tasks.filter((task) => isTaskUnscoped(task, this.scopesMap));
+      }
+      if (!this.selectedBoardScope) return tasks;
+      return tasks.filter((task) => matchesTaskBoardScope(task, this.selectedBoardScope, this.scopesMap, {
+        includeDescendants: this.showBoardDescendantTasks,
+      }));
     },
 
     get filteredTasks() {
@@ -906,6 +1254,22 @@ export function initApp() {
       return cols;
     },
 
+    get calendarScheduledTasks() {
+      return this.filteredTasks.filter((task) =>
+        task.record_state !== 'deleted'
+        && task.state !== 'archive'
+        && !this.isParentTask(task.record_id)
+        && Boolean(task.scheduled_for)
+      );
+    },
+
+    get taskCalendar() {
+      return buildTaskCalendar(this.calendarScheduledTasks, {
+        view: this.calendarView,
+        anchorDateKey: this.calendarAnchorDate,
+      });
+    },
+
     get allTaskTags() {
       const tagSet = new Set();
       for (const task of this.boardScopedTasks) {
@@ -920,10 +1284,31 @@ export function initApp() {
       return parseTaskTags(task?.tags);
     },
 
-    getTaskBoardLabel(boardGroupId) {
-      const resolvedBoardId = this.resolveGroupId(boardGroupId);
-      if (resolvedBoardId && resolvedBoardId === this.memberPrivateGroupNpub) return 'Private board';
-      return this.taskBoards.find((board) => board.id === resolvedBoardId)?.label || 'Group board';
+    getTaskBoardLabel(taskOrScopeRef) {
+      if (!taskOrScopeRef) return 'Scope board';
+      if (typeof taskOrScopeRef !== 'string' && isTaskUnscoped(taskOrScopeRef, this.scopesMap)) return 'Unscoped';
+      if (taskOrScopeRef === UNSCOPED_TASK_BOARD_ID) return 'Unscoped';
+      const scope = typeof taskOrScopeRef === 'string'
+        ? this.scopesMap.get(taskOrScopeRef) || null
+        : this.getTaskBoardScopeFromTask(taskOrScopeRef);
+      if (!scope) return 'Scope board';
+      return this.getTaskBoardOptionLabel(scope.record_id);
+    },
+
+    get selectedBoardWriteGroup() {
+      return this.getTaskBoardWriteGroup(this.selectedBoardId)
+        || this.getWorkspaceSettingsGroupNpub()
+        || null;
+    },
+
+    async ensureTaskBoardScopeSetup() {
+      if (this.taskBoardScopeSetupInFlight) return;
+      this.taskBoardScopeSetupInFlight = true;
+      try {
+        this.validateSelectedBoardId();
+      } finally {
+        this.taskBoardScopeSetupInFlight = false;
+      }
     },
 
     getScheduleAssignedGroupLabel(groupId) {
@@ -1037,6 +1422,16 @@ export function initApp() {
       }));
     },
 
+    get scopeAssignableGroups() {
+      return this.currentWorkspaceGroups.map((group) => ({
+        groupId: group.group_id || group.group_npub,
+        label: group.name || 'Group',
+        subtitle: group.group_kind === 'private'
+          ? 'Private group'
+          : `${(group.member_npubs || []).length} members`,
+      }));
+    },
+
     get newScheduleGroupSuggestions() {
       return this.findScheduleGroupSuggestions(
         this.newScheduleGroupQuery,
@@ -1048,6 +1443,20 @@ export function initApp() {
       return this.findScheduleGroupSuggestions(
         this.editingScheduleGroupQuery,
         [this.editingScheduleDraft?.assigned_group_id],
+      );
+    },
+
+    get newScopeGroupSuggestions() {
+      return this.findScopeGroupSuggestions(
+        this.newScopeGroupQuery,
+        this.newScopeAssignedGroupIds,
+      );
+    },
+
+    get editingScopeGroupSuggestions() {
+      return this.findScopeGroupSuggestions(
+        this.editingScopeGroupQuery,
+        this.editingScopeAssignedGroupIds,
       );
     },
 
@@ -1125,6 +1534,48 @@ export function initApp() {
           || String(group.subtitle || '').toLowerCase().includes(needle)
         )
         .slice(0, 8);
+    },
+
+    findScopeGroupSuggestions(query, excludeGroupIds = []) {
+      const needle = String(query || '').trim().toLowerCase();
+      if (!needle) return [];
+
+      const existing = new Set((excludeGroupIds || []).map((value) => this.resolveGroupId(value)).filter(Boolean));
+      return this.scopeAssignableGroups
+        .filter((group) => !existing.has(group.groupId))
+        .filter((group) =>
+          String(group.label || '').toLowerCase().includes(needle)
+          || String(group.groupId || '').toLowerCase().includes(needle)
+          || String(group.subtitle || '').toLowerCase().includes(needle)
+        )
+        .slice(0, 8);
+    },
+
+    getScopeAssignedGroupLabel(groupId) {
+      const resolvedGroupId = this.resolveGroupId(groupId);
+      if (!resolvedGroupId) return 'Group';
+      return this.scopeAssignableGroups.find((group) => group.groupId === resolvedGroupId)?.label || resolvedGroupId;
+    },
+
+    getScopeAssignedGroupSubtitle(groupId) {
+      const resolvedGroupId = this.resolveGroupId(groupId);
+      if (!resolvedGroupId) return '';
+      return this.scopeAssignableGroups.find((group) => group.groupId === resolvedGroupId)?.subtitle || resolvedGroupId;
+    },
+
+    getScopeGroupSummary(scope) {
+      const groupIds = normalizeGroupIds(scope?.group_ids).map((groupId) => this.resolveGroupId(groupId)).filter(Boolean);
+      if (groupIds.length === 0) return 'No groups';
+      return groupIds.map((groupId) => this.getScopeAssignedGroupLabel(groupId)).join(', ');
+    },
+
+    get editingScope() {
+      if (!this.editingScopeId) return null;
+      return this.scopesMap.get(this.editingScopeId) || null;
+    },
+
+    get editingScopeLevelLabel() {
+      return this.scopeLevelLabel(this.editingScope?.level || '');
     },
 
     mapGroupDraftMembers(memberNpubs = []) {
@@ -1256,6 +1707,7 @@ export function initApp() {
       this.workspaceSettingsVersion = Number(row?.version || 0);
       this.workspaceSettingsGroupIds = Array.isArray(row?.group_ids) ? [...row.group_ids] : [];
       this.workspaceHarnessUrl = String(row?.wingman_harness_url || '').trim();
+      this.workspaceTriggers = Array.isArray(row?.triggers) ? [...row.triggers] : [];
       if (overwriteInput || !this.wingmanHarnessDirty) {
         this.wingmanHarnessInput = this.workspaceHarnessUrl;
         this.wingmanHarnessDirty = false;
@@ -1343,44 +1795,54 @@ export function initApp() {
       if (!workspace) return;
 
       const previousWorkspace = this.currentWorkspaceOwnerNpub;
-      this.currentWorkspaceOwnerNpub = workspace.workspaceOwnerNpub;
-      this.showWorkspaceBootstrapModal = false;
-      this.superbasedTokenInput = workspace.connectionToken || this.superbasedTokenInput;
-      this.backendUrl = normalizeBackendUrl(workspace.directHttpsUrl || this.backendUrl || guessDefaultBackendUrl());
-      this.ownerNpub = workspace.workspaceOwnerNpub;
-      setBaseUrl(this.backendUrl);
+      this.workspaceSwitchPendingNpub = workspace.workspaceOwnerNpub;
+      this.showWorkspaceSwitcherMenu = false;
+      try {
+        this.currentWorkspaceOwnerNpub = workspace.workspaceOwnerNpub;
+        this.showWorkspaceBootstrapModal = false;
+        this.superbasedTokenInput = workspace.connectionToken || this.superbasedTokenInput;
+        this.backendUrl = normalizeBackendUrl(workspace.directHttpsUrl || this.backendUrl || guessDefaultBackendUrl());
+        this.ownerNpub = workspace.workspaceOwnerNpub;
+        setBaseUrl(this.backendUrl);
 
-      if (previousWorkspace && previousWorkspace !== workspace.workspaceOwnerNpub) {
-        await clearRuntimeData();
-        this.channels = [];
-        this.messages = [];
-        this.groups = [];
-        this.documents = [];
-        this.directories = [];
-        this.tasks = [];
-        this.schedules = [];
-        this.audioNotes = [];
-        this.taskComments = [];
-        this.showNewScheduleModal = false;
-        this.cancelEditSchedule();
-        this.hasForcedInitialBackfill = false;
-      }
+        if (previousWorkspace && previousWorkspace !== workspace.workspaceOwnerNpub) {
+          await clearRuntimeData();
+          this.channels = [];
+          this.messages = [];
+          this.groups = [];
+          this.documents = [];
+          this.directories = [];
+          this.tasks = [];
+          this.schedules = [];
+          this.audioNotes = [];
+          this.taskComments = [];
+          this.showNewScheduleModal = false;
+          this.cancelEditSchedule();
+          this.hasForcedInitialBackfill = false;
+          this.hasForcedTaskFamilyBackfill = false;
+        }
 
-      this.selectedBoardId = this.readStoredTaskBoardId() || workspace.privateGroupId || workspace.privateGroupNpub || null;
-      this.validateSelectedBoardId();
-      await this.persistWorkspaceSettings();
-      await this.refreshWorkspaceSettings();
+        this.selectedBoardId = this.readStoredTaskBoardId() || null;
+        this.validateSelectedBoardId();
+        await this.persistWorkspaceSettings();
+        await this.refreshWorkspaceSettings();
 
-      if (options.refresh !== false && this.session?.npub) {
-        await this.refreshGroups();
-        await this.refreshChannels();
-        await this.refreshAudioNotes();
-        await this.refreshDirectories();
-        await this.refreshDocuments();
-        await this.refreshTasks();
-        await this.refreshSchedules();
-        await this.refreshScopes();
-        await this.refreshStatusRecentChanges();
+        if (this.session?.npub) {
+          await this.refreshGroups();
+          await this.refreshChannels();
+          await this.refreshAudioNotes();
+          await this.refreshDirectories();
+          await this.refreshDocuments();
+          await this.refreshScopes();
+          await this.refreshTasks();
+          await this.refreshSchedules();
+          await this.ensureTaskBoardScopeSetup();
+          await this.refreshStatusRecentChanges();
+        }
+      } finally {
+        if (this.workspaceSwitchPendingNpub === workspace.workspaceOwnerNpub) {
+          this.workspaceSwitchPendingNpub = '';
+        }
       }
     },
 
@@ -1424,6 +1886,8 @@ export function initApp() {
       this.newWorkspaceName = '';
       this.newWorkspaceDescription = '';
       this.showWorkspaceBootstrapModal = true;
+      this.showWorkspaceSwitcherMenu = false;
+      this.mobileNavOpen = false;
       this.showSuperBasedModal = false;
     },
 
@@ -1542,8 +2006,10 @@ export function initApp() {
       await this.refreshAudioNotes();
       await this.refreshDirectories();
       await this.refreshDocuments();
+      await this.refreshScopes();
       await this.refreshTasks();
       await this.refreshSchedules();
+      await this.ensureTaskBoardScopeSetup();
       await this.applyRouteFromLocation();
       await this.refreshSyncStatus();
       await this.refreshStatusRecentChanges();
@@ -1558,12 +2024,26 @@ export function initApp() {
       window.addEventListener('popstate', this.popstateHandler);
     },
 
+    updatePageTitle() {
+      if (typeof document === 'undefined') return;
+      document.title = this.currentDocumentTitle;
+    },
+
     initDocCommentConnector() {
       if (typeof window === 'undefined' || this.docConnectorScrollHandler || this.docConnectorResizeHandler) return;
       this.docConnectorScrollHandler = () => this.scheduleDocCommentConnectorUpdate();
       this.docConnectorResizeHandler = () => this.scheduleDocCommentConnectorUpdate();
       window.addEventListener('scroll', this.docConnectorScrollHandler, { passive: true });
       window.addEventListener('resize', this.docConnectorResizeHandler, { passive: true });
+
+      document.addEventListener('click', (e) => {
+        const link = e.target.closest('.mention-link');
+        if (!link) return;
+        e.preventDefault();
+        const type = link.dataset.mentionType;
+        const id = link.dataset.mentionId;
+        if (type && id) this.handleMentionNavigate(type, id);
+      });
     },
 
     clearDocCommentConnector() {
@@ -1621,6 +2101,8 @@ export function initApp() {
           return '/notifications';
         case 'tasks':
           return '/tasks';
+        case 'calendar':
+          return '/calendar';
         case 'schedules':
           return '/schedules';
         case 'chat':
@@ -1653,15 +2135,17 @@ export function initApp() {
           url.searchParams.set('docid', this.selectedDocId);
         }
         if (this.selectedDocCommentId) url.searchParams.set('commentid', this.selectedDocCommentId);
-      } else if (this.navSection === 'tasks') {
-        if (this.selectedBoardId) url.searchParams.set('groups', this.selectedBoardId);
-        if (this.activeTaskId) url.searchParams.set('taskid', this.activeTaskId);
+      } else if (this.navSection === 'tasks' || this.navSection === 'calendar') {
+        if (this.selectedBoardId) url.searchParams.set('scopeid', this.selectedBoardId);
+        if (this.showBoardDescendantTasks) url.searchParams.set('descendants', '1');
+        if (this.navSection === 'tasks' && this.activeTaskId) url.searchParams.set('taskid', this.activeTaskId);
       }
 
       return `${url.pathname}${url.search}`;
     },
 
     syncRoute(replace = false) {
+      this.updatePageTitle();
       if (this.routeSyncPaused || typeof window === 'undefined') return;
       const nextUrl = this.buildRouteUrl();
       const currentUrl = `${window.location.pathname}${window.location.search}`;
@@ -1700,15 +2184,19 @@ export function initApp() {
             this.currentFolderId = null;
             this.loadDocEditorFromSelection();
           }
-        } else if (route.section === 'tasks') {
-          this.selectedBoardId = this.resolveGroupId(route.params.groupid ?? this.readStoredTaskBoardId() ?? this.memberPrivateGroupNpub);
+        } else if (route.section === 'tasks' || route.section === 'calendar') {
+          this.selectedBoardId = route.params.scopeid
+            || route.params.groupid
+            || this.readStoredTaskBoardId()
+            || this.preferredTaskBoardId;
+          this.showBoardDescendantTasks = route.params.descendants === '1';
           this.validateSelectedBoardId();
           this.normalizeTaskFilterTags();
           this.persistSelectedBoardId(this.selectedBoardId);
-          if (route.params.taskid) {
+          if (route.section === 'tasks' && route.params.taskid) {
             this.openTaskDetail(route.params.taskid);
           } else {
-            this.closeTaskDetail();
+            this.closeTaskDetail({ syncRoute: false });
           }
         } else if (route.section === 'schedules') {
           this.cancelEditSchedule();
@@ -1859,6 +2347,7 @@ export function initApp() {
       this.workspaceSettingsGroupIds = [];
       this.workspaceHarnessUrl = '';
       this.defaultAgentQuery = '';
+      this.hasForcedTaskFamilyBackfill = false;
       this.wingmanHarnessInput = '';
       this.wingmanHarnessError = null;
       this.wingmanHarnessDirty = false;
@@ -1917,6 +2406,7 @@ export function initApp() {
         record_id: recordId,
         owner_npub: workspaceOwnerNpub,
         wingman_harness_url: normalizedUrl,
+        triggers: toRaw(this.workspaceTriggers || []),
         group_ids: groupIds,
         sync_status: 'pending',
         record_state: 'active',
@@ -1932,6 +2422,7 @@ export function initApp() {
         owner_npub: workspaceOwnerNpub,
         workspace_owner_npub: workspaceOwnerNpub,
         wingman_harness_url: normalizedUrl,
+        triggers: toRaw(this.workspaceTriggers || []),
         group_ids: groupIds,
         version: nextVersion,
         previous_version: Math.max(0, nextVersion - 1),
@@ -1961,6 +2452,163 @@ export function initApp() {
       this.defaultAgentNpub = '';
       this.defaultAgentQuery = '';
       await this.persistWorkspaceSettings();
+    },
+
+    // --- Triggers ---
+
+    get triggerBotSuggestions() {
+      return this.findPeopleSuggestions(this.newTriggerBotQuery, []);
+    },
+
+    triggerTypeLabel(type) {
+      const labels = {
+        manual: 'Manual',
+        chat_bot_tagged: 'Bot @tagged anywhere',
+        chat_channel_message: 'Chat: Any message in channel',
+      };
+      return labels[type] || type;
+    },
+
+    selectTriggerBot(npub) {
+      this.newTriggerBotNpub = npub;
+      this.newTriggerBotQuery = '';
+    },
+
+    clearTriggerBot() {
+      this.newTriggerBotNpub = '';
+      this.newTriggerBotQuery = '';
+    },
+
+    async addTrigger() {
+      this.triggerError = null;
+      const name = this.newTriggerName.trim();
+      const triggerId = this.newTriggerId.trim();
+      const botNpub = this.newTriggerBotNpub.trim();
+      const triggerType = this.newTriggerType;
+
+      if (!name || !triggerId || !botNpub) {
+        this.triggerError = 'Name, Trigger ID, and Bot are all required.';
+        return;
+      }
+
+      let botPubkeyHex;
+      try {
+        botPubkeyHex = npubToHex(botNpub);
+      } catch {
+        this.triggerError = 'Invalid bot npub.';
+        return;
+      }
+
+      const trigger = {
+        id: crypto.randomUUID(),
+        name,
+        triggerType,
+        trigger_id: triggerId,
+        botNpub,
+        botPubkeyHex,
+        enabled: true,
+        created_at: new Date().toISOString(),
+      };
+
+      this.workspaceTriggers = [...this.workspaceTriggers, trigger];
+      await this.saveHarnessSettings();
+
+      this.newTriggerType = 'manual';
+      this.newTriggerName = '';
+      this.newTriggerId = '';
+      this.newTriggerBotNpub = '';
+      this.newTriggerBotQuery = '';
+      this.triggerSuccess = `Trigger "${name}" added.`;
+      setTimeout(() => (this.triggerSuccess = null), 3000);
+    },
+
+    async removeTrigger(id) {
+      this.workspaceTriggers = this.workspaceTriggers.filter((t) => t.id !== id);
+      await this.saveHarnessSettings();
+    },
+
+    async toggleTrigger(id) {
+      const trigger = this.workspaceTriggers.find((t) => t.id === id);
+      if (!trigger) return;
+      trigger.enabled = !trigger.enabled;
+      this.workspaceTriggers = [...this.workspaceTriggers];
+      await this.saveHarnessSettings();
+    },
+
+    async fireTrigger(id) {
+      const trigger = this.workspaceTriggers.find((t) => t.id === id);
+      if (!trigger) return;
+
+      this.triggerFiring = { ...this.triggerFiring, [id]: true };
+      this.triggerError = null;
+
+      try {
+        const message = (this.triggerMessage[id] || '').trim();
+        const result = await signAndPublishTrigger(
+          trigger.trigger_id,
+          trigger.botPubkeyHex,
+          message,
+        );
+
+        if (result.relayResults.ok.length === 0) {
+          this.triggerError = 'Failed to publish to any relay.';
+        } else {
+          this.triggerSuccess = `Trigger "${trigger.name}" fired to ${result.relayResults.ok.length} relay(s).`;
+          this.triggerMessage = { ...this.triggerMessage, [id]: '' };
+          setTimeout(() => (this.triggerSuccess = null), 3000);
+        }
+      } catch (err) {
+        this.triggerError = `Fire failed: ${err.message}`;
+      } finally {
+        this.triggerFiring = { ...this.triggerFiring, [id]: false };
+      }
+    },
+
+    async _checkTriggerRules(eventType, botPubkeyHex, contextMessage) {
+      const triggers = (this.workspaceTriggers || []).filter(
+        (t) => t.enabled && t.triggerType === eventType && t.botPubkeyHex === botPubkeyHex,
+      );
+
+      for (const trigger of triggers) {
+        try {
+          console.log(`[trigger] Auto-firing "${trigger.name}" (${eventType}) trigger_id=${trigger.trigger_id}`);
+          const result = await signAndPublishTrigger(
+            trigger.trigger_id,
+            trigger.botPubkeyHex,
+            contextMessage,
+          );
+          if (result.relayResults.ok.length > 0) {
+            console.log(`[trigger] Published to ${result.relayResults.ok.length} relay(s)`);
+          }
+        } catch (err) {
+          console.error(`[trigger] Auto-fire failed for "${trigger.name}":`, err.message);
+        }
+      }
+    },
+
+    _fireMentionTriggers(content, context) {
+      const mentionRegex = /@\[.*?\]\(mention:person:([^\)]+)\)/g;
+      const mentionedNpubs = [];
+      let match;
+      while ((match = mentionRegex.exec(content)) !== null) {
+        mentionedNpubs.push(match[1]);
+      }
+
+      for (const trigger of (this.workspaceTriggers || [])) {
+        if (!trigger.enabled || !trigger.botPubkeyHex || !trigger.botNpub) continue;
+
+        // bot_tagged: bot was @mentioned anywhere
+        if (trigger.triggerType === 'chat_bot_tagged' && mentionedNpubs.includes(trigger.botNpub)) {
+          this._checkTriggerRules('chat_bot_tagged', trigger.botPubkeyHex,
+            `Bot tagged in ${context}: ${content.slice(0, 200)}`);
+        }
+
+        // chat_channel_message: any message in a channel (only for chat context)
+        if (trigger.triggerType === 'chat_channel_message' && context.startsWith('chat #')) {
+          this._checkTriggerRules('chat_channel_message', trigger.botPubkeyHex,
+            `New message in ${context}: ${content.slice(0, 200)}`);
+        }
+      }
     },
 
     async saveConnectionSettings() {
@@ -2073,6 +2721,11 @@ export function initApp() {
     navigateTo(section, options = {}) {
       this.navSection = section;
       this.mobileNavOpen = false;
+      this.showWorkspaceSwitcherMenu = false;
+      if (section === 'tasks' || section === 'calendar') {
+        this.validateSelectedBoardId();
+        this.normalizeTaskFilterTags();
+      }
       if (section !== 'schedules') {
         this.showNewScheduleModal = false;
         this.cancelEditSchedule();
@@ -2096,6 +2749,7 @@ export function initApp() {
       if (this.navSection === 'chat' && this.selectedChannelId) return this.FAST_SYNC_MS;
       if (this.navSection === 'docs') return this.FAST_SYNC_MS;
       if (this.navSection === 'tasks') return this.FAST_SYNC_MS;
+      if (this.navSection === 'calendar') return this.FAST_SYNC_MS;
       if (this.navSection === 'schedules') return this.FAST_SYNC_MS;
       if (this.navSection === 'scopes') return this.FAST_SYNC_MS;
       return this.IDLE_SYNC_MS;
@@ -2146,7 +2800,11 @@ export function initApp() {
       try {
         await this.performSync({ silent: true });
       } catch (error) {
-        console.debug('background sync failed:', error?.message || error);
+        flightDeckLog('error', 'sync', 'background sync failed', {
+          backendUrl: this.backendUrl || null,
+          ownerNpub: this.workspaceOwnerNpub || null,
+          error: error?.message || String(error),
+        });
       } finally {
         this.backgroundSyncInFlight = false;
         this.scheduleBackgroundSync();
@@ -2161,6 +2819,13 @@ export function initApp() {
 
       if (!silent) this.error = null;
       if (showBusy) this.syncing = true;
+      flightDeckLog('info', 'sync', 'sync started', {
+        silent,
+        showBusy,
+        backendUrl: this.backendUrl,
+        ownerNpub: this.workspaceOwnerNpub || null,
+        viewerNpub: this.session?.npub || null,
+      });
       try {
         await this.refreshGroups();
         if (
@@ -2185,17 +2850,31 @@ export function initApp() {
         await this.refreshAudioNotes();
         await this.refreshDirectories();
         await this.refreshDocuments();
-        await this.refreshTasks();
-        await this.refreshSchedules();
         await this.refreshScopes();
+        await this.refreshTasks();
+        await this.ensureTaskFamilyBackfill();
+        await this.refreshSchedules();
+        await this.ensureTaskBoardScopeSetup();
         if (this.docsEditorOpen && this.selectedDocId) {
           await this.loadDocComments(this.selectedDocId);
         }
         await this.refreshSyncStatus();
         await this.refreshStatusRecentChanges();
+        flightDeckLog('info', 'sync', 'sync completed', {
+          backendUrl: this.backendUrl,
+          ownerNpub: this.workspaceOwnerNpub || null,
+          pushed: result?.pushed ?? 0,
+          pulled: result?.pulled ?? 0,
+          syncStatus: this.syncStatus,
+        });
         return result;
       } catch (error) {
         if (!silent) this.error = error.message;
+        flightDeckLog('error', 'sync', 'sync failed', {
+          backendUrl: this.backendUrl,
+          ownerNpub: this.workspaceOwnerNpub || null,
+          error: error?.message || String(error),
+        });
         throw error;
       } finally {
         if (showBusy) this.syncing = false;
@@ -2210,6 +2889,43 @@ export function initApp() {
       }
       const pending = await getPendingWrites();
       this.syncStatus = pending.length > 0 ? 'unsynced' : 'synced';
+      if (pending.length > 0) {
+        flightDeckLog('debug', 'sync', 'pending writes remain after sync status refresh', {
+          pendingCount: pending.length,
+          pending: pending.slice(0, 10).map((row) => ({
+            recordId: row.record_id,
+            family: row.record_family_hash,
+            createdAt: row.created_at,
+          })),
+        });
+      }
+    },
+
+    async ensureTaskFamilyBackfill() {
+      if (this.hasForcedTaskFamilyBackfill) return false;
+      if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) return false;
+      if (this.tasks.length > 0) return false;
+      if (this.groups.length === 0) return false;
+      if (this.scopes.length === 0 && !this.selectedBoardId) return false;
+
+      this.hasForcedTaskFamilyBackfill = true;
+      flightDeckLog('info', 'sync', 'forcing full task-family backfill on empty local task cache', {
+        backendUrl: this.backendUrl,
+        ownerNpub: this.workspaceOwnerNpub,
+        scopesCount: this.scopes.length,
+        selectedBoardId: this.selectedBoardId || null,
+      });
+
+      await clearSyncStateForFamilies(['task']);
+      await this.pullFamiliesFromBackend(['task'], { forceFull: true });
+      await this.refreshTasks();
+
+      flightDeckLog('info', 'sync', 'task-family backfill completed', {
+        ownerNpub: this.workspaceOwnerNpub,
+        taskCount: this.tasks.length,
+      });
+
+      return true;
     },
 
     async pullFamiliesFromBackend(familyIds, options = {}) {
@@ -2234,6 +2950,7 @@ export function initApp() {
       if (selected.has('task')) await this.refreshTasks();
       if (selected.has('schedule')) await this.refreshSchedules();
       if (selected.has('scope')) await this.refreshScopes();
+      if (selected.has('task') || selected.has('scope')) await this.ensureTaskBoardScopeSetup();
       if (selected.has('comment') && this.activeTaskId) {
         await this.loadTaskComments(this.activeTaskId);
       }
@@ -2296,8 +3013,9 @@ export function initApp() {
       }
       if (!this.selectedChannelId && this.channels.length > 0) {
         this.selectedChannelId = this.channels[0].record_id;
-        await this.refreshMessages();
+        await this.refreshMessages({ scrollToLatest: true });
       }
+      this.updatePageTitle();
     },
 
     async refreshGroups() {
@@ -2442,14 +3160,52 @@ export function initApp() {
       return group;
     },
 
+    scheduleChatFeedScrollToBottom() {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return;
+      Alpine.nextTick(() => {
+        if (this.chatFeedScrollFrame) window.cancelAnimationFrame(this.chatFeedScrollFrame);
+        this.chatFeedScrollFrame = window.requestAnimationFrame(() => {
+          this.chatFeedScrollFrame = null;
+          const feed = document.querySelector('[data-chat-feed]');
+          if (!feed) return;
+          feed.scrollTop = feed.scrollHeight;
+        });
+      });
+    },
+
+    autosizeComposer(textarea) {
+      if (!textarea || typeof window === 'undefined') return;
+      const styles = window.getComputedStyle(textarea);
+      const lineHeight = parseFloat(styles.lineHeight) || 20;
+      const paddingY = (parseFloat(styles.paddingTop) || 0) + (parseFloat(styles.paddingBottom) || 0);
+      const borderY = (parseFloat(styles.borderTopWidth) || 0) + (parseFloat(styles.borderBottomWidth) || 0);
+      const maxHeight = (lineHeight * this.COMPOSER_MAX_LINES) + paddingY + borderY;
+
+      textarea.style.height = 'auto';
+      const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+      textarea.style.height = `${Math.max(nextHeight, 0)}px`;
+      textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+    },
+
+    scheduleComposerAutosize(context) {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return;
+      Alpine.nextTick(() => {
+        const textarea = document.querySelector(`[data-chat-composer="${context}"]`);
+        if (!textarea) return;
+        this.autosizeComposer(textarea);
+      });
+    },
+
     async refreshAddressBook() {
       this.addressBookPeople = await getAddressBookPeople();
     },
 
     async selectChannel(recordId, options = {}) {
       this.selectedChannelId = recordId;
+      this.expandedChatMessageIds = [];
+      this.truncatedChatMessageIds = [];
       this.closeThread({ syncRoute: false });
-      await this.refreshMessages();
+      await this.refreshMessages({ scrollToLatest: options.scrollToLatest !== false });
       if (options.syncRoute !== false) this.syncRoute();
       this.ensureBackgroundSync(true);
     },
@@ -2752,13 +3508,13 @@ export function initApp() {
 
     // --- messages ---
 
-    async refreshMessages() {
+    async refreshMessages(options = {}) {
       if (!this.selectedChannelId) {
         this.messages = [];
         this.activeThreadId = null;
         return;
       }
-      this.messages = await getMessagesByChannel(this.selectedChannelId);
+      this.messages = sortMessagesByUpdatedAt(await getMessagesByChannel(this.selectedChannelId));
       for (const message of this.messages) {
         await this.rememberPeople([message.sender_npub], 'chat');
       }
@@ -2768,6 +3524,9 @@ export function initApp() {
       ) {
         this.closeThread();
       }
+      this.syncChatPreviewState();
+      this.scheduleChatPreviewMeasurement();
+      if (options.scrollToLatest === true) this.scheduleChatFeedScrollToBottom();
       this.scheduleStorageImageHydration();
     },
 
@@ -2784,11 +3543,14 @@ export function initApp() {
       const index = this.messages.findIndex((item) => item.record_id === nextMessage.record_id);
       if (index >= 0) {
         this.messages.splice(index, 1, { ...this.messages[index], ...nextMessage });
+        this.syncChatPreviewState();
+        this.scheduleChatPreviewMeasurement();
         this.scheduleStorageImageHydration();
         return;
       }
-      this.messages = [...this.messages, nextMessage]
-        .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+      this.messages = sortMessagesByUpdatedAt([...this.messages, nextMessage]);
+      this.syncChatPreviewState();
+      this.scheduleChatPreviewMeasurement();
       this.scheduleStorageImageHydration();
     },
 
@@ -2808,6 +3570,7 @@ export function initApp() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
       this.directories = await getDirectoriesByOwner(ownerNpub);
+      this.updatePageTitle();
     },
 
     async refreshDocuments() {
@@ -2815,6 +3578,7 @@ export function initApp() {
       if (!ownerNpub) return;
       this.documents = await getDocumentsByOwner(ownerNpub);
       this.refreshOpenDocFromLatestDocument({ force: false });
+      this.updatePageTitle();
     },
 
     patchDirectoryLocal(nextDirectory) {
@@ -2866,6 +3630,7 @@ export function initApp() {
     openThread(recordId, options = {}) {
       this.activeThreadId = recordId;
       this.threadInput = '';
+      this.threadVisibleReplyCount = this.THREAD_REPLY_PAGE_SIZE;
       if (options.syncRoute !== false) this.syncRoute();
     },
 
@@ -2881,8 +3646,13 @@ export function initApp() {
     closeThread(options = {}) {
       this.activeThreadId = null;
       this.threadInput = '';
+      this.threadVisibleReplyCount = this.THREAD_REPLY_PAGE_SIZE;
       this.threadSize = 'default';
       if (options.syncRoute !== false) this.syncRoute();
+    },
+
+    showMoreThreadMessages() {
+      this.threadVisibleReplyCount += this.THREAD_REPLY_PAGE_SIZE;
     },
 
     getThreadParentMessage() {
@@ -2892,6 +3662,54 @@ export function initApp() {
 
     getThreadReplyCount(recordId) {
       return this.messages.filter(msg => msg.parent_message_id === recordId).length;
+    },
+
+    isChatMessageExpanded(recordId) {
+      return this.expandedChatMessageIds.includes(recordId);
+    },
+
+    isChatMessageTruncated(recordId) {
+      return this.truncatedChatMessageIds.includes(recordId);
+    },
+
+    toggleChatMessageExpanded(recordId) {
+      if (!recordId) return;
+      if (this.isChatMessageExpanded(recordId)) {
+        this.expandedChatMessageIds = this.expandedChatMessageIds.filter((id) => id !== recordId);
+      } else {
+        this.expandedChatMessageIds = [...this.expandedChatMessageIds, recordId];
+      }
+      this.scheduleChatPreviewMeasurement();
+    },
+
+    syncChatPreviewState() {
+      const validIds = new Set(this.mainFeedMessages.map((message) => message.record_id));
+      this.expandedChatMessageIds = this.expandedChatMessageIds.filter((id) => validIds.has(id));
+      this.truncatedChatMessageIds = this.truncatedChatMessageIds.filter((id) => validIds.has(id));
+    },
+
+    scheduleChatPreviewMeasurement() {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return;
+      Alpine.nextTick(() => {
+        if (this.chatPreviewMeasureFrame) window.cancelAnimationFrame(this.chatPreviewMeasureFrame);
+        this.chatPreviewMeasureFrame = window.requestAnimationFrame(() => {
+          this.chatPreviewMeasureFrame = null;
+          const previews = [...document.querySelectorAll('[data-chat-preview-id]')];
+          const nextTruncatedIds = [];
+
+          for (const preview of previews) {
+            const recordId = String(preview.dataset.chatPreviewId || '').trim();
+            if (!recordId) continue;
+            const styles = window.getComputedStyle(preview);
+            const lineHeight = parseFloat(styles.lineHeight);
+            const maxLines = Number(preview.dataset.chatPreviewMaxLines || this.MESSAGE_PREVIEW_MAX_LINES);
+            if (!Number.isFinite(lineHeight) || lineHeight <= 0 || !Number.isFinite(maxLines) || maxLines <= 0) continue;
+            if ((preview.scrollHeight - (lineHeight * maxLines)) > 1) nextTruncatedIds.push(recordId);
+          }
+
+          this.truncatedChatMessageIds = [...new Set(nextTruncatedIds)];
+        });
+      });
     },
 
     getStatusRangeMs() {
@@ -2977,13 +3795,13 @@ export function initApp() {
           section: 'tasks',
           recordType: 'Task',
           title: task.title?.trim() || 'Untitled task',
-          subtitle: task.board_group_id
-            ? `Updated on ${this.getTaskBoardLabel(task.board_group_id)}`
-            : 'Updated on board',
+          subtitle: task.scope_id
+            ? `Updated on ${this.getTaskBoardLabel(task)}`
+            : 'Updated with no scope',
           updatedAt: task.updated_at,
           updatedTs: Date.parse(task.updated_at) || 0,
           recordId: task.record_id,
-          boardGroupId: task.board_group_id ?? null,
+          boardScopeId: task.scope_id ?? task.scope_deliverable_id ?? task.scope_project_id ?? task.scope_product_id ?? null,
         });
       }
 
@@ -3017,7 +3835,7 @@ export function initApp() {
           updatedTs: Date.parse(comment.updated_at) || 0,
           recordId: task.record_id,
           focusRecordId: comment.record_id,
-          boardGroupId: task.board_group_id ?? null,
+          boardScopeId: task.scope_id ?? task.scope_deliverable_id ?? task.scope_project_id ?? task.scope_product_id ?? null,
         });
       }
 
@@ -3050,8 +3868,9 @@ export function initApp() {
       if (item.section === 'tasks') {
         this.navSection = 'tasks';
         this.mobileNavOpen = false;
-        this.selectedBoardId = item.boardGroupId ?? null;
+        this.selectedBoardId = item.boardScopeId ?? this.preferredTaskBoardId;
         this.persistSelectedBoardId(this.selectedBoardId);
+        this.validateSelectedBoardId();
         this.normalizeTaskFilterTags();
         if (item.recordId) {
           this.openTaskDetail(item.recordId);
@@ -3072,7 +3891,7 @@ export function initApp() {
       this.navSection = 'chat';
       this.mobileNavOpen = false;
       if (item.channelId) {
-        await this.selectChannel(item.channelId);
+        await this.selectChannel(item.channelId, { scrollToLatest: false });
       }
       if (item.threadId) {
         this.openThread(item.threadId);
@@ -3127,14 +3946,11 @@ export function initApp() {
     },
 
     getChannelLabel(channel) {
-      if (!channel) return '';
-      const participants = this.getChannelParticipants(channel);
-      const others = participants.filter((npub) => npub !== this.session?.npub);
-      if (others.length === 1) return this.getSenderName(others[0]);
-      if (others.length > 1) {
-        return others.map((npub) => this.getSenderName(npub)).join(', ');
-      }
-      return channel.title || channel.record_id.slice(0, 8);
+      return resolveChannelLabel(channel, {
+        sessionNpub: this.session?.npub || null,
+        getParticipants: (candidate) => this.getChannelParticipants(candidate),
+        getSenderName: (npub) => this.getSenderName(npub),
+      });
     },
 
     getChannelParticipants(channel) {
@@ -3224,7 +4040,8 @@ export function initApp() {
       const tasks = await getTasksByOwner(ownerNpub);
       const normalizedTasks = [];
       for (const task of tasks) {
-        const normalized = this.normalizeTaskRowGroupRefs(task);
+        const normalizedGroups = this.normalizeTaskRowGroupRefs(task);
+        const normalized = this.normalizeTaskRowScopeRefs(normalizedGroups);
         normalizedTasks.push(normalized);
         if (normalized !== task) {
           await upsertTask(normalized);
@@ -3236,6 +4053,7 @@ export function initApp() {
         await this.rememberPeople(assignedNpubs, 'task-assignee');
       }
       this.normalizeTaskFilterTags();
+      this.updatePageTitle();
     },
 
     formatScheduleDays(days = []) {
@@ -3268,7 +4086,7 @@ export function initApp() {
       this.newScheduleDays = ['mon', 'tue', 'wed', 'thu', 'fri'];
       this.newScheduleTimezone = 'Australia/Perth';
       this.newScheduleRepeat = 'daily';
-      this.newScheduleAssignedGroupId = this.selectedBoardId || this.memberPrivateGroupNpub || this.scheduleAssignableGroups[0]?.groupId || null;
+      this.newScheduleAssignedGroupId = this.selectedBoardWriteGroup || this.scheduleAssignableGroups[0]?.groupId || null;
       this.newScheduleGroupQuery = '';
     },
 
@@ -3314,6 +4132,71 @@ export function initApp() {
       this.editingScheduleGroupQuery = '';
     },
 
+    getDefaultScopeGroupIds(level = this.newScopeLevel, parentId = this.newScopeParentId || null) {
+      return defaultScopeGroupIds({
+        level,
+        parentId,
+        scopesMap: this.scopesMap,
+        fallbackGroupId: this.memberPrivateGroupNpub || this.scheduleAssignableGroups[0]?.groupId || null,
+      }).map((groupId) => this.resolveGroupId(groupId));
+    },
+
+    syncNewScopePermissionDefaults() {
+      this.newScopeAssignedGroupIds = this.getDefaultScopeGroupIds(this.newScopeLevel, this.newScopeParentId || null);
+      this.newScopeGroupQuery = '';
+    },
+
+    handleNewScopeLevelChange(level) {
+      this.newScopeLevel = level;
+      if (level === 'product') this.newScopeParentId = null;
+      this.syncNewScopePermissionDefaults();
+    },
+
+    handleNewScopeParentChange(parentId) {
+      this.newScopeParentId = parentId || null;
+      this.syncNewScopePermissionDefaults();
+    },
+
+    handleNewScopeGroupInput(value) {
+      this.newScopeGroupQuery = value;
+    },
+
+    addNewScopeGroup(groupId) {
+      const nextGroupId = this.resolveGroupId(groupId);
+      if (!nextGroupId) return;
+      this.newScopeAssignedGroupIds = normalizeGroupIds([
+        ...this.newScopeAssignedGroupIds,
+        nextGroupId,
+      ]);
+      this.newScopeGroupQuery = '';
+    },
+
+    removeNewScopeGroup(groupId) {
+      const targetGroupId = this.resolveGroupId(groupId);
+      this.newScopeAssignedGroupIds = this.newScopeAssignedGroupIds.filter((value) => this.resolveGroupId(value) !== targetGroupId);
+      this.newScopeGroupQuery = '';
+    },
+
+    handleEditingScopeGroupInput(value) {
+      this.editingScopeGroupQuery = value;
+    },
+
+    addEditingScopeGroup(groupId) {
+      const nextGroupId = this.resolveGroupId(groupId);
+      if (!nextGroupId) return;
+      this.editingScopeAssignedGroupIds = normalizeGroupIds([
+        ...this.editingScopeAssignedGroupIds,
+        nextGroupId,
+      ]);
+      this.editingScopeGroupQuery = '';
+    },
+
+    removeEditingScopeGroup(groupId) {
+      const targetGroupId = this.resolveGroupId(groupId);
+      this.editingScopeAssignedGroupIds = this.editingScopeAssignedGroupIds.filter((value) => this.resolveGroupId(value) !== targetGroupId);
+      this.editingScopeGroupQuery = '';
+    },
+
     async refreshSchedules() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
@@ -3327,6 +4210,20 @@ export function initApp() {
         }
       }
       this.schedules = normalizedSchedules;
+      this.updatePageTitle();
+    },
+
+    setCalendarView(view) {
+      if (!CALENDAR_VIEWS.includes(view)) return;
+      this.calendarView = view;
+    },
+
+    shiftCalendar(step = 1) {
+      this.calendarAnchorDate = shiftCalendarDate(this.calendarAnchorDate, this.calendarView, step);
+    },
+
+    jumpCalendarToToday() {
+      this.calendarAnchorDate = getTodayDateKey();
     },
 
     async addSchedule() {
@@ -3334,7 +4231,7 @@ export function initApp() {
       if (!title || !this.session?.npub) return;
       this.error = null;
       const ownerNpub = this.workspaceOwnerNpub;
-      const groupId = this.resolveGroupId(this.newScheduleAssignedGroupId || this.selectedBoardId || this.memberPrivateGroupNpub || this.groups[0]?.group_id || this.groups[0]?.group_npub);
+      const groupId = this.resolveGroupId(this.newScheduleAssignedGroupId || this.selectedBoardWriteGroup || this.groups[0]?.group_id || this.groups[0]?.group_npub);
       if (!groupId) {
         this.error = 'Select a group for the schedule.';
         return;
@@ -3486,10 +4383,18 @@ export function initApp() {
     async addTask() {
       const title = String(this.newTaskTitle || '').trim();
       if (!title || !this.session?.npub) return;
+      if (!this.selectedBoardId) {
+        this.error = 'Select a scope board first.';
+        return;
+      }
       const now = new Date().toISOString();
       const recordId = crypto.randomUUID();
       const ownerNpub = this.workspaceOwnerNpub;
-      const boardId = this.selectedBoardId || this.memberPrivateGroupNpub || null;
+      const assignment = this.buildTaskBoardAssignment(this.selectedBoardId);
+      if (!assignment.scope_id) {
+        this.error = 'Select a valid scope board first.';
+        return;
+      }
 
       const localRow = {
         record_id: recordId,
@@ -3499,12 +4404,10 @@ export function initApp() {
         state: 'new',
         priority: 'sand',
         parent_task_id: null,
-        board_group_id: boardId,
+        ...assignment,
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
-        shares: boardId ? [boardId] : [],
-        group_ids: boardId ? [boardId] : [],
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -3519,7 +4422,7 @@ export function initApp() {
       const envelope = await outboundTask({
         ...localRow,
         signature_npub: this.session.npub,
-        write_group_npub: boardId,
+        write_group_npub: localRow.board_group_id || localRow.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -3528,6 +4431,61 @@ export function initApp() {
       });
       await this.performSync({ silent: false });
       await this.refreshTasks();
+    },
+
+    async queueTaskWrite(updatedTask, previousTask) {
+      const envelope = await outboundTask({
+        ...updatedTask,
+        previous_version: previousTask?.version ?? 0,
+        signature_npub: this.session?.npub,
+        write_group_npub: updatedTask.board_group_id || updatedTask.group_ids?.[0] || null,
+      });
+      await addPendingWrite({
+        record_id: updatedTask.record_id,
+        record_family_hash: envelope.record_family_hash,
+        envelope,
+      });
+    },
+
+    async cascadeTaskScopeToSubtasks(parentTask, nextParentTask) {
+      const subtasks = this.tasks.filter((task) =>
+        task.parent_task_id === parentTask.record_id
+        && task.record_state !== 'deleted'
+      );
+      if (subtasks.length === 0) return 0;
+
+      const scopeRef = nextParentTask.scope_id
+        ?? nextParentTask.scope_deliverable_id
+        ?? nextParentTask.scope_project_id
+        ?? nextParentTask.scope_product_id
+        ?? null;
+      const assignment = this.buildTaskBoardAssignment(scopeRef, nextParentTask);
+
+      this.taskScopeCascadePending = true;
+      this.taskScopeCascadeMessage = `Updating ${subtasks.length} subtask${subtasks.length === 1 ? '' : 's'}…`;
+
+      const updates = new Map();
+      try {
+        for (const subtask of subtasks) {
+          const updatedSubtask = toRaw(buildCascadedSubtaskUpdate(subtask, assignment));
+          await upsertTask(updatedSubtask);
+          updates.set(updatedSubtask.record_id, updatedSubtask);
+          await this.queueTaskWrite(updatedSubtask, subtask);
+        }
+      } finally {
+        this.taskScopeCascadePending = false;
+      }
+
+      if (updates.size > 0) {
+        this.tasks = this.tasks.map((task) => updates.get(task.record_id) || task);
+      }
+      this.taskScopeCascadeMessage = `Updated ${updates.size} subtask${updates.size === 1 ? '' : 's'}.`;
+      if (typeof window !== 'undefined') {
+        window.setTimeout(() => {
+          if (!this.taskScopeCascadePending) this.taskScopeCascadeMessage = '';
+        }, 3000);
+      }
+      return updates.size;
     },
 
     async addSubtask(parentId) {
@@ -3552,12 +4510,10 @@ export function initApp() {
         state: 'new',
         priority: 'sand',
         parent_task_id: parentId,
-        board_group_id: parent?.board_group_id ?? null,
+        ...this.buildTaskBoardAssignment(parent?.scope_id ?? parent?.scope_deliverable_id ?? parent?.scope_project_id ?? parent?.scope_product_id ?? null, parent),
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
-        shares: toRaw(parent?.shares ?? []),
-        group_ids: toRaw(parent?.group_ids ?? []),
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -3617,6 +4573,24 @@ export function initApp() {
       await this.performSync({ silent: true });
     },
 
+    setTaskDueToday() {
+      if (!this.editingTask) return;
+      const today = new Date();
+      this.editingTask.scheduled_for = today.toISOString().slice(0, 10);
+      this.saveEditingTask();
+    },
+
+    setTaskDueThisWeek() {
+      if (!this.editingTask) return;
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const daysUntilFriday = dayOfWeek <= 5 ? (5 - dayOfWeek) : 6;
+      const friday = new Date(today);
+      friday.setDate(today.getDate() + (daysUntilFriday === 0 ? 7 : daysUntilFriday));
+      this.editingTask.scheduled_for = friday.toISOString().slice(0, 10);
+      this.saveEditingTask();
+    },
+
     async saveEditingTask() {
       if (!this.editingTask || !this.session?.npub) return;
       if (this.containsInlineImageUploadToken(this.editingTask.description)) {
@@ -3647,19 +4621,27 @@ export function initApp() {
 
       await upsertTask(updated);
       this.tasks = this.tasks.map(t => t.record_id === updated.record_id ? updated : t);
+      this.editingTask = { ...updated };
       if (this.activeTaskId === updated.record_id) this.scheduleStorageImageHydration();
 
-      const envelope = await outboundTask({
-        ...updated,
-        previous_version: task.version ?? 1,
-        signature_npub: this.session.npub,
-        write_group_npub: updated.board_group_id || updated.group_ids?.[0] || null,
-      });
-      await addPendingWrite({
-        record_id: updated.record_id,
-        record_family_hash: envelope.record_family_hash,
-        envelope,
-      });
+      await this.queueTaskWrite(updated, task);
+      if (this.isParentTask(updated.record_id) && taskScopeAssignmentChanged(task, updated)) {
+        await this.cascadeTaskScopeToSubtasks(task, updated);
+      }
+      if (updated.description && updated.description !== task.description) {
+        this._fireMentionTriggers(updated.description, `task "${updated.title}"`);
+      }
+      // Fire trigger when task is assigned to a bot
+      const newAssignee = updated.assigned_to_npub;
+      if (newAssignee && newAssignee !== task.assigned_to_npub) {
+        for (const trigger of (this.workspaceTriggers || [])) {
+          if (!trigger.enabled || !trigger.botNpub || trigger.triggerType !== 'chat_bot_tagged') continue;
+          if (newAssignee === trigger.botNpub) {
+            this._checkTriggerRules('chat_bot_tagged', trigger.botPubkeyHex,
+              `Task assigned to bot: "${updated.title}" [${updated.state}]`);
+          }
+        }
+      }
       await this.performSync({ silent: true });
       await this.refreshTasks();
     },
@@ -3668,6 +4650,34 @@ export function initApp() {
       const task = this.tasks.find(t => t.record_id === taskId);
       if (!task || !this.session?.npub) return;
 
+      const subtasks = this.getSubtasks(taskId);
+      let deleteSubtasks = false;
+
+      if (subtasks.length > 0) {
+        const answer = window.confirm(`This task has ${subtasks.length} subtask${subtasks.length === 1 ? '' : 's'}. Also delete subtasks?`);
+        deleteSubtasks = answer;
+      } else {
+        if (!window.confirm('Delete this task?')) return;
+      }
+
+      // Delete the parent task
+      await this._softDeleteTask(task);
+
+      // Cascade to subtasks if confirmed
+      if (deleteSubtasks) {
+        for (const sub of subtasks) {
+          await this._softDeleteTask(sub);
+        }
+      }
+
+      if (this.activeTaskId === taskId) {
+        this.closeTaskDetail();
+      }
+
+      await this.performSync({ silent: false });
+    },
+
+    async _softDeleteTask(task) {
       const nextVersion = (task.version ?? 1) + 1;
       const updated = toRaw({
         ...task,
@@ -3678,11 +4688,7 @@ export function initApp() {
       });
 
       await upsertTask(updated);
-      this.tasks = this.tasks.filter(t => t.record_id !== taskId);
-
-      if (this.activeTaskId === taskId) {
-        this.closeTaskDetail();
-      }
+      this.tasks = this.tasks.filter(t => t.record_id !== task.record_id);
 
       const envelope = await outboundTask({
         ...updated,
@@ -3692,11 +4698,10 @@ export function initApp() {
         write_group_npub: updated.board_group_id || updated.group_ids?.[0] || null,
       });
       await addPendingWrite({
-        record_id: taskId,
+        record_id: task.record_id,
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
-      await this.performSync({ silent: false });
     },
 
     openTaskDetail(taskId) {
@@ -3715,13 +4720,32 @@ export function initApp() {
       this.syncRoute();
     },
 
-    closeTaskDetail() {
+    closeTaskDetail(options = {}) {
       this.activeTaskId = null;
       this.editingTask = null;
       this.taskAssigneeQuery = '';
+      this.taskScopeCascadePending = false;
+      this.taskScopeCascadeMessage = '';
       this.showTaskDetail = false;
       this.taskComments = [];
-      this.syncRoute();
+      if (options.syncRoute !== false) this.syncRoute();
+    },
+
+    openCalendarTask(taskId) {
+      const task = this.tasks.find((item) => item.record_id === taskId) || null;
+      const scopeId = task?.scope_id
+        ?? task?.scope_deliverable_id
+        ?? task?.scope_project_id
+        ?? task?.scope_product_id
+        ?? (task && isTaskUnscoped(task, this.scopesMap) ? UNSCOPED_TASK_BOARD_ID : null);
+      if (scopeId) {
+        this.selectedBoardId = scopeId;
+        this.persistSelectedBoardId(scopeId);
+        this.validateSelectedBoardId();
+      }
+      this.navSection = 'tasks';
+      this.mobileNavOpen = false;
+      this.openTaskDetail(taskId);
     },
 
     handleTaskAssigneeInput(value) {
@@ -3763,8 +4787,8 @@ export function initApp() {
       url.pathname = '/tasks';
       url.search = '';
       const task = this.tasks.find((item) => item.record_id === taskId);
-      const groupId = task?.board_group_id ?? this.selectedBoardId ?? null;
-      if (groupId) url.searchParams.set('groups', groupId);
+      const scopeId = task?.scope_id ?? task?.scope_deliverable_id ?? task?.scope_project_id ?? task?.scope_product_id ?? this.selectedBoardId ?? null;
+      if (scopeId) url.searchParams.set('scopeid', scopeId);
       if (taskId) url.searchParams.set('taskid', taskId);
       return url.toString();
     },
@@ -3851,6 +4875,7 @@ export function initApp() {
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
+      this._fireMentionTriggers(body, `task comment on "${task?.title || taskId}"`);
       await this.performSync({ silent: true });
     },
 
@@ -3859,7 +4884,16 @@ export function initApp() {
     async refreshScopes() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
-      this.scopes = await getScopesByOwner(ownerNpub);
+      const scopes = await getScopesByOwner(ownerNpub);
+      const normalizedScopes = [];
+      for (const scope of scopes) {
+        const normalized = this.normalizeScopeRowGroupRefs(scope);
+        normalizedScopes.push(normalized);
+        if (normalized !== scope) {
+          await upsertScope(normalized);
+        }
+      }
+      this.scopes = normalizedScopes;
     },
 
     get scopesMap() {
@@ -3883,6 +4917,11 @@ export function initApp() {
 
     get scopePickerResults() {
       return searchScopes(this.scopePickerQuery, this.scopes, this.scopesMap);
+    },
+
+    get scopePickerFlat() {
+      const r = this.scopePickerResults;
+      return [...(r.product || []), ...(r.project || []), ...(r.deliverable || [])];
     },
 
     scopeLevelLabel(level) {
@@ -3912,21 +4951,19 @@ export function initApp() {
 
     async selectScopeForTask(scopeId) {
       if (!this.editingTask || !this.session?.npub) return;
-      const chain = resolveScopeChain(scopeId, this.scopesMap);
-      this.editingTask.scope_id = scopeId;
-      this.editingTask.scope_product_id = chain.scope_product_id;
-      this.editingTask.scope_project_id = chain.scope_project_id;
-      this.editingTask.scope_deliverable_id = chain.scope_deliverable_id;
+      Object.assign(this.editingTask, this.buildTaskBoardAssignment(scopeId, this.editingTask));
       this.closeScopePicker();
       await this.saveEditingTask();
     },
 
     async clearTaskScope() {
       if (!this.editingTask || !this.session?.npub) return;
-      this.editingTask.scope_id = null;
-      this.editingTask.scope_product_id = null;
-      this.editingTask.scope_project_id = null;
-      this.editingTask.scope_deliverable_id = null;
+      Object.assign(this.editingTask, {
+        scope_id: null,
+        scope_product_id: null,
+        scope_project_id: null,
+        scope_deliverable_id: null,
+      });
       this.closeScopePicker();
       await this.saveEditingTask();
     },
@@ -4046,6 +5083,170 @@ export function initApp() {
       await this.performSync({ silent: true });
     },
 
+    findDirectoryByParentAndTitle(parentDirectoryId, title) {
+      const needle = String(title || '').trim().toLowerCase();
+      return this.directories.find((directory) =>
+        directory?.record_state !== 'deleted'
+        && (directory.parent_directory_id || null) === (parentDirectoryId || null)
+        && String(directory.title || '').trim().toLowerCase() === needle
+      ) || null;
+    },
+
+    getScopeShareGroupIds(scope) {
+      return normalizeGroupIds(scope?.group_ids).map((groupId) => this.resolveGroupId(groupId)).filter(Boolean);
+    },
+
+    buildScopeDefaultShares(groupIds = []) {
+      return buildScopeShares(
+        normalizeGroupIds(groupIds).map((groupId) => this.resolveGroupId(groupId)).filter(Boolean),
+        this.groups,
+      );
+    },
+
+    async queueDirectoryRecord(row, previous = null) {
+      await upsertDirectory(row);
+      this.patchDirectoryLocal(row);
+      const envelope = await outboundDirectory({
+        ...row,
+        version: row.version ?? 1,
+        previous_version: previous?.version ?? 0,
+        signature_npub: this.session?.npub,
+        write_group_npub: row.group_ids?.[0] || null,
+      });
+      await addPendingWrite({
+        record_id: row.record_id,
+        record_family_hash: recordFamilyHash('directory'),
+        envelope,
+      });
+      return row;
+    },
+
+    async ensureProductsRootDirectory(scopeGroupIds = []) {
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub || !this.session?.npub) return null;
+
+      const desiredShares = this.buildScopeDefaultShares(scopeGroupIds);
+      const existing = findActiveRootDirectoryByTitle(this.directories, 'Products');
+      if (existing) {
+        const mergedShares = this.mergeDocShareLists(this.getStoredDocShares(existing), desiredShares);
+        const mergedGroupIds = this.getShareGroupIds(mergedShares);
+        const nextParentId = null;
+        const hasChanges = JSON.stringify(this.getStoredDocShares(existing)) !== JSON.stringify(mergedShares)
+          || JSON.stringify(existing.group_ids || []) !== JSON.stringify(mergedGroupIds)
+          || (existing.parent_directory_id || null) !== nextParentId;
+        if (!hasChanges) return existing;
+
+        const updated = toRaw({
+          ...existing,
+          parent_directory_id: nextParentId,
+          shares: mergedShares,
+          group_ids: mergedGroupIds,
+          sync_status: 'pending',
+          version: (existing.version ?? 1) + 1,
+          updated_at: new Date().toISOString(),
+        });
+        await this.queueDirectoryRecord(updated, existing);
+        return updated;
+      }
+
+      const now = new Date().toISOString();
+      const shares = desiredShares.length > 0 ? desiredShares : this.getDefaultPrivateShares();
+      const created = toRaw({
+        record_id: crypto.randomUUID(),
+        owner_npub: ownerNpub,
+        title: 'Products',
+        parent_directory_id: null,
+        scope_id: null,
+        scope_product_id: null,
+        scope_project_id: null,
+        scope_deliverable_id: null,
+        shares,
+        group_ids: this.getShareGroupIds(shares),
+        sync_status: 'pending',
+        record_state: 'active',
+        version: 1,
+        updated_at: now,
+      });
+      await this.queueDirectoryRecord(created, null);
+      return created;
+    },
+
+    async ensureScopedDirectory(scope, parentDirectoryId, inheritedGroupIds = []) {
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub || !scope?.record_id || !this.session?.npub) return null;
+
+      const existing = findActiveDirectoryByScopeId(this.directories, scope.record_id)
+        || this.findDirectoryByParentAndTitle(parentDirectoryId, scope.title);
+      const folderGroupIds = normalizeGroupIds([
+        ...this.getScopeShareGroupIds(scope),
+        ...normalizeGroupIds(inheritedGroupIds),
+      ]);
+      const shares = this.buildScopeDefaultShares(folderGroupIds);
+      const tags = buildScopeTags(scope);
+
+      if (existing) {
+        const nextShares = shares.length > 0 ? shares : this.getStoredDocShares(existing);
+        const nextGroupIds = this.getShareGroupIds(nextShares);
+        const hasChanges = existing.title !== scope.title
+          || (existing.parent_directory_id || null) !== (parentDirectoryId || null)
+          || JSON.stringify(this.getStoredDocShares(existing)) !== JSON.stringify(nextShares)
+          || JSON.stringify(existing.group_ids || []) !== JSON.stringify(nextGroupIds)
+          || (existing.scope_id || null) !== (tags.scope_id || null)
+          || (existing.scope_product_id || null) !== (tags.scope_product_id || null)
+          || (existing.scope_project_id || null) !== (tags.scope_project_id || null)
+          || (existing.scope_deliverable_id || null) !== (tags.scope_deliverable_id || null);
+        if (!hasChanges) return existing;
+
+        const updated = toRaw({
+          ...existing,
+          title: scope.title,
+          parent_directory_id: parentDirectoryId || null,
+          ...tags,
+          shares: nextShares,
+          group_ids: nextGroupIds,
+          sync_status: 'pending',
+          version: (existing.version ?? 1) + 1,
+          updated_at: new Date().toISOString(),
+        });
+        await this.queueDirectoryRecord(updated, existing);
+        return updated;
+      }
+
+      const now = new Date().toISOString();
+      const created = toRaw({
+        record_id: crypto.randomUUID(),
+        owner_npub: ownerNpub,
+        title: scope.title,
+        parent_directory_id: parentDirectoryId || null,
+        ...tags,
+        shares,
+        group_ids: this.getShareGroupIds(shares),
+        sync_status: 'pending',
+        record_state: 'active',
+        version: 1,
+        updated_at: now,
+      });
+      await this.queueDirectoryRecord(created, null);
+      return created;
+    },
+
+    async ensureScopeDirectoryChain(scope) {
+      if (!scope?.record_id) return null;
+      const lineage = buildScopeLineage(scope, this.scopesMap);
+      if (lineage.length === 0) return null;
+
+      const currentGroupIds = this.getScopeShareGroupIds(scope);
+      const root = await this.ensureProductsRootDirectory(currentGroupIds);
+      let parentDirectoryId = root?.record_id || null;
+
+      for (const entry of lineage) {
+        const directory = await this.ensureScopedDirectory(entry, parentDirectoryId, currentGroupIds);
+        parentDirectoryId = directory?.record_id || parentDirectoryId;
+      }
+
+      return parentDirectoryId;
+    },
+
     async addScope() {
       const title = String(this.newScopeTitle || '').trim();
       if (!title || !this.session?.npub) return;
@@ -4055,20 +5256,18 @@ export function initApp() {
       const ownerNpub = this.workspaceOwnerNpub;
       const level = this.newScopeLevel;
       const parentId = this.newScopeParentId || null;
-
-      let productId = null;
-      let projectId = null;
-
-      if (level === 'project' && parentId) {
-        productId = parentId;
-      } else if (level === 'deliverable' && parentId) {
-        const parentScope = this.scopesMap.get(parentId);
-        projectId = parentId;
-        productId = parentScope?.product_id || parentScope?.parent_id || null;
+      const hierarchy = deriveScopeHierarchy({
+        level,
+        parentId,
+        scopesMap: this.scopesMap,
+      });
+      const groupIds = normalizeGroupIds(this.newScopeAssignedGroupIds)
+        .map((groupId) => this.resolveGroupId(groupId))
+        .filter(Boolean);
+      if (groupIds.length === 0) {
+        this.error = 'Add at least one group for the scope.';
+        return;
       }
-
-      const groupNpub = this.memberPrivateGroupNpub || null;
-      const groupIds = groupNpub ? [groupNpub] : [];
 
       const localRow = {
         record_id: recordId,
@@ -4076,9 +5275,9 @@ export function initApp() {
         title,
         description: this.newScopeDescription || '',
         level,
-        parent_id: parentId,
-        product_id: productId,
-        project_id: projectId,
+        parent_id: hierarchy.parent_id,
+        product_id: hierarchy.product_id,
+        project_id: hierarchy.project_id,
         group_ids: groupIds,
         sync_status: 'pending',
         record_state: 'active',
@@ -4093,19 +5292,23 @@ export function initApp() {
       this.newScopeDescription = '';
       this.newScopeLevel = 'product';
       this.newScopeParentId = null;
+      this.newScopeAssignedGroupIds = [];
+      this.newScopeGroupQuery = '';
       this.showNewScopeForm = false;
 
       const envelope = await outboundScope({
         ...localRow,
         signature_npub: this.session.npub,
-        write_group_npub: groupNpub,
+        write_group_npub: localRow.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: recordId,
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
+      await this.ensureScopeDirectoryChain(localRow);
       await this.performSync({ silent: false });
+      await this.refreshDirectories();
       await this.refreshScopes();
     },
 
@@ -4114,6 +5317,8 @@ export function initApp() {
       this.newScopeParentId = parentId;
       this.newScopeTitle = '';
       this.newScopeDescription = '';
+      this.newScopeAssignedGroupIds = this.getDefaultScopeGroupIds(level, parentId);
+      this.newScopeGroupQuery = '';
       this.showNewScopeForm = true;
     },
 
@@ -4121,6 +5326,8 @@ export function initApp() {
       this.showNewScopeForm = false;
       this.newScopeTitle = '';
       this.newScopeDescription = '';
+      this.newScopeAssignedGroupIds = [];
+      this.newScopeGroupQuery = '';
     },
 
     startEditScope(scopeId) {
@@ -4129,12 +5336,16 @@ export function initApp() {
       this.editingScopeId = scopeId;
       this.editingScopeTitle = scope.title;
       this.editingScopeDescription = scope.description || '';
+      this.editingScopeAssignedGroupIds = this.getScopeShareGroupIds(scope);
+      this.editingScopeGroupQuery = '';
     },
 
     cancelEditScope() {
       this.editingScopeId = null;
       this.editingScopeTitle = '';
       this.editingScopeDescription = '';
+      this.editingScopeAssignedGroupIds = [];
+      this.editingScopeGroupQuery = '';
     },
 
     async saveEditScope() {
@@ -4147,16 +5358,25 @@ export function initApp() {
         ...scope,
         title: this.editingScopeTitle,
         description: this.editingScopeDescription,
+        group_ids: normalizeGroupIds(this.editingScopeAssignedGroupIds)
+          .map((groupId) => this.resolveGroupId(groupId))
+          .filter(Boolean),
         version: nextVersion,
         sync_status: 'pending',
         updated_at: new Date().toISOString(),
       });
+      if (updated.group_ids.length === 0) {
+        this.error = 'Add at least one group for the scope.';
+        return;
+      }
 
       await upsertScope(updated);
       this.scopes = this.scopes.map(s => s.record_id === updated.record_id ? updated : s);
       this.editingScopeId = null;
       this.editingScopeTitle = '';
       this.editingScopeDescription = '';
+      this.editingScopeAssignedGroupIds = [];
+      this.editingScopeGroupQuery = '';
 
       const envelope = await outboundScope({
         ...updated,
@@ -4169,7 +5389,9 @@ export function initApp() {
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
+      await this.ensureScopeDirectoryChain(updated);
       await this.performSync({ silent: true });
+      await this.refreshDirectories();
     },
 
     async deleteScope(scopeId) {
@@ -4274,20 +5496,17 @@ export function initApp() {
       this.taskFilterTags = [];
     },
 
-    async moveTaskToBoard(taskId, boardGroupId) {
+    async moveTaskToBoard(taskId, boardScopeId) {
       const task = this.tasks.find(t => t.record_id === taskId);
       if (!task || !this.session?.npub) return;
 
-      const newBoardId = boardGroupId || this.memberPrivateGroupNpub || null;
-      const newShares = newBoardId ? [newBoardId] : [];
-      const newGroupIds = newBoardId ? [newBoardId] : [];
+      const assignment = this.buildTaskBoardAssignment(boardScopeId, task);
+      if (!assignment.scope_id) return;
       const nextVersion = (task.version ?? 1) + 1;
 
       const updated = toRaw({
         ...task,
-        board_group_id: newBoardId,
-        shares: newShares,
-        group_ids: newGroupIds,
+        ...assignment,
         version: nextVersion,
         sync_status: 'pending',
         updated_at: new Date().toISOString(),
@@ -4306,9 +5525,7 @@ export function initApp() {
         const subVersion = (sub.version ?? 1) + 1;
         const subUpdated = toRaw({
           ...sub,
-          board_group_id: newBoardId,
-          shares: newShares,
-          group_ids: newGroupIds,
+          ...assignment,
           version: subVersion,
           sync_status: 'pending',
           updated_at: new Date().toISOString(),
@@ -4320,7 +5537,7 @@ export function initApp() {
           ...subUpdated,
           previous_version: sub.version ?? 1,
           signature_npub: this.session.npub,
-          write_group_npub: newBoardId,
+          write_group_npub: subUpdated.board_group_id || subUpdated.group_ids?.[0] || null,
         });
         await addPendingWrite({
           record_id: sub.record_id,
@@ -4333,7 +5550,7 @@ export function initApp() {
         ...updated,
         previous_version: task.version ?? 1,
         signature_npub: this.session.npub,
-        write_group_npub: newBoardId,
+        write_group_npub: updated.board_group_id || updated.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: taskId,
@@ -4458,6 +5675,10 @@ export function initApp() {
           owner_npub: ownerNpub,
           title: updated.title,
           parent_directory_id: updated.parent_directory_id,
+          scope_id: updated.scope_id ?? null,
+          scope_product_id: updated.scope_product_id ?? null,
+          scope_project_id: updated.scope_project_id ?? null,
+          scope_deliverable_id: updated.scope_deliverable_id ?? null,
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
@@ -4798,6 +6019,7 @@ export function initApp() {
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
+      this._fireMentionTriggers(body, `doc comment on "${doc.title}"`);
       await this.performSync({ silent: true });
     },
 
@@ -4857,6 +6079,7 @@ export function initApp() {
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
+      this._fireMentionTriggers(body, `doc comment reply on "${doc.title}"`);
       await this.performSync({ silent: true });
     },
 
@@ -5423,6 +6646,10 @@ export function initApp() {
         owner_npub: ownerNpub,
         title,
         parent_directory_id: this.getDefaultParentDirectoryId(),
+        scope_id: null,
+        scope_product_id: null,
+        scope_project_id: null,
+        scope_deliverable_id: null,
         shares: this.getInheritedDirectoryShares(this.getDefaultParentDirectoryId()),
         group_ids: [],
         sync_status: 'pending',
@@ -5443,6 +6670,10 @@ export function initApp() {
           owner_npub: ownerNpub,
           title: row.title,
           parent_directory_id: row.parent_directory_id,
+          scope_id: row.scope_id ?? null,
+          scope_product_id: row.scope_product_id ?? null,
+          scope_project_id: row.scope_project_id ?? null,
+          scope_deliverable_id: row.scope_deliverable_id ?? null,
           shares: row.shares,
           signature_npub: this.session?.npub,
           write_group_npub: row.group_ids?.[0] || null,
@@ -5541,6 +6772,10 @@ export function initApp() {
           owner_npub: ownerNpub,
           title: updated.title,
           parent_directory_id: updated.parent_directory_id,
+          scope_id: updated.scope_id ?? null,
+          scope_product_id: updated.scope_product_id ?? null,
+          scope_project_id: updated.scope_project_id ?? null,
+          scope_deliverable_id: updated.scope_deliverable_id ?? null,
           shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
@@ -5617,6 +6852,18 @@ export function initApp() {
           }),
         });
 
+        // Fire triggers for newly added @mentions in doc body
+        const oldContent = item.content || '';
+        const newContent = updated.content || '';
+        if (newContent !== oldContent) {
+          const oldMentions = new Set((oldContent.match(/@\[.*?\]\(mention:person:[^\)]+\)/g) || []));
+          const newMentions = (newContent.match(/@\[.*?\]\(mention:person:[^\)]+\)/g) || []);
+          const freshMentions = newMentions.filter((m) => !oldMentions.has(m));
+          if (freshMentions.length > 0) {
+            this._fireMentionTriggers(freshMentions.join(' '), `doc "${updated.title}"`);
+          }
+        }
+
         await this.performSync({ silent: autosave, showBusy: !autosave });
         await this.refreshDirectories();
         await this.refreshDocuments();
@@ -5628,6 +6875,325 @@ export function initApp() {
         this.docAutosaveState = 'error';
         throw error;
       }
+    },
+
+    exportDocMarkdown() {
+      const doc = this.selectedDocument;
+      if (!doc) return;
+      const title = this.docEditorTitle || doc.title || 'document';
+      const content = this.docEditorContent || doc.content || '';
+      const fullMd = `# ${title}\n\n${content}`;
+      const blob = new Blob([fullMd], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title.replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'document'}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    exportDocPDF() {
+      const doc = this.selectedDocument;
+      if (!doc) return;
+      const title = this.docEditorTitle || doc.title || 'document';
+      const content = this.docEditorContent || doc.content || '';
+      const rendered = this.renderMarkdown(content);
+      const printWindow = window.open('about:blank', '_blank');
+      if (!printWindow) {
+        this.error = 'Popup blocked — please allow popups for this site and try again.';
+        return;
+      }
+      printWindow.document.write(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${title}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; color: #222; line-height: 1.6; }
+  h1 { font-size: 1.8rem; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem; }
+  h2 { font-size: 1.4rem; margin-top: 1.5rem; }
+  h3 { font-size: 1.2rem; margin-top: 1.2rem; }
+  pre { background: #f5f5f5; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+  code { background: #f0f0f0; padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.9em; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+  th { background: #f5f5f5; }
+  blockquote { border-left: 3px solid #ddd; margin-left: 0; padding-left: 1rem; color: #555; }
+  img { max-width: 100%; }
+  @media print { body { margin: 0; } }
+</style>
+</head><body><h1>${title}</h1>${rendered}</body></html>`);
+      printWindow.document.close();
+      printWindow.onafterprint = () => printWindow.close();
+      setTimeout(() => printWindow.print(), 300);
+    },
+
+    // --- @mentions ---
+
+    searchMentions(rawQuery) {
+      if (!rawQuery) return [];
+
+      // Parse type prefix: @scope:, @task:, @doc:
+      let typeFilter = null;
+      let query = rawQuery;
+      const prefixMatch = rawQuery.match(/^(scope|task|doc|person):/i);
+      if (prefixMatch) {
+        typeFilter = prefixMatch[1].toLowerCase();
+        query = rawQuery.slice(prefixMatch[0].length);
+      }
+
+      const needle = query.toLowerCase();
+      const results = [];
+      const limit = 10;
+
+      // People from groups
+      if (!typeFilter || typeFilter === 'person') {
+        const seenNpubs = new Set();
+        for (const group of this.currentWorkspaceGroups) {
+          for (const npub of (group.member_npubs || [])) {
+            if (seenNpubs.has(npub)) continue;
+            seenNpubs.add(npub);
+            const name = this.getSenderName(npub);
+            if (!needle || name.toLowerCase().includes(needle) || npub.toLowerCase().includes(needle)) {
+              results.push({ type: 'person', id: npub, label: name, sublabel: '' });
+            }
+          }
+        }
+      }
+
+      // Documents
+      if (!typeFilter || typeFilter === 'doc') {
+        for (const doc of this.documents) {
+          if (doc.record_state === 'deleted') continue;
+          if (!needle || (doc.title || '').toLowerCase().includes(needle)) {
+            results.push({ type: 'doc', id: doc.record_id, label: doc.title || 'Untitled', sublabel: 'Doc' });
+          }
+        }
+      }
+
+      // Tasks
+      if (!typeFilter || typeFilter === 'task') {
+        for (const task of this.tasks) {
+          if (task.record_state === 'deleted') continue;
+          if (!needle || (task.title || '').toLowerCase().includes(needle)) {
+            results.push({ type: 'task', id: task.record_id, label: task.title || 'Untitled', sublabel: 'Task' });
+          }
+        }
+      }
+
+      // Scopes (products, projects, deliverables)
+      if (!typeFilter || typeFilter === 'scope') {
+        for (const scope of this.scopes) {
+          if (scope.record_state === 'deleted') continue;
+          if (!needle || (scope.title || '').toLowerCase().includes(needle)) {
+            const levelLabel = scope.level === 'product' ? 'Product' : scope.level === 'project' ? 'Project' : 'Deliverable';
+            results.push({ type: 'scope', id: scope.record_id, label: scope.title || 'Untitled', sublabel: levelLabel });
+          }
+        }
+      }
+
+      return results.slice(0, limit);
+    },
+
+    handleMentionInput(el) {
+      const value = el.value;
+      const cursorPos = el.selectionStart;
+
+      // Find the @ that starts the current mention (allow spaces in query, break on newline)
+      let atPos = -1;
+      for (let i = cursorPos - 1; i >= 0; i--) {
+        const ch = value[i];
+        if (ch === '\n' || ch === '\r') break;
+        if (ch === '@') {
+          // Only trigger if @ is at start of input or preceded by whitespace
+          if (i === 0 || /\s/.test(value[i - 1])) {
+            atPos = i;
+          }
+          break;
+        }
+      }
+
+      if (atPos === -1) {
+        this.closeMentionPopover();
+        return;
+      }
+
+      const query = value.slice(atPos + 1, cursorPos);
+      if (query.length === 0) {
+        // Show all results on bare @
+        this.mentionActive = true;
+        this._mentionTargetEl = el;
+        this._mentionStartPos = atPos;
+        this.mentionQuery = '';
+        this.mentionResults = this.searchMentions('');
+        this.mentionSelectedIndex = 0;
+        // Show some default results
+        const defaults = [];
+        const seenNpubs = new Set();
+        for (const group of this.currentWorkspaceGroups) {
+          for (const npub of (group.member_npubs || [])) {
+            if (seenNpubs.has(npub)) continue;
+            seenNpubs.add(npub);
+            defaults.push({ type: 'person', id: npub, label: this.getSenderName(npub), sublabel: '' });
+          }
+        }
+        this.mentionResults = defaults.slice(0, 8);
+        return;
+      }
+
+      this.mentionActive = true;
+      this._mentionTargetEl = el;
+      this._mentionStartPos = atPos;
+      this.mentionQuery = query;
+      this.mentionResults = this.searchMentions(query);
+      this.mentionSelectedIndex = 0;
+    },
+
+    handleMentionKeydown(event) {
+      if (!this.mentionActive) return;
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        this.mentionSelectedIndex = Math.min(this.mentionSelectedIndex + 1, this.mentionResults.length - 1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        this.mentionSelectedIndex = Math.max(this.mentionSelectedIndex - 1, 0);
+      } else if (event.key === 'Enter' && this.mentionResults.length > 0) {
+        event.preventDefault();
+        this.selectMention(this.mentionResults[this.mentionSelectedIndex]);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        this.closeMentionPopover();
+      }
+    },
+
+    selectMention(result) {
+      const el = this._mentionTargetEl;
+      if (!el || this._mentionStartPos < 0) return;
+
+      const value = el.value;
+      const cursorPos = el.selectionStart;
+      const before = value.slice(0, this._mentionStartPos);
+      const after = value.slice(cursorPos);
+      const tag = `@[${result.label}](mention:${result.type}:${result.id}) `;
+      const newValue = before + tag + after;
+
+      // Update the textarea value through Alpine's model
+      el.value = newValue;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+
+      const newCursorPos = before.length + tag.length;
+      el.setSelectionRange(newCursorPos, newCursorPos);
+      el.focus();
+
+      this.closeMentionPopover();
+    },
+
+    closeMentionPopover() {
+      this.mentionActive = false;
+      this.mentionQuery = '';
+      this.mentionResults = [];
+      this.mentionSelectedIndex = 0;
+      this._mentionTargetEl = null;
+      this._mentionStartPos = -1;
+    },
+
+    handleMentionNavigate(type, id) {
+      if (type === 'doc') {
+        this.openDoc(id);
+      } else if (type === 'task') {
+        this.navSection = 'tasks';
+        this.mobileNavOpen = false;
+        this.$nextTick(() => this.openTaskDetail(id));
+      } else if (type === 'scope') {
+        this.navSection = 'scopes';
+        this.mobileNavOpen = false;
+        this.$nextTick(() => {
+          this.scopeNavFocus = id;
+          document.getElementById('scope-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      } else if (type === 'person') {
+        this.navSection = 'people';
+        this.mobileNavOpen = false;
+      }
+    },
+
+    async deleteCurrentDirectory() {
+      const dir = this.currentFolder;
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!dir || !ownerNpub || !this.session?.npub) {
+        this.error = 'No folder selected';
+        return;
+      }
+
+      const confirmed = window.confirm(`Delete folder "${dir.title}" and all its contents? This cannot be undone.`);
+      if (!confirmed) return;
+
+      // Collect all descendant directory IDs recursively
+      const allDirIds = new Set([dir.record_id]);
+      let added = true;
+      while (added) {
+        added = false;
+        for (const d of this.directories) {
+          if (d.record_state === 'deleted') continue;
+          if (d.parent_directory_id && allDirIds.has(d.parent_directory_id) && !allDirIds.has(d.record_id)) {
+            allDirIds.add(d.record_id);
+            added = true;
+          }
+        }
+      }
+
+      // Soft-delete all directories in the set
+      for (const dirId of allDirIds) {
+        const directory = this.directories.find((d) => d.record_id === dirId);
+        if (!directory || directory.record_state === 'deleted') continue;
+        const nextVersion = (directory.version ?? 1) + 1;
+        const now = new Date().toISOString();
+        const shares = this.getEffectiveDocShares(directory);
+        const updated = { ...directory, record_state: 'deleted', sync_status: 'pending', version: nextVersion, updated_at: now };
+
+        await upsertDirectory(updated);
+        this.patchDirectoryLocal(updated);
+        await addPendingWrite({
+          record_id: dirId,
+          record_family_hash: recordFamilyHash('directory'),
+          envelope: await outboundDirectory({
+            ...updated,
+            previous_version: directory.version ?? 1,
+            signature_npub: this.session.npub,
+            shares,
+            write_group_npub: updated.group_ids?.[0] || null,
+          }),
+        });
+      }
+
+      // Soft-delete all documents inside those directories
+      for (const doc of this.documents) {
+        if (doc.record_state === 'deleted') continue;
+        if (!allDirIds.has(doc.parent_directory_id)) continue;
+        const nextVersion = (doc.version ?? 1) + 1;
+        const now = new Date().toISOString();
+        const shares = this.getEffectiveDocShares(doc);
+        const updated = { ...doc, record_state: 'deleted', sync_status: 'pending', version: nextVersion, updated_at: now };
+
+        await upsertDocument(updated);
+        this.patchDocumentLocal(updated);
+        await addPendingWrite({
+          record_id: doc.record_id,
+          record_family_hash: recordFamilyHash('document'),
+          envelope: await outboundDocument({
+            ...updated,
+            previous_version: doc.version ?? 1,
+            signature_npub: this.session.npub,
+            shares,
+            write_group_npub: updated.group_ids?.[0] || null,
+          }),
+        });
+      }
+
+      // Navigate up to parent
+      this.navigateToFolder(dir.parent_directory_id || null);
+      await this.performSync({ silent: false });
+      await this.refreshDirectories();
+      await this.refreshDocuments();
     },
 
     async deleteSelectedDocItem() {
@@ -5787,6 +7353,7 @@ export function initApp() {
       window.requestAnimationFrame(() => {
         this._storageImageHydrateScheduled = false;
         this.hydrateStorageImages();
+        this.scheduleChatPreviewMeasurement();
       });
     },
 
@@ -5861,10 +7428,12 @@ export function initApp() {
             image.src = url;
             image.dataset.storageResolved = 'true';
             image.classList.remove('md-storage-image-pending');
+            this.scheduleChatPreviewMeasurement();
           })
           .catch(() => {
             image.dataset.storageResolved = 'error';
             image.classList.add('md-storage-image-error');
+            this.scheduleChatPreviewMeasurement();
           });
       }
     },
@@ -6003,96 +7572,7 @@ export function initApp() {
     },
 
     renderMarkdown(md) {
-      const source = String(md || '');
-      if (!source) return '';
-
-      const escapeHtml = (value) => value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-      const inline = (value) => escapeHtml(value)
-        .replace(/!\[([^\]]*)\]\(storage:\/\/([^)]+)\)/g, '<span class="md-storage-image-wrap"><img class="md-storage-image md-storage-image-pending" data-storage-object-id="$2" alt="$1" loading="lazy" /><span class="md-storage-image-label">$1</span></span>')
-        .replace(/!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g, '<span class="md-storage-image-wrap"><img class="md-storage-image" src="$2" alt="$1" loading="lazy" /><span class="md-storage-image-label">$1</span></span>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-        .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-
-      const lines = source.replace(/\r\n?/g, '\n').split('\n');
-      const out = [];
-      let inList = false;
-      let inCode = false;
-      let codeLines = [];
-
-      const flushList = () => {
-        if (inList) {
-          out.push('</ul>');
-          inList = false;
-        }
-      };
-
-      const flushCode = () => {
-        if (inCode) {
-          out.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
-          inCode = false;
-          codeLines = [];
-        }
-      };
-
-      for (const rawLine of lines) {
-        const line = rawLine ?? '';
-        if (line.trim().startsWith('```')) {
-          flushList();
-          if (inCode) flushCode();
-          else inCode = true;
-          continue;
-        }
-        if (inCode) {
-          codeLines.push(line);
-          continue;
-        }
-        const checkboxMatch = line.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
-        if (checkboxMatch) {
-          if (!inList) {
-            out.push('<ul>');
-            inList = true;
-          }
-          const checked = checkboxMatch[1].toLowerCase() === 'x';
-          out.push(`<li><label class="md-checkbox"><input type="checkbox" disabled ${checked ? 'checked' : ''} /><span>${inline(checkboxMatch[2])}</span></label></li>`);
-          continue;
-        }
-        const listMatch = line.match(/^[-*]\s+(.*)$/);
-        if (listMatch) {
-          if (!inList) {
-            out.push('<ul>');
-            inList = true;
-          }
-          out.push(`<li>${inline(listMatch[1])}</li>`);
-          continue;
-        }
-        flushList();
-        if (!line.trim()) {
-          out.push('');
-          continue;
-        }
-        const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
-        if (headingMatch) {
-          const level = headingMatch[1].length;
-          out.push(`<h${level}>${inline(headingMatch[2])}</h${level}>`);
-          continue;
-        }
-        if (/^>\s?/.test(line)) {
-          out.push(`<blockquote><p>${inline(line.replace(/^>\s?/, ''))}</p></blockquote>`);
-          continue;
-        }
-        out.push(`<p>${inline(line)}</p>`);
-      }
-
-      flushList();
-      flushCode();
-
-      return out.join('\n');
+      return renderMarkdownToHtml(md);
     },
 
     resetNewGroupDraft() {
@@ -6208,9 +7688,7 @@ export function initApp() {
         });
 
         await this.performSync({ silent: false });
-        this.selectedChannelId = channelId;
-        await this.refreshMessages();
-        this.ensureBackgroundSync(true);
+        await this.selectChannel(channelId, { syncRoute: false });
         this.closeNewChannelModal();
       } catch (e) {
         this.error = e.message;
@@ -6260,9 +7738,7 @@ export function initApp() {
         });
 
         await this.performSync({ silent: false });
-        this.selectedChannelId = channelId;
-        await this.refreshMessages();
-        this.ensureBackgroundSync(true);
+        await this.selectChannel(channelId, { syncRoute: false });
         this.closeNewChannelModal();
       } catch (e) {
         this.error = e.message;
@@ -6499,9 +7975,7 @@ export function initApp() {
         });
 
         await this.performSync({ silent: false });
-        this.selectedChannelId = channelId;
-        await this.refreshMessages();
-        this.ensureBackgroundSync(true);
+        await this.selectChannel(channelId, { syncRoute: false });
       } catch (e) {
         this.error = e.message;
       }
@@ -6536,7 +8010,7 @@ export function initApp() {
         this.channels = this.channels.filter((item) => item.record_id !== channel.record_id);
         this.selectedChannelId = fallbackNextChannelId;
         this.closeThread();
-        await this.refreshMessages();
+        await this.refreshMessages({ scrollToLatest: true });
 
         const envelope = await outboundChannel({
           record_id: channel.record_id,
@@ -6560,7 +8034,7 @@ export function initApp() {
         await this.performSync({ silent: false });
         await this.refreshChannels();
         this.selectedChannelId = this.selectedChannelId ?? this.channels[0]?.record_id ?? null;
-        await this.refreshMessages();
+        await this.refreshMessages({ scrollToLatest: true });
         this.ensureBackgroundSync(true);
       } catch (error) {
         this.error = error?.message || 'Failed to delete channel';
@@ -6614,6 +8088,7 @@ export function initApp() {
       this.patchMessageLocal(localRow);
       this.messageInput = '';
       this.messageAudioDrafts = [];
+      this.scheduleComposerAutosize('message');
 
       const envelope = await outboundChatMessage({
         record_id: msgId,
@@ -6632,6 +8107,8 @@ export function initApp() {
         record_family_hash: recordFamilyHash('chat_message'),
         envelope,
       });
+
+      this._fireMentionTriggers(body, `chat #${channel.label || channel.record_id}`);
 
       try {
         await this.performSync({ silent: false });
@@ -6689,6 +8166,7 @@ export function initApp() {
       this.patchMessageLocal(localRow);
       this.threadInput = '';
       this.threadAudioDrafts = [];
+      this.scheduleComposerAutosize('thread');
 
       const envelope = await outboundChatMessage({
         record_id: msgId,
@@ -6707,6 +8185,8 @@ export function initApp() {
         record_family_hash: recordFamilyHash('chat_message'),
         envelope,
       });
+
+      this._fireMentionTriggers(body, `chat #${channel.label || channel.record_id}`);
 
       try {
         await this.performSync({ silent: false });

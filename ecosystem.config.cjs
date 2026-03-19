@@ -35,6 +35,23 @@ module.exports = {
       "autorestart": false,
       "max_restarts": 0,
       "min_uptime": "5s"
+    },
+    {
+      "name": "honest-ivory-thicket-app-wingman-flight-deck-bef",
+      "namespace": "wingman-apps",
+      "script": "bash",
+      "args": [
+        "-c",
+        "set -a; [ -f .env ] && . ./.env; set +a; export APP_ID='24a79d6b-43ed-4662-a47e-e301e519f162' APP_LABEL='wingman-flight-deck-befree' USER_ALIAS='honest-ivory-thicket' PORT=41008; sh -c 'bunx vite preview --host 0.0.0.0 --port ${PORT:-8093} --strictPort'"
+      ],
+      "cwd": "/Users/mini/code/wingmanbefree/wingman-fd",
+      "out_file": "/Users/mini/code/wingmanbefree/wingman-fd/apps/logs/honest-ivory-thicket-app-wingman-flight-deck-bef-out.log",
+      "error_file": "/Users/mini/code/wingmanbefree/wingman-fd/apps/logs/honest-ivory-thicket-app-wingman-flight-deck-bef-error.log",
+      "log_date_format": "YYYY-MM-DD HH:mm:ss",
+      "merge_logs": true,
+      "autorestart": false,
+      "max_restarts": 0,
+      "min_uptime": "5s"
     }
   ]
 };

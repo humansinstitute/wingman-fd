@@ -42,6 +42,7 @@ import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash } from '../sync-families.js';
+import { flightDeckLog } from '../logging.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
 const CHANNEL_FAMILY = recordFamilyHash('channel');
@@ -54,6 +55,7 @@ const COMMENT_FAMILY = recordFamilyHash('comment');
 const AUDIO_NOTE_FAMILY = recordFamilyHash('audio_note');
 const SCOPE_FAMILY = recordFamilyHash('scope');
 const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
+const WRITE_BATCH_SIZE = 25;
 
 async function materializeRecordForFamily(family, record) {
   if (family === SETTINGS_FAMILY) {
@@ -95,20 +97,62 @@ async function materializeRecordForFamily(family, record) {
 export async function flushPendingWrites(ownerNpub) {
   const pending = await getPendingWrites();
   if (pending.length === 0) return { pushed: 0 };
+  let pushed = 0;
 
-  const envelopes = pending.map(pw => pw.envelope);
-
-  await syncRecords({
-    owner_npub: ownerNpub,
-    records: envelopes,
+  flightDeckLog('info', 'sync', 'flushing pending writes', {
+    ownerNpub,
+    pendingCount: pending.length,
+    batchSize: WRITE_BATCH_SIZE,
   });
 
-  // Remove flushed rows
-  for (const pw of pending) {
-    await removePendingWrite(pw.row_id);
+  for (let offset = 0; offset < pending.length; offset += WRITE_BATCH_SIZE) {
+    const batch = pending.slice(offset, offset + WRITE_BATCH_SIZE);
+    const envelopes = batch.map((pw) => pw.envelope);
+    flightDeckLog('debug', 'sync', 'syncing pending write batch', {
+      ownerNpub,
+      batchNumber: Math.floor(offset / WRITE_BATCH_SIZE) + 1,
+      batchCount: batch.length,
+      pendingCount: pending.length,
+      recordIds: batch.map((pw) => pw.record_id),
+      families: [...new Set(batch.map((pw) => pw.record_family_hash))],
+    });
+    try {
+      await syncRecords({
+        owner_npub: ownerNpub,
+        records: envelopes,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      flightDeckLog('error', 'sync', 'pending write batch failed', {
+        ownerNpub,
+        batchNumber: Math.floor(offset / WRITE_BATCH_SIZE) + 1,
+        batchCount: batch.length,
+        pushed,
+        pendingCount: pending.length,
+        recordIds: batch.map((pw) => pw.record_id),
+        families: [...new Set(batch.map((pw) => pw.record_family_hash))],
+        error: reason,
+      });
+      throw new Error(
+        `Pending write sync failed for batch ${Math.floor(offset / WRITE_BATCH_SIZE) + 1} `
+        + `(${batch.length} records, ${pushed}/${pending.length} flushed): ${reason}`
+      );
+    }
+
+    for (const pw of batch) {
+      await removePendingWrite(pw.row_id);
+    }
+    pushed += batch.length;
+    flightDeckLog('info', 'sync', 'pending write batch flushed', {
+      ownerNpub,
+      batchNumber: Math.floor(offset / WRITE_BATCH_SIZE) + 1,
+      batchCount: batch.length,
+      pushed,
+      pendingCount: pending.length,
+    });
   }
 
-  return { pushed: pending.length };
+  return { pushed };
 }
 
 /**
@@ -145,7 +189,11 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
         if ((record.updated_at ?? '') > latestApplied) latestApplied = record.updated_at ?? '';
       } catch (error) {
         skippedCount++;
-        console.debug('Skipping undecryptable record:', record.record_id, error?.message || error);
+        flightDeckLog('warn', 'sync', 'skipping undecryptable record', {
+          family,
+          recordId: record.record_id,
+          error: error?.message || String(error),
+        });
       }
     }
 
@@ -154,7 +202,11 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
     if (appliedCount > 0 && skippedCount === 0 && latestApplied) {
       await setSyncState(sinceKey, latestApplied);
     } else if (skippedCount > 0) {
-      console.debug('Holding sync cursor due to skipped records:', family, { appliedCount, skippedCount });
+      flightDeckLog('warn', 'sync', 'holding sync cursor due to skipped records', {
+        family,
+        appliedCount,
+        skippedCount,
+      });
     }
   }
 

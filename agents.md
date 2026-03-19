@@ -18,6 +18,7 @@ This frontend implements the app-side translation and local-first UI described i
 - Do not put sync, crypto, or schema migration work on the main UI thread
 - Keep one translator per record family, even if related families share a module
 - Keep local tables shaped for UI use, not transport convenience
+- After code changes, always run `bun run build` so the local `dist/` output is refreshed
 
 ## Storage and sync
 

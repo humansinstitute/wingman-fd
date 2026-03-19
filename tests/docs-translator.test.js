@@ -119,6 +119,10 @@ describe('docs translator', () => {
           data: {
             title: 'Projects',
             parent_directory_id: null,
+            scope_id: 'product-1',
+            scope_product_id: 'product-1',
+            scope_project_id: null,
+            scope_deliverable_id: null,
           },
         }),
       },
@@ -129,6 +133,8 @@ describe('docs translator', () => {
     expect(row.record_id).toBe('dir-1');
     expect(row.title).toBe('Projects');
     expect(row.parent_directory_id).toBeNull();
+    expect(row.scope_id).toBe('product-1');
+    expect(row.scope_product_id).toBe('product-1');
     expect(row.shares).toEqual([]);
   });
 
@@ -138,6 +144,10 @@ describe('docs translator', () => {
       owner_npub: 'npub_owner',
       title: 'Archive',
       parent_directory_id: null,
+      scope_id: 'deliverable-1',
+      scope_product_id: 'product-1',
+      scope_project_id: 'project-1',
+      scope_deliverable_id: 'deliverable-1',
       shares: [],
       version: 3,
       previous_version: 2,
@@ -148,6 +158,7 @@ describe('docs translator', () => {
     expect(envelope.version).toBe(3);
     const inner = JSON.parse(envelope.owner_payload.ciphertext);
     expect(inner.app_namespace).toBe(APP_NPUB);
+    expect(inner.data.scope_id).toBe('deliverable-1');
     expect(inner.data.record_state).toBe('deleted');
   });
 });

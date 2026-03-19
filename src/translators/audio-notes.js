@@ -47,7 +47,7 @@ export async function outboundAudioNote({
   mime_type = 'audio/webm;codecs=opus',
   duration_seconds = null,
   size_bytes = 0,
-  media_encryption,
+  media_encryption = null,
   waveform_preview = [],
   transcript_status = 'pending',
   transcript_preview = null,
