@@ -2251,6 +2251,9 @@ export function initApp() {
         await this.refreshWorkspaceSettings();
       }
       this.updateWorkspaceBootstrapPrompt();
+      if (this.session?.npub && !this.backendUrl) {
+        this.showSuperBasedModal = true;
+      }
       await this.refreshGroups();
       this.selectedBoardId = this.readStoredTaskBoardId();
       this.validateSelectedBoardId();
@@ -2557,6 +2560,9 @@ export function initApp() {
         await this.refreshChannels();
         await this.refreshSyncStatus();
         this.updateWorkspaceBootstrapPrompt();
+        if (!this.backendUrl) {
+          this.showSuperBasedModal = true;
+        }
         this.ensureBackgroundSync(true);
       } catch (error) {
         console.error('Login failed:', error);
