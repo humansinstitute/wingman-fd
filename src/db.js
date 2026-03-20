@@ -79,7 +79,12 @@ function sanitizeForStorage(value) {
 
 /** Shorthand — workspace db, throws if none open. */
 function wsDb() {
-  return getWorkspaceDb();
+  if (!_currentWorkspaceDb) throw new Error('No workspace database open — call openWorkspaceDb(ownerNpub) first');
+  return _currentWorkspaceDb;
+}
+
+export function hasWorkspaceDb() {
+  return _currentWorkspaceDb !== null;
 }
 
 // ---------------------------------------------------------------------------

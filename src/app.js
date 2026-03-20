@@ -2275,29 +2275,29 @@ export function initApp() {
       }
       if (this.currentWorkspaceOwnerNpub) {
         await this.selectWorkspace(this.currentWorkspaceOwnerNpub, { refresh: false });
-      } else {
-        await this.refreshWorkspaceSettings();
       }
       this.updateWorkspaceBootstrapPrompt();
       if (this.session?.npub && !this.backendUrl) {
         this.openConnectModal();
       }
-      await this.refreshGroups();
-      this.selectedBoardId = this.readStoredTaskBoardId();
-      this.validateSelectedBoardId();
-      await this.refreshAddressBook();
-      await this.refreshChannels();
-      await this.refreshAudioNotes();
-      await this.refreshDirectories();
-      await this.refreshDocuments();
-      await this.refreshScopes();
-      await this.refreshTasks();
-      await this.refreshSchedules();
-      await this.ensureTaskBoardScopeSetup();
-      await this.applyRouteFromLocation();
-      await this.refreshSyncStatus();
-      await this.refreshStatusRecentChanges();
-      if (this.defaultAgentNpub) this.resolveChatProfile(this.defaultAgentNpub);
+      if (this.currentWorkspaceOwnerNpub) {
+        await this.refreshGroups();
+        this.selectedBoardId = this.readStoredTaskBoardId();
+        this.validateSelectedBoardId();
+        await this.refreshAddressBook();
+        await this.refreshChannels();
+        await this.refreshAudioNotes();
+        await this.refreshDirectories();
+        await this.refreshDocuments();
+        await this.refreshScopes();
+        await this.refreshTasks();
+        await this.refreshSchedules();
+        await this.ensureTaskBoardScopeSetup();
+        await this.applyRouteFromLocation();
+        await this.refreshSyncStatus();
+        await this.refreshStatusRecentChanges();
+        if (this.defaultAgentNpub) this.resolveChatProfile(this.defaultAgentNpub);
+      }
     },
 
     initRouteSync() {
