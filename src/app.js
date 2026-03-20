@@ -2113,7 +2113,7 @@ export function initApp() {
     },
 
     updateWorkspaceBootstrapPrompt() {
-      const shouldPrompt = Boolean(this.session?.npub) && !this.currentWorkspaceOwnerNpub && this.knownWorkspaces.length === 0;
+      const shouldPrompt = Boolean(this.session?.npub) && Boolean(this.backendUrl) && !this.currentWorkspaceOwnerNpub && this.knownWorkspaces.length === 0;
       this.showWorkspaceBootstrapModal = shouldPrompt;
       return shouldPrompt;
     },
