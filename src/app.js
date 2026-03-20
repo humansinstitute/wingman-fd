@@ -175,7 +175,7 @@ import {
   wrapKnownGroupKeyForMember,
 } from './crypto/group-keys.js';
 import { fetchProfileByNpub } from './profiles.js';
-import { DEFAULT_SUPERBASED_URL } from './app-identity.js';
+import { APP_NPUB, DEFAULT_SUPERBASED_URL } from './app-identity.js';
 import { mergeWorkspaceEntries, normalizeWorkspaceEntry, workspaceFromToken } from './workspaces.js';
 import { buildSuperBasedConnectionToken } from './superbased-token.js';
 import { decryptAudioBytes, encryptAudioBlob, measureAudioDuration } from './audio-notes.js';
@@ -329,6 +329,7 @@ export function initApp() {
     showAvatarMenu: false,
     showChannelSettingsModal: false,
     showSuperBasedModal: false,
+    presetConnecting: false,
     showAgentConnectModal: false,
     syncStatus: 'synced',
     hasForcedInitialBackfill: false,
@@ -3015,6 +3016,35 @@ export function initApp() {
       this.showAvatarMenu = false;
       if (this.currentWorkspaceOwnerNpub) {
         await this.selectWorkspace(this.currentWorkspaceOwnerNpub);
+      }
+    },
+
+    async connectToPreset(presetUrl) {
+      this.presetConnecting = true;
+      this.superbasedError = null;
+      try {
+        const healthRes = await fetch(`${presetUrl.replace(/\/+$/, '')}/health`);
+        if (!healthRes.ok) throw new Error(`Server returned ${healthRes.status}`);
+        const health = await healthRes.json();
+        if (health.status !== 'ok' || !health.service_npub) throw new Error('Invalid health response');
+        const token = buildSuperBasedConnectionToken({
+          directHttpsUrl: presetUrl,
+          serviceNpub: health.service_npub,
+          appNpub: APP_NPUB,
+        });
+        this.superbasedTokenInput = token;
+        await this.saveConnectionSettings();
+        await this.loadRemoteWorkspaces();
+        if (this.knownWorkspaces.length === 0 && this.session?.npub) {
+          await this.tryRecoverWorkspace();
+        }
+        if (this.knownWorkspaces.length === 0) {
+          this.updateWorkspaceBootstrapPrompt();
+        }
+      } catch (error) {
+        this.superbasedError = `Failed to connect: ${error?.message || error}`;
+      } finally {
+        this.presetConnecting = false;
       }
     },
 

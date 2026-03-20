@@ -193,6 +193,18 @@
           <p class="auth-extension-hint" x-show="$store.chat.knownWorkspaces.length === 0">No workspaces yet. Create one to start using group-based records.</p>
         </div>
 
+        <div class="preset-connect-panel" x-show="!$store.chat.backendUrl">
+          <button
+            type="button"
+            class="preset-connect-btn"
+            @click="$store.chat.connectToPreset('https://sb4.otherstuff.ai')"
+            :disabled="$store.chat.presetConnecting"
+          >
+            <span x-show="!$store.chat.presetConnecting">The Other Stuff &mdash; SuperBased</span>
+            <span x-show="$store.chat.presetConnecting">Connecting...</span>
+          </button>
+        </div>
+
         <form class="auth-form" @submit.prevent="$store.chat.saveConnectionSettings()">
           <label>
             <span>Connection key</span>
