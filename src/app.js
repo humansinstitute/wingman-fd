@@ -2277,7 +2277,7 @@ export function initApp() {
         await this.selectWorkspace(this.currentWorkspaceOwnerNpub, { refresh: false });
       }
       this.updateWorkspaceBootstrapPrompt();
-      if (this.session?.npub && !this.backendUrl) {
+      if (this.session?.npub && (!this.backendUrl || !this.currentWorkspaceOwnerNpub)) {
         this.openConnectModal();
       }
       if (this.currentWorkspaceOwnerNpub) {
@@ -2550,6 +2550,9 @@ export function initApp() {
           await this.refreshSyncStatus();
         }
         this.updateWorkspaceBootstrapPrompt();
+        if (!this.backendUrl || !this.currentWorkspaceOwnerNpub) {
+          this.openConnectModal();
+        }
         this.ensureBackgroundSync(true);
       } catch (error) {
         this.loginError = error.message;
@@ -2590,7 +2593,7 @@ export function initApp() {
           await this.refreshSyncStatus();
         }
         this.updateWorkspaceBootstrapPrompt();
-        if (!this.backendUrl) {
+        if (!this.backendUrl || !this.currentWorkspaceOwnerNpub) {
           this.openConnectModal();
         }
         this.ensureBackgroundSync(true);
