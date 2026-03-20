@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import db, {
+import {
+  openWorkspaceDb,
+  getSharedDb,
   upsertChannel,
   getChannelsByOwner,
   upsertMessage,
@@ -19,12 +21,16 @@ import db, {
   getCachedStorageImage,
 } from '../src/db.js';
 
+const TEST_OWNER = 'npub_test_workspace';
+
 // Clear all tables between tests
 beforeEach(async () => {
-  await db.open();
-  await Promise.all(
-    db.tables.map(table => table.clear())
-  );
+  const wsDb = openWorkspaceDb(TEST_OWNER);
+  await wsDb.open();
+  await Promise.all(wsDb.tables.map(table => table.clear()));
+  const shared = getSharedDb();
+  await shared.open();
+  await Promise.all(shared.tables.map(table => table.clear()));
 });
 
 describe('app DB operations', () => {

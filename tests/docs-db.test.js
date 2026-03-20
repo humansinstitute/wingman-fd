@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import db, {
+import {
+  openWorkspaceDb,
+  getSharedDb,
   upsertDirectory,
   upsertDocument,
   getDirectoriesByOwner,
@@ -8,9 +10,15 @@ import db, {
   getAddressBookPeople,
 } from '../src/db.js';
 
+const TEST_OWNER = 'npub_test_workspace';
+
 beforeEach(async () => {
-  await db.open();
-  await Promise.all(db.tables.map((table) => table.clear()));
+  const wsDb = openWorkspaceDb(TEST_OWNER);
+  await wsDb.open();
+  await Promise.all(wsDb.tables.map((table) => table.clear()));
+  const shared = getSharedDb();
+  await shared.open();
+  await Promise.all(shared.tables.map((table) => table.clear()));
 });
 
 describe('docs db operations', () => {

@@ -1,129 +1,29 @@
 import Dexie from 'dexie';
 import { getSyncFamily, getSyncStateKeyForFamily } from './sync-families.js';
 
-const db = new Dexie('CoworkerV4');
+// ---------------------------------------------------------------------------
+// Shared DB — singleton, always open. Holds global (non-workspace) state.
+// ---------------------------------------------------------------------------
 
-db.version(1).stores({
-  app_settings:  '++id',
-  channels:      'record_id, owner_npub, *group_ids',
-  chat_messages: 'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:        'group_id, owner_npub',
-  pending_writes:'++row_id, record_id, record_family_hash, created_at',
-  sync_state:    'key',
+const sharedDb = new Dexie('wingman-fd-shared');
+
+sharedDb.version(1).stores({
+  app_settings:        '++id',
+  storage_image_cache: '&object_id, cached_at',
+  profiles:            'pubkey',
+  address_book:        'npub, last_used_at',
 });
 
-db.version(2).stores({
-  app_settings:  '++id',
-  channels:      'record_id, owner_npub, *group_ids',
-  chat_messages: 'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:        'group_id, owner_npub',
-  pending_writes:'++row_id, record_id, record_family_hash, created_at',
-  profiles:      'pubkey',
-  sync_state:    'key',
-});
+// ---------------------------------------------------------------------------
+// Workspace DB — one per workspace, keyed by ownerNpub.
+// Contains ALL record / sync tables.
+// ---------------------------------------------------------------------------
 
-db.version(3).stores({
-  app_settings:  '++id',
-  channels:      'record_id, owner_npub, *group_ids',
-  chat_messages: 'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:        'group_id, owner_npub, *member_npubs',
-  documents:     'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  directories:   'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  pending_writes:'++row_id, record_id, record_family_hash, created_at',
-  profiles:      'pubkey',
-  address_book:  'npub, last_used_at',
-  sync_state:    'key',
-});
+let _currentWorkspaceDb = null;
+let _currentWorkspaceOwnerNpub = null;
 
-db.version(4).stores({
-  app_settings:  '++id',
-  channels:      'record_id, owner_npub, *group_ids',
-  chat_messages: 'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:        'group_id, owner_npub, *member_npubs',
-  documents:     'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  directories:   'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  tasks:         'record_id, owner_npub, parent_task_id, state, sync_status, updated_at',
-  comments:      'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
-  pending_writes:'++row_id, record_id, record_family_hash, created_at',
-  profiles:      'pubkey',
-  address_book:  'npub, last_used_at',
-  sync_state:    'key',
-});
-
-db.version(5).stores({
-  app_settings:  '++id',
-  channels:      'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  chat_messages: 'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:        'group_id, owner_npub, *member_npubs',
-  documents:     'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  directories:   'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  tasks:         'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  comments:      'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
-  scopes:        'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
-  pending_writes:'++row_id, record_id, record_family_hash, created_at',
-  profiles:      'pubkey',
-  address_book:  'npub, last_used_at',
-  sync_state:    'key',
-});
-
-db.version(6).stores({
-  app_settings:  '++id',
-  channels:      'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  chat_messages: 'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:        'group_id, owner_npub, *member_npubs',
-  documents:     'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  directories:   'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  tasks:         'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  comments:      'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
-  audio_notes:   'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
-  scopes:        'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
-  pending_writes:'++row_id, record_id, record_family_hash, created_at',
-  profiles:      'pubkey',
-  address_book:  'npub, last_used_at',
-  sync_state:    'key',
-});
-
-db.version(7).stores({
-  app_settings:       '++id',
+const WORKSPACE_STORES = {
   workspace_settings: '&workspace_owner_npub, record_id, updated_at',
-  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:             'group_id, owner_npub, *member_npubs',
-  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
-  audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
-  scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
-  pending_writes:     '++row_id, record_id, record_family_hash, created_at',
-  profiles:           'pubkey',
-  address_book:       'npub, last_used_at',
-  sync_state:         'key',
-});
-
-db.version(8).stores({
-  app_settings:       '++id',
-  workspace_settings: '&workspace_owner_npub, record_id, updated_at',
-  storage_image_cache:'&object_id, cached_at',
-  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:             'group_id, owner_npub, *member_npubs',
-  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
-  audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
-  scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
-  pending_writes:     '++row_id, record_id, record_family_hash, created_at',
-  profiles:           'pubkey',
-  address_book:       'npub, last_used_at',
-  sync_state:         'key',
-});
-
-db.version(9).stores({
-  app_settings:       '++id',
-  workspace_settings: '&workspace_owner_npub, record_id, updated_at',
-  storage_image_cache:'&object_id, cached_at',
   channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
   chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
   groups:             'group_id, owner_npub, *member_npubs',
@@ -134,75 +34,163 @@ db.version(9).stores({
   comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
   audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
   scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+  sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
   pending_writes:     '++row_id, record_id, record_family_hash, created_at',
-  profiles:           'pubkey',
-  address_book:       'npub, last_used_at',
   sync_state:         'key',
-});
+};
 
-db.version(9).stores({
-  app_settings:       '++id',
-  workspace_settings: '&workspace_owner_npub, record_id, updated_at',
-  storage_image_cache:'&object_id, cached_at',
-  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
-  groups:             'group_id, owner_npub, *member_npubs',
-  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
-  comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
-  audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
-  scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
-  schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
-  pending_writes:     '++row_id, record_id, record_family_hash, created_at',
-  profiles:           'pubkey',
-  address_book:       'npub, last_used_at',
-  sync_state:         'key',
-});
+function createWorkspaceDb(ownerNpub) {
+  const db = new Dexie(`wingman-fd-ws-${ownerNpub}`);
+  db.version(1).stores(WORKSPACE_STORES);
+  return db;
+}
 
-export default db;
+export function openWorkspaceDb(ownerNpub) {
+  if (!ownerNpub) throw new Error('ownerNpub is required to open a workspace database');
+  if (_currentWorkspaceOwnerNpub === ownerNpub && _currentWorkspaceDb) {
+    return _currentWorkspaceDb;
+  }
+  _currentWorkspaceDb = createWorkspaceDb(ownerNpub);
+  _currentWorkspaceOwnerNpub = ownerNpub;
+  return _currentWorkspaceDb;
+}
+
+export function getWorkspaceDb() {
+  if (!_currentWorkspaceDb) throw new Error('No workspace database open — call openWorkspaceDb(ownerNpub) first');
+  return _currentWorkspaceDb;
+}
+
+export function getSharedDb() {
+  return sharedDb;
+}
+
+export function getCurrentWorkspaceOwnerNpub() {
+  return _currentWorkspaceOwnerNpub;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function sanitizeForStorage(value) {
   if (value == null) return value;
   return JSON.parse(JSON.stringify(value));
 }
 
-// --- app_settings helpers ---
+/** Shorthand — workspace db, throws if none open. */
+function wsDb() {
+  return getWorkspaceDb();
+}
+
+// ---------------------------------------------------------------------------
+// Migration: move app_settings from old CoworkerV4 DB into shared DB.
+// Called once on first load with the new code.
+// ---------------------------------------------------------------------------
+
+export async function migrateFromLegacyDb() {
+  const legacyDbName = 'CoworkerV4';
+  const databases = await Dexie.getDatabaseNames();
+  if (!databases.includes(legacyDbName)) return false;
+
+  const legacyDb = new Dexie(legacyDbName);
+  legacyDb.version(10).stores({
+    app_settings:       '++id',
+    workspace_settings: '&workspace_owner_npub, record_id, updated_at',
+    storage_image_cache:'&object_id, cached_at',
+    channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
+    groups:             'group_id, owner_npub, *member_npubs',
+    documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
+    tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+    audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
+    scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+    schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
+    sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
+    pending_writes:     '++row_id, record_id, record_family_hash, created_at',
+    profiles:           'pubkey',
+    address_book:       'npub, last_used_at',
+    sync_state:         'key',
+  });
+
+  try {
+    await legacyDb.open();
+
+    const settings = await legacyDb.app_settings.toCollection().first();
+    if (settings) {
+      const { id: _id, ...rest } = settings;
+      await sharedDb.app_settings.add(rest);
+    }
+
+    const profiles = await legacyDb.profiles.toArray();
+    if (profiles.length > 0) {
+      await sharedDb.profiles.bulkPut(profiles);
+    }
+
+    const contacts = await legacyDb.address_book.toArray();
+    if (contacts.length > 0) {
+      await sharedDb.address_book.bulkPut(contacts);
+    }
+
+    const images = await legacyDb.storage_image_cache.toArray();
+    if (images.length > 0) {
+      await sharedDb.storage_image_cache.bulkPut(images);
+    }
+
+    legacyDb.close();
+    await Dexie.delete(legacyDbName);
+    return true;
+  } catch (error) {
+    console.warn('Legacy DB migration failed, will re-sync from server:', error?.message || error);
+    try { legacyDb.close(); } catch { /* ignore */ }
+    try { await Dexie.delete(legacyDbName); } catch { /* ignore */ }
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// app_settings helpers — shared DB
+// ---------------------------------------------------------------------------
 
 export async function getSettings() {
-  return db.app_settings.toCollection().first();
+  return sharedDb.app_settings.toCollection().first();
 }
 
 export async function saveSettings(settings) {
   const sanitized = sanitizeForStorage(settings);
-  const existing = await db.app_settings.toCollection().first();
+  const existing = await sharedDb.app_settings.toCollection().first();
   if (existing) {
-    return db.app_settings.update(existing.id, sanitized);
+    return sharedDb.app_settings.update(existing.id, sanitized);
   }
-  return db.app_settings.add(sanitized);
+  return sharedDb.app_settings.add(sanitized);
 }
 
-// --- workspace_settings helpers ---
+// ---------------------------------------------------------------------------
+// workspace_settings helpers — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getWorkspaceSettings(workspaceOwnerNpub) {
   if (!workspaceOwnerNpub) return null;
-  return db.workspace_settings.get(workspaceOwnerNpub);
+  return wsDb().workspace_settings.get(workspaceOwnerNpub);
 }
 
 export async function upsertWorkspaceSettings(settings) {
-  return db.workspace_settings.put(sanitizeForStorage(settings));
+  return wsDb().workspace_settings.put(sanitizeForStorage(settings));
 }
 
-// --- storage_image_cache helpers ---
+// ---------------------------------------------------------------------------
+// storage_image_cache helpers — shared DB
+// ---------------------------------------------------------------------------
 
 export async function getCachedStorageImage(objectId) {
   if (!objectId) return null;
-  return db.storage_image_cache.get(objectId);
+  return sharedDb.storage_image_cache.get(objectId);
 }
 
 export async function cacheStorageImage({ object_id, blob, content_type = '', cached_at = Date.now() }) {
   if (!object_id || !(blob instanceof Blob)) return null;
-  return db.storage_image_cache.put({
+  return sharedDb.storage_image_cache.put({
     object_id,
     blob,
     content_type,
@@ -210,109 +198,121 @@ export async function cacheStorageImage({ object_id, blob, content_type = '', ca
   });
 }
 
-// --- channels ---
+// ---------------------------------------------------------------------------
+// channels — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getChannelsByOwner(ownerNpub) {
-  const rows = await db.channels.where('owner_npub').equals(ownerNpub).toArray();
+  const rows = await wsDb().channels.where('owner_npub').equals(ownerNpub).toArray();
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
 export async function upsertChannel(channel) {
-  return db.channels.put(sanitizeForStorage(channel));
+  return wsDb().channels.put(sanitizeForStorage(channel));
 }
 
 export async function getChannelById(recordId) {
-  return db.channels.get(recordId);
+  return wsDb().channels.get(recordId);
 }
 
-// --- directories ---
+// ---------------------------------------------------------------------------
+// directories — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getDirectoriesByOwner(ownerNpub) {
-  const rows = await db.directories.where('owner_npub').equals(ownerNpub).toArray();
+  const rows = await wsDb().directories.where('owner_npub').equals(ownerNpub).toArray();
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
 export async function upsertDirectory(directory) {
-  return db.directories.put(sanitizeForStorage(directory));
+  return wsDb().directories.put(sanitizeForStorage(directory));
 }
 
 export async function getDirectoryById(recordId) {
-  return db.directories.get(recordId);
+  return wsDb().directories.get(recordId);
 }
 
-// --- documents ---
+// ---------------------------------------------------------------------------
+// documents — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getDocumentsByOwner(ownerNpub) {
-  const rows = await db.documents.where('owner_npub').equals(ownerNpub).toArray();
+  const rows = await wsDb().documents.where('owner_npub').equals(ownerNpub).toArray();
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
 export async function upsertDocument(document) {
-  return db.documents.put(sanitizeForStorage(document));
+  return wsDb().documents.put(sanitizeForStorage(document));
 }
 
 export async function getDocumentById(recordId) {
-  return db.documents.get(recordId);
+  return wsDb().documents.get(recordId);
 }
 
-// --- chat_messages ---
+// ---------------------------------------------------------------------------
+// chat_messages — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getMessagesByChannel(channelId) {
-  const rows = await db.chat_messages.where('channel_id').equals(channelId).sortBy('updated_at');
+  const rows = await wsDb().chat_messages.where('channel_id').equals(channelId).sortBy('updated_at');
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
 export async function upsertMessage(msg) {
-  return db.chat_messages.put(sanitizeForStorage(msg));
+  return wsDb().chat_messages.put(sanitizeForStorage(msg));
 }
 
 export async function getMessageById(recordId) {
-  return db.chat_messages.get(recordId);
+  return wsDb().chat_messages.get(recordId);
 }
 
 export async function getRecentChatMessagesSince(sinceIso) {
-  const rows = await db.chat_messages.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const rows = await wsDb().chat_messages.where('updated_at').aboveOrEqual(sinceIso).toArray();
   return rows
     .filter((row) => row.record_state !== 'deleted')
     .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
 }
 
 export async function getRecentDocumentChangesSince(sinceIso) {
-  const rows = await db.documents.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const rows = await wsDb().documents.where('updated_at').aboveOrEqual(sinceIso).toArray();
   return rows
     .filter((row) => row.record_state !== 'deleted')
     .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
 }
 
 export async function getRecentDirectoryChangesSince(sinceIso) {
-  const rows = await db.directories.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const rows = await wsDb().directories.where('updated_at').aboveOrEqual(sinceIso).toArray();
   return rows
     .filter((row) => row.record_state !== 'deleted')
     .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
 }
 
-// --- groups ---
+// ---------------------------------------------------------------------------
+// groups — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getGroupsByOwner(ownerNpub) {
-  return db.groups.where('owner_npub').equals(ownerNpub).toArray();
+  return wsDb().groups.where('owner_npub').equals(ownerNpub).toArray();
 }
 
 export async function getAllGroups() {
-  return db.groups.toArray();
+  return wsDb().groups.toArray();
 }
 
 export async function upsertGroup(group) {
-  return db.groups.put(sanitizeForStorage(group));
+  return wsDb().groups.put(sanitizeForStorage(group));
 }
 
 export async function deleteGroupById(groupId) {
-  return db.groups.delete(groupId);
+  return wsDb().groups.delete(groupId);
 }
 
-// --- address book ---
+// ---------------------------------------------------------------------------
+// address book — shared DB
+// ---------------------------------------------------------------------------
 
 export async function upsertAddressBookPerson(entry) {
-  const existing = await db.address_book.get(entry.npub);
+  const existing = await sharedDb.address_book.get(entry.npub);
   const merged = {
     npub: entry.npub,
     label: entry.label ?? existing?.label ?? null,
@@ -320,11 +320,11 @@ export async function upsertAddressBookPerson(entry) {
     source: entry.source ?? existing?.source ?? 'unknown',
     last_used_at: entry.last_used_at ?? new Date().toISOString(),
   };
-  return db.address_book.put(merged);
+  return sharedDb.address_book.put(merged);
 }
 
 export async function getAddressBookPeople(query = '') {
-  const all = await db.address_book.orderBy('last_used_at').reverse().toArray();
+  const all = await sharedDb.address_book.orderBy('last_used_at').reverse().toArray();
   const needle = String(query || '').trim().toLowerCase();
   if (!needle) return all;
 
@@ -334,12 +334,14 @@ export async function getAddressBookPeople(query = '') {
   );
 }
 
-// --- profiles ---
+// ---------------------------------------------------------------------------
+// profiles — shared DB
+// ---------------------------------------------------------------------------
 
 const PROFILE_CACHE_HOURS = 24;
 
 export async function cacheProfile(pubkey, profile) {
-  return db.profiles.put({
+  return sharedDb.profiles.put({
     pubkey,
     profile: sanitizeForStorage(profile),
     cachedAt: Date.now(),
@@ -347,51 +349,55 @@ export async function cacheProfile(pubkey, profile) {
 }
 
 export async function getCachedProfile(pubkey) {
-  const row = await db.profiles.get(pubkey);
+  const row = await sharedDb.profiles.get(pubkey);
   if (!row) return null;
 
   const maxAge = PROFILE_CACHE_HOURS * 60 * 60 * 1000;
   if (Date.now() - row.cachedAt > maxAge) {
-    await db.profiles.delete(pubkey);
+    await sharedDb.profiles.delete(pubkey);
     return null;
   }
 
   return row.profile;
 }
 
-// --- pending_writes ---
+// ---------------------------------------------------------------------------
+// pending_writes — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function addPendingWrite(write) {
-  return db.pending_writes.add(sanitizeForStorage({ ...write, created_at: new Date().toISOString() }));
+  return wsDb().pending_writes.add(sanitizeForStorage({ ...write, created_at: new Date().toISOString() }));
 }
 
 export async function getPendingWrites() {
-  return db.pending_writes.toArray();
+  return wsDb().pending_writes.toArray();
 }
 
 export async function getPendingWritesByFamilies(familyIds = []) {
   const hashes = [...new Set(familyIds.map((familyId) => getSyncFamily(familyId)?.hash).filter(Boolean))];
   if (hashes.length === 0) return [];
-  return db.pending_writes.where('record_family_hash').anyOf(hashes).toArray();
+  return wsDb().pending_writes.where('record_family_hash').anyOf(hashes).toArray();
 }
 
 export async function removePendingWrite(rowId) {
-  return db.pending_writes.delete(rowId);
+  return wsDb().pending_writes.delete(rowId);
 }
 
-// --- sync_state ---
+// ---------------------------------------------------------------------------
+// sync_state — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getSyncState(key) {
-  const row = await db.sync_state.get(key);
+  const row = await wsDb().sync_state.get(key);
   return row?.value ?? null;
 }
 
 export async function setSyncState(key, value) {
-  return db.sync_state.put({ key, value });
+  return wsDb().sync_state.put({ key, value });
 }
 
 export async function deleteSyncState(key) {
-  return db.sync_state.delete(key);
+  return wsDb().sync_state.delete(key);
 }
 
 export async function clearSyncStateForFamilies(familyIds = []) {
@@ -401,104 +407,168 @@ export async function clearSyncStateForFamilies(familyIds = []) {
 }
 
 export async function clearSyncState() {
-  return db.sync_state.clear();
+  return wsDb().sync_state.clear();
 }
 
-// --- tasks ---
+// ---------------------------------------------------------------------------
+// sync_quarantine — workspace DB
+// ---------------------------------------------------------------------------
+
+export function syncQuarantineKey(familyHash, recordId) {
+  return `${String(familyHash || '').trim()}:${String(recordId || '').trim()}`;
+}
+
+export async function getSyncQuarantineEntries() {
+  const rows = await wsDb().sync_quarantine.orderBy('last_seen_at').reverse().toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function upsertSyncQuarantineEntry(entry) {
+  const db = wsDb();
+  const key = syncQuarantineKey(entry.family_hash, entry.record_id);
+  const existing = await db.sync_quarantine.get(key);
+  const now = new Date().toISOString();
+  return db.sync_quarantine.put(sanitizeForStorage({
+    ...existing,
+    ...entry,
+    key,
+    first_seen_at: existing?.first_seen_at || entry.first_seen_at || now,
+    last_seen_at: entry.last_seen_at || now,
+    skip_count: Number(existing?.skip_count || 0) + 1,
+    record_state: 'active',
+  }));
+}
+
+export async function deleteSyncQuarantineEntry(familyHash, recordId) {
+  return wsDb().sync_quarantine.delete(syncQuarantineKey(familyHash, recordId));
+}
+
+export async function clearSyncQuarantineForFamilies(familyIds = []) {
+  const hashes = [...new Set(familyIds.map((familyId) => getSyncFamily(familyId)?.hash).filter(Boolean))];
+  if (hashes.length === 0) return;
+  await Promise.all(hashes.map((hash) => wsDb().sync_quarantine.where('family_hash').equals(hash).delete()));
+}
+
+// ---------------------------------------------------------------------------
+// tasks — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getTasksByOwner(ownerNpub) {
-  const rows = await db.tasks.where('owner_npub').equals(ownerNpub).toArray();
+  const rows = await wsDb().tasks.where('owner_npub').equals(ownerNpub).toArray();
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
 export async function getRecentTaskChangesSince(sinceIso) {
-  const rows = await db.tasks.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const rows = await wsDb().tasks.where('updated_at').aboveOrEqual(sinceIso).toArray();
   return rows
     .filter((row) => row.record_state !== 'deleted')
     .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
 }
 
 export async function upsertTask(task) {
-  return db.tasks.put(sanitizeForStorage(task));
+  return wsDb().tasks.put(sanitizeForStorage(task));
 }
 
 export async function getTaskById(recordId) {
-  return db.tasks.get(recordId);
+  return wsDb().tasks.get(recordId);
 }
 
-// --- schedules ---
+// ---------------------------------------------------------------------------
+// schedules — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getSchedulesByOwner(ownerNpub) {
-  const rows = await db.schedules.where('owner_npub').equals(ownerNpub).toArray();
+  const rows = await wsDb().schedules.where('owner_npub').equals(ownerNpub).toArray();
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
 export async function getRecentScheduleChangesSince(sinceIso) {
-  const rows = await db.schedules.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const rows = await wsDb().schedules.where('updated_at').aboveOrEqual(sinceIso).toArray();
   return rows
     .filter((row) => row.record_state !== 'deleted')
     .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
 }
 
 export async function upsertSchedule(schedule) {
-  return db.schedules.put(sanitizeForStorage(schedule));
+  return wsDb().schedules.put(sanitizeForStorage(schedule));
 }
 
 export async function getScheduleById(recordId) {
-  return db.schedules.get(recordId);
+  return wsDb().schedules.get(recordId);
 }
 
-// --- comments ---
+// ---------------------------------------------------------------------------
+// comments — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getCommentsByTarget(targetRecordId) {
-  const rows = await db.comments.where('target_record_id').equals(targetRecordId).toArray();
+  const rows = await wsDb().comments.where('target_record_id').equals(targetRecordId).toArray();
   return rows
     .filter((row) => row.record_state !== 'deleted')
-    .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+    .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
 }
 
 export async function getRecentCommentsSince(sinceIso) {
-  const rows = await db.comments.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const rows = await wsDb().comments.where('updated_at').aboveOrEqual(sinceIso).toArray();
   return rows
     .filter((row) => row.record_state !== 'deleted')
     .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
 }
 
 export async function upsertComment(comment) {
-  return db.comments.put(sanitizeForStorage(comment));
+  return wsDb().comments.put(sanitizeForStorage(comment));
 }
 
-// --- audio notes ---
+export async function deleteRuntimeRecordByFamily(familyIdOrHash, recordId) {
+  const family = getSyncFamily(familyIdOrHash);
+  const tableName = family?.table;
+  if (!tableName || !recordId) return 0;
+  const db = wsDb();
+  const table = db[tableName];
+  if (!table) return 0;
+  return table.where('record_id').equals(recordId).delete();
+}
+
+// ---------------------------------------------------------------------------
+// audio notes — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getAudioNotesByOwner(ownerNpub) {
-  const rows = await db.audio_notes.where('owner_npub').equals(ownerNpub).toArray();
+  const rows = await wsDb().audio_notes.where('owner_npub').equals(ownerNpub).toArray();
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
 export async function upsertAudioNote(audioNote) {
-  return db.audio_notes.put(sanitizeForStorage(audioNote));
+  return wsDb().audio_notes.put(sanitizeForStorage(audioNote));
 }
 
 export async function getAudioNoteById(recordId) {
-  return db.audio_notes.get(recordId);
+  return wsDb().audio_notes.get(recordId);
 }
 
-// --- scopes ---
+// ---------------------------------------------------------------------------
+// scopes — workspace DB
+// ---------------------------------------------------------------------------
 
 export async function getScopesByOwner(ownerNpub) {
-  const rows = await db.scopes.where('owner_npub').equals(ownerNpub).toArray();
+  const rows = await wsDb().scopes.where('owner_npub').equals(ownerNpub).toArray();
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
 export async function upsertScope(scope) {
-  return db.scopes.put(scope);
+  return wsDb().scopes.put(scope);
 }
 
 export async function getScopeById(recordId) {
-  return db.scopes.get(recordId);
+  return wsDb().scopes.get(recordId);
 }
 
+// ---------------------------------------------------------------------------
+// Bulk clear helpers — workspace DB
+// ---------------------------------------------------------------------------
+
 export async function clearRuntimeData() {
+  const db = wsDb();
   await Promise.all([
     db.channels.clear(),
     db.chat_messages.clear(),
@@ -509,6 +579,7 @@ export async function clearRuntimeData() {
     db.comments.clear(),
     db.audio_notes.clear(),
     db.scopes.clear(),
+    db.sync_quarantine.clear(),
     db.groups.clear(),
     db.pending_writes.clear(),
     db.sync_state.clear(),
@@ -518,6 +589,7 @@ export async function clearRuntimeData() {
 export async function clearRuntimeFamilies(familyIds = []) {
   const tables = [...new Set(familyIds.map((familyId) => getSyncFamily(familyId)?.table).filter(Boolean))];
   if (tables.length === 0) return;
+  const db = wsDb();
   await Promise.all(
     tables.map((tableName) => db[tableName]?.clear?.()).filter(Boolean)
   );

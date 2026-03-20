@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import db, {
+import {
+  openWorkspaceDb,
   addPendingWrite,
   clearRuntimeFamilies,
   clearSyncStateForFamilies,
@@ -15,9 +16,12 @@ import db, {
 } from '../src/db.js';
 import { getSyncFamily, getSyncStateKeyForFamily, SYNC_FAMILY_OPTIONS } from '../src/sync-families.js';
 
+const TEST_OWNER = 'npub_test_workspace';
+
 beforeEach(async () => {
-  await db.open();
-  await Promise.all(db.tables.map((table) => table.clear()));
+  const wsDb = openWorkspaceDb(TEST_OWNER);
+  await wsDb.open();
+  await Promise.all(wsDb.tables.map((table) => table.clear()));
 });
 
 describe('sync repair helpers', () => {

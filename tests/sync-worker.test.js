@@ -7,7 +7,7 @@ const state = {
 };
 
 vi.mock('../src/db.js', () => ({
-  default: {},
+  openWorkspaceDb: vi.fn(),
   getPendingWrites: vi.fn(async () => state.pending),
   removePendingWrite: vi.fn(async (rowId) => {
     state.removed.push(rowId);
@@ -24,6 +24,8 @@ vi.mock('../src/db.js', () => ({
   upsertScope: vi.fn(),
   getSyncState: vi.fn(),
   setSyncState: vi.fn(),
+  upsertSyncQuarantineEntry: vi.fn(),
+  deleteSyncQuarantineEntry: vi.fn(),
 }));
 
 vi.mock('../src/api.js', () => ({

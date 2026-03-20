@@ -28,6 +28,8 @@ function toRaw(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 import {
+  openWorkspaceDb,
+  migrateFromLegacyDb,
   getSettings,
   saveSettings,
   getWorkspaceSettings,
@@ -2044,6 +2046,7 @@ export function initApp() {
       this.showWorkspaceSwitcherMenu = false;
       try {
         this.currentWorkspaceOwnerNpub = workspace.workspaceOwnerNpub;
+        openWorkspaceDb(workspace.workspaceOwnerNpub);
         this.showWorkspaceBootstrapModal = false;
         this.superbasedTokenInput = workspace.connectionToken || this.superbasedTokenInput;
         this.backendUrl = normalizeBackendUrl(workspace.directHttpsUrl || this.backendUrl || guessDefaultBackendUrl());
@@ -2233,6 +2236,7 @@ export function initApp() {
       this.startExtensionSignerWatch();
       this.initRouteSync();
       this.initDocCommentConnector();
+      await migrateFromLegacyDb();
       const settings = await getSettings();
       if (settings) {
         this.backendUrl = normalizeBackendUrl(settings.backendUrl ?? '');

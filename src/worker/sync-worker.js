@@ -15,7 +15,8 @@
  * Web Worker upgrade can happen later.
  */
 
-import db, {
+import {
+  openWorkspaceDb,
   getPendingWrites,
   removePendingWrite,
   upsertWorkspaceSettings,
@@ -30,6 +31,8 @@ import db, {
   upsertScope,
   getSyncState,
   setSyncState,
+  upsertSyncQuarantineEntry,
+  deleteSyncQuarantineEntry,
 } from '../db.js';
 
 import { syncRecords, fetchRecords, getBaseUrl } from '../api.js';
@@ -95,6 +98,7 @@ async function materializeRecordForFamily(family, record) {
  * Push all pending writes to the backend then clear them locally.
  */
 export async function flushPendingWrites(ownerNpub) {
+  openWorkspaceDb(ownerNpub);
   const pending = await getPendingWrites();
   if (pending.length === 0) return { pushed: 0 };
   let pushed = 0;
@@ -163,6 +167,7 @@ export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
 }
 
 export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, families = DEFAULT_FAMILIES, options = {}) {
+  openWorkspaceDb(ownerNpub);
   const forceFull = options.forceFull === true;
   let totalPulled = 0;
 
