@@ -32,6 +32,8 @@ body {
   margin: 0 auto;
   padding: 0.5rem 2rem;
   max-width: 1400px;
+  height: 100dvh;
+  overflow: hidden;
   background: #ffffff;
 }
 
@@ -67,7 +69,11 @@ button:disabled {
 }
 
 .app-shell {
-  min-height: calc(100vh - 1rem);
+  height: calc(100dvh - 1rem);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .page-header {
@@ -80,6 +86,10 @@ button:disabled {
   background: #ffffff;
   border-bottom: 1px solid var(--border);
   margin-bottom: 0.75rem;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  flex-shrink: 0;
 }
 
 .page-header h1 {
@@ -694,11 +704,39 @@ button:disabled {
   margin-bottom: 0.75rem;
 }
 
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: #1e40af;
+  color: #fff;
+  font-size: 0.85rem;
+}
+.update-banner-btn {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.update-banner-btn:hover { background: rgba(255,255,255,0.15); }
+.update-banner-btn.dismiss { border: none; font-size: 1.1rem; padding: 0.15rem 0.5rem; margin-left: auto; }
+
 .app-layout {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 0;
-  min-height: calc(100vh - 120px);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
   background: #ffffff;
 }
 
@@ -709,10 +747,10 @@ button:disabled {
   padding: 0;
   display: flex;
   flex-direction: column;
-  align-self: flex-start;
-  position: sticky;
-  top: 0.5rem;
-  height: calc(100dvh - 1rem);
+  align-self: stretch;
+  position: relative;
+  top: auto;
+  height: 100%;
   transition: width 0.2s ease;
   background: #ffffff;
   min-height: 0;
@@ -831,9 +869,7 @@ button:disabled {
   margin-top: auto;
   padding: 0.6rem;
   border-top: 1px solid var(--border);
-  background:
-    linear-gradient(180deg, rgba(241, 245, 249, 0) 0%, rgba(241, 245, 249, 0.96) 30%, rgba(255, 255, 255, 1) 100%),
-    #fff;
+  background: #fff;
 }
 
 .sidebar-workspace-label-row {
@@ -1091,8 +1127,18 @@ button:disabled {
 .main-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   padding-left: 1.5rem;
   background: #ffffff;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-content > div {
+  min-height: 0;
 }
 
 .mobile-sidebar-backdrop {
@@ -1233,7 +1279,9 @@ button:disabled {
 }
 
 .chat-section {
-  height: calc(100vh - 90px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
@@ -1322,7 +1370,9 @@ button:disabled {
 
 .chat-layout {
   display: flex;
-  height: calc(100% - 48px);
+  flex: 1;
+  min-height: 0;
+  height: auto;
   border: none;
   border-radius: 0;
   overflow: hidden;
@@ -4073,7 +4123,7 @@ button:disabled {
   }
 
   .app-layout {
-    min-height: auto;
+    min-height: 0;
   }
 
   .mobile-sidebar-backdrop {
@@ -4148,11 +4198,7 @@ button:disabled {
   }
 
   .chat-section {
-    height: auto;
-  }
-
-  .chat-layout {
-    height: 70vh;
+    min-height: 0;
   }
 
   .chat-thread-panel {

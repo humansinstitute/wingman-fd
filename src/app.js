@@ -13,6 +13,7 @@ import {
 import { renderMarkdownToHtml } from './markdown.js';
 import { resolveChannelLabel } from './channel-labels.js';
 import { buildFlightDeckDocumentTitle } from './page-title.js';
+import { getRunningBuildId } from './version-check.js';
 import { signAndPublishTrigger, npubToHex } from './nostr-trigger.js';
 import {
   CALENDAR_VIEWS,
@@ -310,6 +311,7 @@ export function initApp() {
     THREAD_REPLY_PAGE_SIZE: 6,
 
     // settings
+    appBuildId: getRunningBuildId(),
     backendUrl: '',
     ownerNpub: '',
     botNpub: '',

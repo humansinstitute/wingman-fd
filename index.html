@@ -2707,6 +2707,15 @@
               </template>
             </ul>
           </section>
+
+          <section class="settings-panel">
+            <div class="settings-panel-header">
+              <div>
+                <h2>About</h2>
+              </div>
+            </div>
+            <p class="settings-field-help">Build: <code x-text="$store.chat.appBuildId"></code></p>
+          </section>
           </div>
 
           <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'automation'">
