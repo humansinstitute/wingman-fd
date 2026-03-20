@@ -29,6 +29,7 @@ function toRaw(obj) {
 }
 import {
   openWorkspaceDb,
+  hasWorkspaceDb,
   migrateFromLegacyDb,
   getSettings,
   saveSettings,
@@ -2610,7 +2611,7 @@ export function initApp() {
       this.clearDocCommentConnector();
       this.revokeStorageImageObjectUrls();
       await clearAutoLogin();
-      await clearRuntimeData();
+      if (hasWorkspaceDb()) await clearRuntimeData();
       clearCryptoContext();
       this.session = null;
       this.ownerNpub = '';
