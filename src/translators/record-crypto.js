@@ -1,6 +1,7 @@
 import { personalDecryptFromNpub, personalEncryptForNpub } from '../auth/nostr.js';
 import {
   decryptPayloadForGroup,
+  encryptPayloadForGroup,
   getActiveSessionNpub,
   getGroupKey,
   hasGroupKey,
@@ -35,29 +36,34 @@ export async function encryptOwnerPayload(ownerNpub, payload) {
   };
 }
 
-export async function buildGroupPayloads(groupNpubs, payload, canWriteByGroup = null) {
+export function buildGroupPayloads(groupNpubs, payload, canWriteByGroup = null) {
   const plaintext = JSON.stringify(payload);
   const uniqueGroups = [...new Set((groupNpubs || []).map((value) => String(value || '').trim()).filter(Boolean))];
   const senderNpub = getActiveSessionNpub();
   if (!senderNpub) throw new Error('No active session available for group payload encryption.');
 
-  return Promise.all(uniqueGroups.map(async (groupRef) => {
+  return uniqueGroups.map((groupRef) => {
     const groupKey = getGroupKey(groupRef);
     if (!groupKey?.group_npub) {
       throw new Error(`No group key loaded for ${groupRef}`);
+    }
+
+    const ciphertext = encryptPayloadForGroup(groupRef, senderNpub, plaintext);
+    if (typeof ciphertext !== 'string' || ciphertext.length === 0) {
+      throw new Error(`Group encryption produced empty ciphertext for ${groupKey.group_npub}`);
     }
 
     return {
       group_id: groupKey.group_id || undefined,
       group_epoch: groupKey.key_version || undefined,
       group_npub: groupKey.group_npub,
-    ciphertext: JSON.stringify({
-      encrypted_by_npub: senderNpub,
-      ciphertext: await personalEncryptForNpub(groupKey.group_npub, plaintext),
-    }),
+      ciphertext: JSON.stringify({
+        encrypted_by_npub: senderNpub,
+        ciphertext,
+      }),
       write: canWriteByGroup instanceof Map ? canWriteByGroup.get(groupRef) === true : true,
     };
-  }));
+  });
 }
 
 export async function decryptRecordPayload(record) {

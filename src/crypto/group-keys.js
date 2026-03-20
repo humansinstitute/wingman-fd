@@ -127,6 +127,12 @@ export async function createGroupWriteAuthHeader(groupRef, url, method, body = n
   return createNip98AuthHeaderForSecret(url, method, body, key.secret);
 }
 
+export function encryptPayloadForGroup(groupRef, senderNpub, plaintext, options = {}) {
+  const key = getGroupKey(groupRef, options);
+  if (!key) throw new Error(`No group key loaded for ${groupRef}`);
+  return localEncryptForNpub(key.secret, senderNpub, plaintext);
+}
+
 export function decryptPayloadForGroup(groupRef, senderNpub, ciphertext, options = {}) {
   const key = getGroupKey(groupRef, options);
   if (!key) throw new Error(`No group key loaded for ${groupRef}`);
