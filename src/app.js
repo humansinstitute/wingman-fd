@@ -2545,10 +2545,10 @@ export function initApp() {
         }
         if (this.currentWorkspaceOwnerNpub) {
           await this.selectWorkspace(this.currentWorkspaceOwnerNpub, { refresh: false });
+          await this.refreshGroups();
+          await this.refreshChannels();
+          await this.refreshSyncStatus();
         }
-        await this.refreshGroups();
-        await this.refreshChannels();
-        await this.refreshSyncStatus();
         this.updateWorkspaceBootstrapPrompt();
         this.ensureBackgroundSync(true);
       } catch (error) {
@@ -2584,9 +2584,11 @@ export function initApp() {
 
         await this.persistWorkspaceSettings();
 
-        await this.refreshGroups();
-        await this.refreshChannels();
-        await this.refreshSyncStatus();
+        if (this.currentWorkspaceOwnerNpub) {
+          await this.refreshGroups();
+          await this.refreshChannels();
+          await this.refreshSyncStatus();
+        }
         this.updateWorkspaceBootstrapPrompt();
         if (!this.backendUrl) {
           this.openConnectModal();
