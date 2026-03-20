@@ -186,12 +186,12 @@ export async function createWorkspace(body) {
   const resp = await signedFetchWithFallbacks('/api/v4/workspaces', {
     method: 'POST',
     body,
-  }, { preferCurrentOrigin: true });
+  });
   return json(resp);
 }
 
 export async function getWorkspaces(memberNpub) {
-  const resp = await signedFetchWithFallbacks(`/api/v4/workspaces?member_npub=${encodeURIComponent(memberNpub)}`, {}, { preferCurrentOrigin: true });
+  const resp = await signedFetchWithFallbacks(`/api/v4/workspaces?member_npub=${encodeURIComponent(memberNpub)}`, {});
   return json(resp);
 }
 
@@ -199,7 +199,7 @@ export async function recoverWorkspace(body) {
   const resp = await signedFetchWithFallbacks('/api/v4/workspaces/recover', {
     method: 'POST',
     body,
-  }, { preferCurrentOrigin: true });
+  });
   return json(resp);
 }
 
@@ -207,7 +207,7 @@ export async function updateWorkspace(workspaceOwnerNpub, body) {
   const resp = await signedFetchWithFallbacks(`/api/v4/workspaces/${encodeURIComponent(workspaceOwnerNpub)}`, {
     method: 'PATCH',
     body,
-  }, { preferCurrentOrigin: true });
+  });
   return json(resp);
 }
 
