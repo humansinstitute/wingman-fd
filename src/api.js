@@ -26,6 +26,19 @@ function url(path) {
   return `${_baseUrl}${path}`;
 }
 
+function getCurrentOriginBaseUrl() {
+  if (typeof window === 'undefined' || !window.location?.origin) return '';
+  return String(window.location.origin || '').replace(/\/+$/, '');
+}
+
+function getCandidateBaseUrls({ preferCurrentOrigin = false } = {}) {
+  const currentOrigin = getCurrentOriginBaseUrl();
+  const ordered = preferCurrentOrigin
+    ? [currentOrigin, _baseUrl]
+    : [_baseUrl, currentOrigin];
+  return [...new Set(ordered.filter(Boolean))];
+}
+
 async function json(resp) {
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -48,6 +61,47 @@ async function signedFetch(path, { method = 'GET', body } = {}) {
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+}
+
+async function signedFetchAbsolute(requestUrl, { method = 'GET', body } = {}) {
+  const headers = {
+    Authorization: await createNip98AuthHeader(requestUrl, method, body ?? null),
+  };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  return fetch(requestUrl, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+async function signedFetchWithFallbacks(path, { method = 'GET', body } = {}, options = {}) {
+  const candidateBaseUrls = getCandidateBaseUrls(options);
+  if (candidateBaseUrls.length === 0) {
+    throw new Error('Backend URL not configured');
+  }
+
+  let lastResponse = null;
+  let lastError = null;
+
+  for (const baseUrl of candidateBaseUrls) {
+    const requestUrl = `${baseUrl}${path}`;
+    try {
+      const response = await signedFetchAbsolute(requestUrl, { method, body });
+      if (response.status !== 404 && response.status !== 405) {
+        return response;
+      }
+      lastResponse = response;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastResponse) return lastResponse;
+  throw lastError || new Error(`Request failed for ${path}`);
 }
 
 async function signedFetchBytes(path) {
@@ -129,15 +183,31 @@ export async function deleteGroup(groupId) {
 // --- Workspaces ---
 
 export async function createWorkspace(body) {
-  const resp = await signedFetch('/api/v4/workspaces', {
+  const resp = await signedFetchWithFallbacks('/api/v4/workspaces', {
     method: 'POST',
     body,
-  });
+  }, { preferCurrentOrigin: true });
   return json(resp);
 }
 
 export async function getWorkspaces(memberNpub) {
-  const resp = await signedFetch(`/api/v4/workspaces?member_npub=${encodeURIComponent(memberNpub)}`);
+  const resp = await signedFetchWithFallbacks(`/api/v4/workspaces?member_npub=${encodeURIComponent(memberNpub)}`, {}, { preferCurrentOrigin: true });
+  return json(resp);
+}
+
+export async function recoverWorkspace(body) {
+  const resp = await signedFetchWithFallbacks('/api/v4/workspaces/recover', {
+    method: 'POST',
+    body,
+  }, { preferCurrentOrigin: true });
+  return json(resp);
+}
+
+export async function updateWorkspace(workspaceOwnerNpub, body) {
+  const resp = await signedFetchWithFallbacks(`/api/v4/workspaces/${encodeURIComponent(workspaceOwnerNpub)}`, {
+    method: 'PATCH',
+    body,
+  }, { preferCurrentOrigin: true });
   return json(resp);
 }
 

@@ -94,6 +94,7 @@ import {
   deleteGroup,
   createWorkspace,
   getWorkspaces,
+  recoverWorkspace,
   prepareStorageObject,
   uploadStorageObject,
   completeStorageObject,
@@ -2083,6 +2084,33 @@ export function initApp() {
       }
     },
 
+    async tryRecoverWorkspace() {
+      const ownerNpub = this.superbasedConnectionConfig?.workspaceOwnerNpub;
+      const memberNpub = this.session?.npub;
+      if (!ownerNpub || !memberNpub) return;
+      try {
+        const workspaceIdentity = createGroupIdentity();
+        const wrappedNsec = await personalEncryptForNpub(memberNpub, workspaceIdentity.nsec);
+        const response = await recoverWorkspace({
+          workspace_owner_npub: ownerNpub,
+          name: 'Recovered Workspace',
+          wrapped_workspace_nsec: wrappedNsec,
+          wrapped_by_npub: memberNpub,
+        });
+        const serviceNpub = await this.fetchBackendServiceNpub();
+        const workspace = normalizeWorkspaceEntry({
+          ...response,
+          serviceNpub,
+          appNpub: this.superbasedConnectionConfig?.appNpub || null,
+          connectionToken: this.superbasedTokenInput,
+        });
+        this.mergeKnownWorkspaces([workspace]);
+        console.debug('Workspace recovered:', ownerNpub);
+      } catch (error) {
+        console.debug('Workspace recovery skipped:', error?.message || error);
+      }
+    },
+
     updateWorkspaceBootstrapPrompt() {
       const shouldPrompt = Boolean(this.session?.npub) && !this.currentWorkspaceOwnerNpub && this.knownWorkspaces.length === 0;
       this.showWorkspaceBootstrapModal = shouldPrompt;
@@ -2210,6 +2238,9 @@ export function initApp() {
       await this.maybeAutoLogin();
       this.updateWorkspaceBootstrapPrompt();
       await this.loadRemoteWorkspaces();
+      if (this.knownWorkspaces.length === 0 && this.superbasedConnectionConfig?.workspaceOwnerNpub && this.session?.npub) {
+        await this.tryRecoverWorkspace();
+      }
       if (!this.currentWorkspaceOwnerNpub && this.knownWorkspaces.length > 0) {
         this.currentWorkspaceOwnerNpub = this.knownWorkspaces[0].workspaceOwnerNpub;
       }
