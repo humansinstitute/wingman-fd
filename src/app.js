@@ -3145,6 +3145,24 @@ export function initApp() {
       await this.connectToHost(this.connectManualUrl, '');
     },
 
+    async connectByo() {
+      const input = String(this.connectManualUrl || '').trim();
+      if (!input) return;
+      // If it looks like a URL, treat as host URL
+      if (/^https?:\/\//i.test(input)) {
+        return this.connectToHost(input, '');
+      }
+      // Otherwise try to parse as a connection token
+      const parsed = parseSuperBasedToken(input);
+      if (parsed.isValid && parsed.directHttpsUrl) {
+        this.superbasedTokenInput = input;
+        await this.saveConnectionSettings();
+        this.showConnectModal = false;
+        return;
+      }
+      this.connectHostError = 'Enter a URL (https://...) or paste a connection token';
+    },
+
     async loadConnectWorkspaces() {
       if (!this.session?.npub) { this.connectWorkspacesError = 'Sign in first'; return; }
       this.connectWorkspacesBusy = true;

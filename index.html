@@ -287,10 +287,10 @@
                 </button>
               </template>
             </div>
-            <form class="connect-manual-form" @submit.prevent="$store.chat.connectManualHost()">
+            <form class="connect-manual-form" @submit.prevent="$store.chat.connectByo()">
               <label>
-                <span>Custom host URL</span>
-                <input type="url" x-model="$store.chat.connectManualUrl" placeholder="https://sb.example.com" :disabled="$store.chat.connectHostBusy" />
+                <span>BYO SuperBased</span>
+                <input type="text" x-model="$store.chat.connectManualUrl" placeholder="URL or connection token" :disabled="$store.chat.connectHostBusy" />
               </label>
               <button class="auth-option" type="submit" :disabled="$store.chat.connectHostBusy || !$store.chat.connectManualUrl.trim()">
                 <span x-show="!$store.chat.connectHostBusy">Connect</span>
@@ -298,17 +298,6 @@
               </button>
             </form>
             <p class="auth-error" x-show="$store.chat.connectHostError" x-text="$store.chat.connectHostError"></p>
-            <div class="connect-token-fallback">
-              <button type="button" class="connect-token-toggle" @click="$store.chat.connectShowTokenFallback = !$store.chat.connectShowTokenFallback">
-                <span x-text="$store.chat.connectShowTokenFallback ? 'Hide' : 'Have a connection token?'"></span>
-              </button>
-              <div x-show="$store.chat.connectShowTokenFallback" x-cloak>
-                <form class="connect-token-form" @submit.prevent="$store.chat.connectWithToken()">
-                  <textarea x-model="$store.chat.connectTokenInput" rows="3" placeholder="Paste connection token" class="token-input"></textarea>
-                  <button class="auth-option" type="submit" :disabled="!$store.chat.connectTokenInput.trim()">Use token</button>
-                </form>
-              </div>
-            </div>
           </div>
         </template>
 
