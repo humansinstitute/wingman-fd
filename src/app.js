@@ -186,7 +186,7 @@ const UNSCOPED_TASK_BOARD_ID = '__unscoped__';
 const WEEKDAY_OPTIONS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 function guessDefaultBackendUrl() {
-  return DEFAULT_SUPERBASED_URL || (typeof window === 'undefined' ? '' : window.location.origin);
+  return DEFAULT_SUPERBASED_URL || '';
 }
 
 function normalizeBackendUrl(url) {
