@@ -189,6 +189,10 @@ function guessDefaultBackendUrl() {
   return DEFAULT_SUPERBASED_URL || '';
 }
 
+const DEFAULT_KNOWN_HOSTS = [
+  { url: 'https://sb4.otherstuff.ai', label: 'The Other Stuff — SuperBased', serviceNpub: '' },
+];
+
 function normalizeBackendUrl(url) {
   if (!url) return '';
 
@@ -330,6 +334,24 @@ export function initApp() {
     showChannelSettingsModal: false,
     showSuperBasedModal: false,
     presetConnecting: false,
+    // Connect modal (two-step)
+    showConnectModal: false,
+    connectStep: 1,
+    connectHostUrl: '',
+    connectHostLabel: '',
+    connectHostServiceNpub: '',
+    connectHostError: null,
+    connectHostBusy: false,
+    connectManualUrl: '',
+    connectWorkspaces: [],
+    connectWorkspacesBusy: false,
+    connectWorkspacesError: null,
+    connectNewWorkspaceName: '',
+    connectNewWorkspaceDescription: '',
+    connectCreatingWorkspace: false,
+    connectTokenInput: '',
+    connectShowTokenFallback: false,
+    knownHosts: [],
     showAgentConnectModal: false,
     syncStatus: 'synced',
     hasForcedInitialBackfill: false,
@@ -2007,6 +2029,7 @@ export function initApp() {
         connectionToken: this.superbasedTokenInput,
         useCvmSync: this.useCvmSync,
         knownWorkspaces: this.knownWorkspaces,
+        knownHosts: this.knownHosts,
         currentWorkspaceOwnerNpub: this.currentWorkspaceOwnerNpub || '',
         defaultAgentNpub: this.defaultAgentNpub || '',
       });
@@ -2220,6 +2243,7 @@ export function initApp() {
         this.useCvmSync = settings.useCvmSync ?? this.useCvmSync;
         this.currentWorkspaceOwnerNpub = settings.currentWorkspaceOwnerNpub ?? '';
         this.knownWorkspaces = mergeWorkspaceEntries([], settings.knownWorkspaces ?? []);
+        this.knownHosts = Array.isArray(settings.knownHosts) ? settings.knownHosts : [];
       }
       if (this.superbasedTokenInput) {
         const config = parseSuperBasedToken(this.superbasedTokenInput);
@@ -2252,7 +2276,7 @@ export function initApp() {
       }
       this.updateWorkspaceBootstrapPrompt();
       if (this.session?.npub && !this.backendUrl) {
-        this.showSuperBasedModal = true;
+        this.openConnectModal();
       }
       await this.refreshGroups();
       this.selectedBoardId = this.readStoredTaskBoardId();
@@ -2561,7 +2585,7 @@ export function initApp() {
         await this.refreshSyncStatus();
         this.updateWorkspaceBootstrapPrompt();
         if (!this.backendUrl) {
-          this.showSuperBasedModal = true;
+          this.openConnectModal();
         }
         this.ensureBackgroundSync(true);
       } catch (error) {
@@ -3058,6 +3082,178 @@ export function initApp() {
       this.showAvatarMenu = false;
       this.superbasedError = null;
       this.showSuperBasedModal = true;
+    },
+
+    // --- Connect modal (two-step) ---
+
+    openConnectModal() {
+      this.showConnectModal = true;
+      this.connectStep = 1;
+      this.connectHostUrl = '';
+      this.connectHostLabel = '';
+      this.connectHostServiceNpub = '';
+      this.connectHostError = null;
+      this.connectHostBusy = false;
+      this.connectManualUrl = '';
+      this.connectWorkspaces = [];
+      this.connectWorkspacesBusy = false;
+      this.connectWorkspacesError = null;
+      this.connectNewWorkspaceName = '';
+      this.connectNewWorkspaceDescription = '';
+      this.connectCreatingWorkspace = false;
+      this.connectTokenInput = '';
+      this.connectShowTokenFallback = false;
+      this.showWorkspaceSwitcherMenu = false;
+      this.mobileNavOpen = false;
+    },
+
+    closeConnectModal() {
+      if (this.connectHostBusy || this.connectWorkspacesBusy || this.connectCreatingWorkspace) return;
+      this.showConnectModal = false;
+    },
+
+    async connectToHost(hostUrl, hostLabel) {
+      this.connectHostError = null;
+      this.connectHostBusy = true;
+      try {
+        const cleanUrl = String(hostUrl || '').trim().replace(/\/+$/, '');
+        if (!cleanUrl) throw new Error('URL is required');
+        const healthRes = await fetch(`${cleanUrl}/health`);
+        if (!healthRes.ok) throw new Error(`Server returned ${healthRes.status}`);
+        const health = await healthRes.json();
+        if (health.status !== 'ok') throw new Error('Server health check failed');
+        const serviceNpub = String(health.service_npub || '').trim();
+        this.connectHostUrl = cleanUrl;
+        this.connectHostLabel = hostLabel || cleanUrl;
+        this.connectHostServiceNpub = serviceNpub;
+        this.addKnownHost({ url: cleanUrl, label: hostLabel || cleanUrl, serviceNpub });
+        this.backendUrl = normalizeBackendUrl(cleanUrl);
+        setBaseUrl(this.backendUrl);
+        const token = buildSuperBasedConnectionToken({ directHttpsUrl: cleanUrl, serviceNpub, appNpub: APP_NPUB });
+        this.superbasedTokenInput = token;
+        await this.saveSettings();
+        this.connectStep = 2;
+        await this.loadConnectWorkspaces();
+      } catch (error) {
+        this.connectHostError = `Failed to connect: ${error?.message || error}`;
+      } finally {
+        this.connectHostBusy = false;
+      }
+    },
+
+    async connectManualHost() {
+      await this.connectToHost(this.connectManualUrl, '');
+    },
+
+    async loadConnectWorkspaces() {
+      if (!this.session?.npub) { this.connectWorkspacesError = 'Sign in first'; return; }
+      this.connectWorkspacesBusy = true;
+      this.connectWorkspacesError = null;
+      try {
+        const result = await getWorkspaces(this.session.npub);
+        this.connectWorkspaces = (result.workspaces || []).map((entry) => ({
+          ...entry, serviceNpub: this.connectHostServiceNpub, appNpub: APP_NPUB,
+        }));
+      } catch (error) {
+        this.connectWorkspacesError = `Failed to load workspaces: ${error?.message || error}`;
+        this.connectWorkspaces = [];
+      } finally {
+        this.connectWorkspacesBusy = false;
+      }
+    },
+
+    async connectSelectWorkspace(workspaceEntry) {
+      const workspace = normalizeWorkspaceEntry({
+        ...workspaceEntry,
+        directHttpsUrl: this.connectHostUrl,
+        serviceNpub: this.connectHostServiceNpub,
+        appNpub: APP_NPUB,
+        connectionToken: buildSuperBasedConnectionToken({
+          directHttpsUrl: this.connectHostUrl, serviceNpub: this.connectHostServiceNpub,
+          workspaceOwnerNpub: workspaceEntry.workspace_owner_npub || workspaceEntry.workspaceOwnerNpub,
+          appNpub: APP_NPUB,
+        }),
+      });
+      if (!workspace) return;
+      this.mergeKnownWorkspaces([workspace]);
+      this.showConnectModal = false;
+      await this.selectWorkspace(workspace.workspaceOwnerNpub);
+    },
+
+    async connectCreateWorkspace() {
+      const memberNpub = this.session?.npub;
+      if (!memberNpub) { this.connectWorkspacesError = 'Sign in first'; return; }
+      const name = String(this.connectNewWorkspaceName || '').trim();
+      if (!name) { this.connectWorkspacesError = 'Workspace name is required'; return; }
+      this.connectCreatingWorkspace = true;
+      this.connectWorkspacesError = null;
+      try {
+        const workspaceIdentity = createGroupIdentity();
+        const defaultGroupIdentity = createGroupIdentity();
+        const privateGroupIdentity = createGroupIdentity();
+        const wrappedWorkspaceNsec = await personalEncryptForNpub(memberNpub, workspaceIdentity.nsec);
+        const defaultGroupMemberKeys = await buildWrappedMemberKeys(defaultGroupIdentity, [memberNpub], memberNpub);
+        const privateGroupMemberKeys = await buildWrappedMemberKeys(privateGroupIdentity, [memberNpub], memberNpub);
+        const response = await createWorkspace({
+          workspace_owner_npub: workspaceIdentity.npub, name,
+          description: String(this.connectNewWorkspaceDescription || '').trim(),
+          wrapped_workspace_nsec: wrappedWorkspaceNsec, wrapped_by_npub: memberNpub,
+          default_group_npub: defaultGroupIdentity.npub, default_group_name: `${name} Shared`,
+          default_group_member_keys: defaultGroupMemberKeys,
+          private_group_npub: privateGroupIdentity.npub, private_group_name: 'Private',
+          private_group_member_keys: privateGroupMemberKeys,
+        });
+        const workspace = normalizeWorkspaceEntry({
+          ...response, serviceNpub: this.connectHostServiceNpub, appNpub: APP_NPUB,
+          connectionToken: buildSuperBasedConnectionToken({
+            directHttpsUrl: this.connectHostUrl, serviceNpub: this.connectHostServiceNpub,
+            workspaceOwnerNpub: response.workspace_owner_npub, appNpub: APP_NPUB,
+          }),
+        });
+        this.mergeKnownWorkspaces([workspace]);
+        this.showConnectModal = false;
+        await this.selectWorkspace(workspace.workspaceOwnerNpub);
+      } catch (error) {
+        this.connectWorkspacesError = error?.message || 'Failed to create workspace';
+      } finally {
+        this.connectCreatingWorkspace = false;
+      }
+    },
+
+    async connectWithToken() {
+      const token = String(this.connectTokenInput || '').trim();
+      if (!token) return;
+      this.superbasedTokenInput = token;
+      await this.saveConnectionSettings();
+      this.showConnectModal = false;
+    },
+
+    connectGoBack() {
+      this.connectStep = 1;
+      this.connectWorkspaces = [];
+      this.connectWorkspacesError = null;
+      this.connectNewWorkspaceName = '';
+      this.connectNewWorkspaceDescription = '';
+    },
+
+    addKnownHost({ url, label, serviceNpub }) {
+      const cleanUrl = String(url || '').trim().replace(/\/+$/, '');
+      if (!cleanUrl) return;
+      const existing = this.knownHosts.findIndex((h) => h.url === cleanUrl);
+      const entry = { url: cleanUrl, label: String(label || '').trim() || cleanUrl, serviceNpub: String(serviceNpub || '').trim() };
+      if (existing >= 0) { this.knownHosts[existing] = entry; } else { this.knownHosts.push(entry); }
+    },
+
+    get mergedHostsList() {
+      const seen = new Set();
+      const merged = [];
+      for (const host of [...DEFAULT_KNOWN_HOSTS, ...this.knownHosts]) {
+        const cleanUrl = String(host.url || '').trim().replace(/\/+$/, '');
+        if (!cleanUrl || seen.has(cleanUrl)) continue;
+        seen.add(cleanUrl);
+        merged.push({ ...host, url: cleanUrl });
+      }
+      return merged;
     },
 
     closeSuperBasedSettings() {

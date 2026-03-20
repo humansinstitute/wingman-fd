@@ -263,6 +263,92 @@
       </div>
     </div>
 
+    <!-- Connect modal (two-step: host then workspace) -->
+    <div
+      class="modal-overlay"
+      x-show="$store.chat.showConnectModal"
+      x-cloak
+      @click.self="$store.chat.closeConnectModal()"
+      @keydown.escape.window="$store.chat.closeConnectModal()"
+    >
+      <div class="modal connect-modal">
+        <button class="modal-close" type="button" @click="$store.chat.closeConnectModal()">&times;</button>
+
+        <!-- Step 1: Choose host -->
+        <template x-if="$store.chat.connectStep === 1">
+          <div>
+            <h2>Connect to SuperBased</h2>
+            <p>Choose a host or enter a custom URL.</p>
+            <div class="connect-hosts-list">
+              <template x-for="host in $store.chat.mergedHostsList" :key="host.url">
+                <button type="button" class="connect-host-row" @click="$store.chat.connectToHost(host.url, host.label)" :disabled="$store.chat.connectHostBusy">
+                  <span class="connect-host-label" x-text="host.label"></span>
+                  <span class="connect-host-url" x-text="host.url"></span>
+                </button>
+              </template>
+            </div>
+            <form class="connect-manual-form" @submit.prevent="$store.chat.connectManualHost()">
+              <label>
+                <span>Custom host URL</span>
+                <input type="url" x-model="$store.chat.connectManualUrl" placeholder="https://sb.example.com" :disabled="$store.chat.connectHostBusy" />
+              </label>
+              <button class="auth-option" type="submit" :disabled="$store.chat.connectHostBusy || !$store.chat.connectManualUrl.trim()">
+                <span x-show="!$store.chat.connectHostBusy">Connect</span>
+                <span x-show="$store.chat.connectHostBusy">Connecting...</span>
+              </button>
+            </form>
+            <p class="auth-error" x-show="$store.chat.connectHostError" x-text="$store.chat.connectHostError"></p>
+            <div class="connect-token-fallback">
+              <button type="button" class="connect-token-toggle" @click="$store.chat.connectShowTokenFallback = !$store.chat.connectShowTokenFallback">
+                <span x-text="$store.chat.connectShowTokenFallback ? 'Hide' : 'Have a connection token?'"></span>
+              </button>
+              <div x-show="$store.chat.connectShowTokenFallback" x-cloak>
+                <form class="connect-token-form" @submit.prevent="$store.chat.connectWithToken()">
+                  <textarea x-model="$store.chat.connectTokenInput" rows="3" placeholder="Paste connection token" class="token-input"></textarea>
+                  <button class="auth-option" type="submit" :disabled="!$store.chat.connectTokenInput.trim()">Use token</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Step 2: Choose workspace -->
+        <template x-if="$store.chat.connectStep === 2">
+          <div>
+            <h2>Select Workspace</h2>
+            <p>
+              Connected to <strong x-text="$store.chat.connectHostLabel || $store.chat.connectHostUrl"></strong>
+              <button type="button" class="connect-back-link" @click="$store.chat.connectGoBack()">Change</button>
+            </p>
+            <p class="connect-workspace-loading" x-show="$store.chat.connectWorkspacesBusy">Loading workspaces...</p>
+            <div class="connect-workspace-list" x-show="$store.chat.connectWorkspaces.length > 0 && !$store.chat.connectWorkspacesBusy">
+              <template x-for="ws in $store.chat.connectWorkspaces" :key="ws.workspace_owner_npub || ws.workspaceOwnerNpub">
+                <button type="button" class="connect-workspace-row" @click="$store.chat.connectSelectWorkspace(ws)">
+                  <span class="connect-workspace-name" x-text="ws.name || 'Untitled workspace'"></span>
+                  <span class="connect-workspace-meta" x-text="ws.description || (ws.workspace_owner_npub || '')"></span>
+                </button>
+              </template>
+            </div>
+            <p class="connect-workspace-empty" x-show="$store.chat.connectWorkspaces.length === 0 && !$store.chat.connectWorkspacesBusy && !$store.chat.connectWorkspacesError">
+              No workspaces found on this host. Create one below.
+            </p>
+            <p class="auth-error" x-show="$store.chat.connectWorkspacesError" x-text="$store.chat.connectWorkspacesError"></p>
+            <div class="connect-create-workspace">
+              <strong>Create new workspace</strong>
+              <form class="connect-create-form" @submit.prevent="$store.chat.connectCreateWorkspace()">
+                <label><span>Name</span><input type="text" x-model="$store.chat.connectNewWorkspaceName" placeholder="My workspace" /></label>
+                <label><span>Description (optional)</span><input type="text" x-model="$store.chat.connectNewWorkspaceDescription" placeholder="" /></label>
+                <button class="auth-option" type="submit" :disabled="$store.chat.connectCreatingWorkspace || !$store.chat.connectNewWorkspaceName.trim()">
+                  <span x-show="!$store.chat.connectCreatingWorkspace">Create workspace</span>
+                  <span x-show="$store.chat.connectCreatingWorkspace">Creating...</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
     <div
       class="modal-overlay"
       x-show="$store.chat.showAgentConnectModal"
@@ -478,8 +564,8 @@
                 </template>
               </div>
               <p class="sidebar-workspace-empty" x-show="$store.chat.knownWorkspaces.length === 0">No workspaces yet.</p>
-              <button type="button" class="sidebar-workspace-create" @click="$store.chat.openWorkspaceBootstrapModal()">
-                Add workspace
+              <button type="button" class="sidebar-workspace-create" @click="$store.chat.openConnectModal()">
+                Add workspace...
               </button>
             </div>
           </div>

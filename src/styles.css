@@ -723,6 +723,35 @@ button:disabled {
   margin-bottom: 0.75rem;
 }
 
+/* --- Connect modal --- */
+.connect-modal { width: min(92vw, 480px); text-align: left; }
+.connect-modal h2 { text-align: center; margin: 0 0 0.35rem; }
+.connect-modal > div > p { text-align: center; margin: 0 0 1rem; color: var(--muted); font-size: 0.92rem; }
+.connect-hosts-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+.connect-host-row { width: 100%; text-align: left; border: 1px solid var(--border); border-radius: 10px; background: var(--bg, #fff); padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.15rem; cursor: pointer; transition: border-color 0.15s; }
+.connect-host-row:hover:not(:disabled) { border-color: var(--accent, #2563eb); }
+.connect-host-row:disabled { opacity: 0.6; cursor: not-allowed; }
+.connect-host-label { font-weight: 600; }
+.connect-host-url { font-size: 0.82rem; color: var(--muted); }
+.connect-manual-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+.connect-manual-form label span { display: block; font-size: 0.84rem; font-weight: 500; margin-bottom: 0.25rem; }
+.connect-manual-form input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.92rem; }
+.connect-token-fallback { margin: 0.75rem 0; text-align: center; }
+.connect-token-toggle { background: none; border: none; color: var(--muted); font-size: 0.84rem; cursor: pointer; text-decoration: underline; padding: 0.25rem; }
+.connect-token-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.connect-back-link { background: none; border: none; color: var(--accent, #2563eb); font-size: 0.88rem; cursor: pointer; text-decoration: underline; padding: 0; margin-left: 0.5rem; }
+.connect-workspace-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+.connect-workspace-row { width: 100%; text-align: left; border: 1px solid var(--border); border-radius: 10px; background: var(--bg, #fff); padding: 0.7rem 0.8rem; display: flex; flex-direction: column; gap: 0.2rem; cursor: pointer; transition: border-color 0.15s; }
+.connect-workspace-row:hover { border-color: #0f766e; }
+.connect-workspace-name { font-weight: 600; }
+.connect-workspace-meta { font-size: 0.84rem; color: var(--muted); }
+.connect-workspace-loading, .connect-workspace-empty { text-align: center; color: var(--muted); padding: 1rem 0; }
+.connect-create-workspace { border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.5rem; }
+.connect-create-workspace strong { display: block; margin-bottom: 0.5rem; }
+.connect-create-form { display: flex; flex-direction: column; gap: 0.5rem; }
+.connect-create-form label span { display: block; font-size: 0.84rem; font-weight: 500; margin-bottom: 0.25rem; }
+.connect-create-form input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.92rem; }
+
 .update-banner {
   position: fixed;
   top: 0;
