@@ -35,7 +35,7 @@ import {
   deleteSyncQuarantineEntry,
 } from '../db.js';
 
-import { syncRecords, fetchRecords, getBaseUrl } from '../api.js';
+import { syncRecords, fetchRecords, getBaseUrl, fetchRecordsSummary } from '../api.js';
 import { inboundChannel, inboundChatMessage, recordFamilyHash } from '../translators/chat.js';
 import { inboundDocument, inboundDirectory } from '../translators/docs.js';
 import { inboundTask } from '../translators/tasks.js';
@@ -44,7 +44,7 @@ import { inboundComment } from '../translators/comments.js';
 import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
-import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash } from '../sync-families.js';
+import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
 import { flightDeckLog } from '../logging.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
@@ -97,11 +97,13 @@ async function materializeRecordForFamily(family, record) {
 /**
  * Push all pending writes to the backend then clear them locally.
  */
-export async function flushPendingWrites(ownerNpub) {
+export async function flushPendingWrites(ownerNpub, onProgress) {
   openWorkspaceDb(ownerNpub);
   const pending = await getPendingWrites();
   if (pending.length === 0) return { pushed: 0 };
   let pushed = 0;
+
+  if (onProgress) onProgress({ phase: 'pushing', pushed: 0, pushTotal: pending.length });
 
   flightDeckLog('info', 'sync', 'flushing pending writes', {
     ownerNpub,
@@ -147,6 +149,7 @@ export async function flushPendingWrites(ownerNpub) {
       await removePendingWrite(pw.row_id);
     }
     pushed += batch.length;
+    if (onProgress) onProgress({ phase: 'pushing', pushed, pushTotal: pending.length });
     flightDeckLog('info', 'sync', 'pending write batch flushed', {
       ownerNpub,
       batchNumber: Math.floor(offset / WRITE_BATCH_SIZE) + 1,
@@ -159,19 +162,31 @@ export async function flushPendingWrites(ownerNpub) {
   return { pushed };
 }
 
+function familyLabel(familyHash) {
+  const entry = SYNC_FAMILY_BY_HASH[familyHash];
+  return entry ? entry.label : familyHash;
+}
+
 /**
  * Pull records from backend, translate, and materialize locally.
  */
-export async function pullRecords(ownerNpub, viewerNpub = ownerNpub) {
-  return pullRecordsForFamilies(ownerNpub, viewerNpub, DEFAULT_FAMILIES);
+export async function pullRecords(ownerNpub, viewerNpub = ownerNpub, onProgress) {
+  return pullRecordsForFamilies(ownerNpub, viewerNpub, DEFAULT_FAMILIES, {}, onProgress);
 }
 
-export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, families = DEFAULT_FAMILIES, options = {}) {
+export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, families = DEFAULT_FAMILIES, options = {}, onProgress) {
   openWorkspaceDb(ownerNpub);
   const forceFull = options.forceFull === true;
   let totalPulled = 0;
+  let completedFamilies = 0;
+  const totalFamilies = families.length;
+
+  if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies, currentFamily: null, pulled: 0 });
 
   for (const family of families) {
+    const label = familyLabel(family);
+    if (onProgress) onProgress({ phase: 'pulling', completedFamilies, totalFamilies, currentFamily: label, pulled: totalPulled });
+
     const sinceKey = `sync_since:${family}`;
     const since = forceFull ? null : await getSyncState(sinceKey);
 
@@ -203,6 +218,9 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
     }
 
     totalPulled += records.length;
+    completedFamilies++;
+
+    if (onProgress) onProgress({ phase: 'pulling', completedFamilies, totalFamilies, currentFamily: label, pulled: totalPulled });
 
     if (appliedCount > 0 && skippedCount === 0 && latestApplied) {
       await setSyncState(sinceKey, latestApplied);
@@ -221,11 +239,34 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
 /**
  * Full sync cycle: push then pull.
  */
-export async function runSync(ownerNpub, viewerNpub = ownerNpub) {
+export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress) {
   if (!getBaseUrl()) throw new Error('Backend URL not configured');
 
-  const pushResult = await flushPendingWrites(ownerNpub);
-  const pullResult = await pullRecords(ownerNpub, viewerNpub);
+  if (onProgress) onProgress({ phase: 'checking' });
+
+  const pushResult = await flushPendingWrites(ownerNpub, onProgress);
+
+  if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: DEFAULT_FAMILIES.length, currentFamily: null, pulled: 0 });
+  const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress);
+
+  if (onProgress) onProgress({ phase: 'applying' });
 
   return { ...pushResult, ...pullResult };
+}
+
+/**
+ * Check if local cursors are behind the remote summary.
+ */
+export async function checkStaleness(ownerNpub) {
+  const summary = await fetchRecordsSummary(ownerNpub);
+  if (!summary.available || !Array.isArray(summary.families)) return { stale: false, available: false };
+
+  for (const remote of summary.families) {
+    const sinceKey = `sync_since:${remote.record_family_hash}`;
+    const localCursor = await getSyncState(sinceKey);
+    if (!localCursor && remote.latest_updated_at) return { stale: true, available: true };
+    if (localCursor && remote.latest_updated_at && remote.latest_updated_at > localCursor) return { stale: true, available: true };
+  }
+
+  return { stale: false, available: true };
 }

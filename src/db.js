@@ -87,6 +87,17 @@ export function hasWorkspaceDb() {
   return _currentWorkspaceDb !== null;
 }
 
+export async function deleteWorkspaceDb(ownerNpub) {
+  if (!ownerNpub) throw new Error('ownerNpub is required to delete a workspace database');
+  if (_currentWorkspaceOwnerNpub === ownerNpub && _currentWorkspaceDb) {
+    _currentWorkspaceDb.close();
+    _currentWorkspaceDb = null;
+    _currentWorkspaceOwnerNpub = null;
+  }
+  const dbName = `wingman-fd-ws-${ownerNpub}`;
+  await Dexie.delete(dbName);
+}
+
 // ---------------------------------------------------------------------------
 // Migration: move app_settings from old CoworkerV4 DB into shared DB.
 // Called once on first load with the new code.

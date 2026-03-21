@@ -114,6 +114,22 @@ describe('auth/nostr helpers', () => {
     expect(event.pubkey).toBe('c'.repeat(64));
   });
 
+  it('rejects extension auth if the signer pubkey changed since login', async () => {
+    window.nostr = {
+      getPublicKey: vi.fn(async () => 'c'.repeat(64)),
+      signEvent: vi.fn(async (event) => ({ ...event, id: 'ext-id', sig: 'ext-sig' })),
+    };
+
+    await signLoginEvent('extension');
+
+    window.nostr.getPublicKey = vi.fn(async () => 'd'.repeat(64));
+    window.nostr.signEvent = vi.fn(async (event) => ({ ...event, pubkey: 'd'.repeat(64), id: 'ext-id-2', sig: 'ext-sig-2' }));
+
+    await expect(
+      createNip98AuthHeader('https://example.test/api/v4/storage/obj-1/complete', 'POST', { ok: true }),
+    ).rejects.toThrow('NIP-07 signer pubkey changed since login. Sign in again.');
+  });
+
   it('waits briefly for a late-injected extension signer', async () => {
     setTimeout(() => {
       window.nostr = {

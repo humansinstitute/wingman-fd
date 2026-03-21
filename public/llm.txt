@@ -1,14 +1,3 @@
-Coworker V4 LLM entrypoint
+Deprecated compatibility file.
 
-Start here:
-- /agentconnect.md
-
-Live API references:
-- https://sb4.otherstuff.studio/openapi.json
-- https://sb4.otherstuff.studio/docs
-- https://sb4.otherstuff.studio/health
-
-What this app is:
-- Coworker v4 is a workspace-scoped app built on SuperBased v4 groups and append-only records.
-- The semantic guide is in /agentconnect.md.
-- The HTTP contract is in the OpenAPI document.
+Use `/llms.txt` instead.

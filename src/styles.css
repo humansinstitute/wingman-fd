@@ -212,8 +212,13 @@ button:disabled {
   box-shadow: 0 0 0 3px #3b82f6, var(--shadow-soft);
 }
 
-.avatar-chip.sync-status-quarantined {
+.avatar-chip.sync-status-quarantined,
+.avatar-chip.sync-status-error {
   box-shadow: 0 0 0 3px #dc2626, var(--shadow-soft);
+}
+
+.avatar-chip.sync-status-stale {
+  box-shadow: 0 0 0 3px #f59e0b, var(--shadow-soft);
 }
 
 .avatar-fallback {
@@ -286,6 +291,79 @@ button:disabled {
 
 .avatar-menu button:hover {
   background: #f3f4f6;
+}
+
+/* Sync status panel in avatar menu */
+.sync-status-panel {
+  gap: 0.35rem !important;
+}
+
+.sync-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.sync-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sync-dot-synced { background: #22c55e; }
+.sync-dot-unsynced { background: #f97316; }
+.sync-dot-stale { background: #f59e0b; }
+.sync-dot-syncing { background: #3b82f6; animation: sync-pulse 1.2s ease-in-out infinite; }
+.sync-dot-quarantined,
+.sync-dot-error { background: #dc2626; }
+
+@keyframes sync-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.sync-status-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sync-status-time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.sync-progress-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.sync-progress-bar-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.sync-progress-bar-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 2px;
+  transition: width 300ms ease;
+}
+
+.sync-progress-text {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.sync-error-text {
+  font-size: 0.72rem;
+  color: #dc2626;
+  word-break: break-word;
 }
 
 .modal-overlay {
@@ -3493,6 +3571,36 @@ button:disabled {
 
 .workspace-avatar-settings-input {
   display: none;
+}
+
+.workspace-danger-zone {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .harness-settings-panel {

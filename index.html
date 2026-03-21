@@ -46,12 +46,14 @@
           :class="{
             'sync-status-synced': $store.chat.syncStatus === 'synced',
             'sync-status-unsynced': $store.chat.syncStatus === 'unsynced',
+            'sync-status-stale': $store.chat.syncStatus === 'stale',
             'sync-status-syncing': $store.chat.syncStatus === 'syncing',
-            'sync-status-quarantined': $store.chat.syncStatus === 'quarantined'
+            'sync-status-quarantined': $store.chat.syncStatus === 'quarantined',
+            'sync-status-error': $store.chat.syncStatus === 'error'
           }"
           type="button"
           @click="$store.chat.showAvatarMenu = !$store.chat.showAvatarMenu"
-          :title="$store.chat.syncStatus === 'synced' ? 'Synced with SuperBased' : $store.chat.syncStatus === 'unsynced' ? 'Local changes not synced' : $store.chat.syncStatus === 'quarantined' ? 'Sync quarantine needs review' : 'Syncing...'"
+          :title="({synced:'Synced',unsynced:'Local changes pending',stale:'Updates available',syncing:'Syncing...',quarantined:'Quarantine needs review',error:'Sync error'})[$store.chat.syncStatus] || 'Unknown'"
         >
           <template x-if="$store.chat.avatarUrl">
             <img class="chat-post-avatar" :src="$store.chat.avatarUrl" alt="Your profile picture" />
@@ -64,7 +66,25 @@
           <div class="avatar-menu-header">
             <span class="avatar-menu-name" x-text="$store.chat.displayName"></span>
           </div>
-          <button type="button" @click="$store.chat.openSuperBasedSettings()">SuperBased Sync</button>
+          <div class="avatar-menu-section sync-status-panel">
+            <span class="avatar-menu-label">Sync Status</span>
+            <div class="sync-status-row">
+              <span class="sync-status-dot" :class="'sync-dot-' + $store.chat.syncStatus"></span>
+              <span class="sync-status-label" x-text="({synced:'Synced',unsynced:'Pending',stale:'Stale',syncing:'Syncing',quarantined:'Quarantined',error:'Error'})[$store.chat.syncStatus] || $store.chat.syncStatus"></span>
+              <span class="sync-status-time" x-text="$store.chat.lastSyncTimeLabel()"></span>
+            </div>
+            <template x-if="$store.chat.syncStatus === 'syncing'">
+              <div class="sync-progress-block">
+                <div class="sync-progress-bar-track">
+                  <div class="sync-progress-bar-fill" :style="'width:' + $store.chat.syncProgressPercent() + '%'"></div>
+                </div>
+                <span class="sync-progress-text" x-text="$store.chat.syncProgressLabel()"></span>
+              </div>
+            </template>
+            <template x-if="$store.chat.syncSession.error">
+              <span class="sync-error-text" x-text="$store.chat.syncSession.error"></span>
+            </template>
+          </div>
           <button type="button" @click="$store.chat.showAgentConnect()">Agent Connect</button>
           <button type="button" @click="$store.chat.copyId()">Copy ID</button>
           <button type="button" @click="$store.chat.syncNow()">Sync Now</button>
@@ -111,126 +131,6 @@
     </section>
 
     <p class="hero-hint" x-show="!$store.chat.isLoggedIn">Sign in above to open Wingman and start chatting.</p>
-
-    <div
-      class="modal-overlay"
-      x-show="$store.chat.showSuperBasedModal"
-      x-cloak
-      @click.self="$store.chat.closeSuperBasedSettings()"
-      @keydown.escape.window="$store.chat.closeSuperBasedSettings()"
-    >
-      <div class="modal superbased-modal">
-        <button class="modal-close" type="button" @click="$store.chat.closeSuperBasedSettings()">&times;</button>
-        <h2>SuperBased Sync</h2>
-        <p>Configure the workspace connection using the same connection-key format as V3.</p>
-
-        <div class="cvm-toggle">
-          <label>
-            <input
-              type="checkbox"
-              :checked="$store.chat.useCvmSync"
-              @change="$store.chat.toggleCvmSync()"
-            >
-            <span>Use Context VM relay transport</span>
-          </label>
-          <p x-show="$store.chat.useCvmSync">Stored now for V4 compatibility. Active sync is still HTTP until CVM transport lands.</p>
-        </div>
-
-        <div class="superbased-connection-details">
-          <div class="connection-status connected" x-show="$store.chat.backendUrl">
-            <span class="status-dot"></span>
-            <span>Configured</span>
-          </div>
-          <div class="connection-info">
-            <div class="info-row">
-              <span class="info-label">Transport</span>
-              <span class="info-value" x-text="$store.chat.superbasedTransportLabel"></span>
-            </div>
-            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.httpUrl">
-              <span class="info-label">Direct HTTPS</span>
-              <span class="info-value" x-text="$store.chat.superbasedConnectionConfig?.httpUrl"></span>
-            </div>
-            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.relayUrl">
-              <span class="info-label">Relay</span>
-              <span class="info-value" x-text="$store.chat.superbasedConnectionConfig?.relayUrl"></span>
-            </div>
-            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.serverNpub || $store.chat.superbasedConnectionConfig?.serverPubkeyHex">
-              <span class="info-label">Service</span>
-              <span
-                class="info-value info-npub"
-                x-text="$store.chat.superbasedConnectionConfig?.serverNpub || $store.chat.superbasedConnectionConfig?.serverPubkeyHex"
-              ></span>
-            </div>
-            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.workspaceOwnerNpub || $store.chat.workspaceOwnerNpub">
-              <span class="info-label">Workspace owner</span>
-              <span class="info-value info-npub" x-text="$store.chat.superbasedConnectionConfig?.workspaceOwnerNpub || $store.chat.workspaceOwnerNpub"></span>
-            </div>
-            <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.appNpub">
-              <span class="info-label">App</span>
-              <span class="info-value info-npub" x-text="$store.chat.superbasedConnectionConfig?.appNpub"></span>
-            </div>
-          </div>
-        </div>
-
-        <div class="workspace-selector-panel" x-show="$store.chat.isLoggedIn">
-          <div class="workspace-selector-header">
-            <strong>Workspaces</strong>
-            <button class="auth-option secondary" type="button" @click="$store.chat.openWorkspaceBootstrapModal()">New workspace</button>
-          </div>
-          <div class="workspace-selector-list" x-show="$store.chat.knownWorkspaces.length > 0">
-            <template x-for="workspace in $store.chat.knownWorkspaces" :key="workspace.workspaceOwnerNpub">
-              <button
-                type="button"
-                class="workspace-selector-row"
-                :class="{ 'workspace-selector-row-active': $store.chat.currentWorkspaceOwnerNpub === workspace.workspaceOwnerNpub }"
-                @click="$store.chat.selectWorkspace(workspace.workspaceOwnerNpub)"
-              >
-                <span class="workspace-selector-name" x-text="workspace.name"></span>
-                <span class="workspace-selector-meta" x-text="workspace.description || workspace.workspaceOwnerNpub"></span>
-              </button>
-            </template>
-          </div>
-          <p class="auth-extension-hint" x-show="$store.chat.knownWorkspaces.length === 0">No workspaces yet. Create one to start using group-based records.</p>
-        </div>
-
-        <div class="preset-connect-panel" x-show="!$store.chat.backendUrl">
-          <button
-            type="button"
-            class="preset-connect-btn"
-            @click="$store.chat.connectToPreset('https://sb4.otherstuff.ai')"
-            :disabled="$store.chat.presetConnecting"
-          >
-            <span x-show="!$store.chat.presetConnecting">The Other Stuff &mdash; SuperBased</span>
-            <span x-show="$store.chat.presetConnecting">Connecting...</span>
-          </button>
-        </div>
-
-        <form class="auth-form" @submit.prevent="$store.chat.saveConnectionSettings()">
-          <label>
-            <span>Connection key</span>
-            <textarea
-              x-model="$store.chat.superbasedTokenInput"
-              rows="3"
-              placeholder="Paste SuperBased connection key"
-              class="token-input"
-            ></textarea>
-          </label>
-          <label>
-            <span>HTTP backend override</span>
-            <input type="text" x-model="$store.chat.backendUrl" placeholder="https://sb.example.com" />
-          </label>
-          <label>
-            <span>Default bot npub</span>
-            <input type="text" x-model="$store.chat.botNpub" placeholder="npub1..." />
-          </label>
-          <p class="auth-error" x-show="$store.chat.superbasedError" x-text="$store.chat.superbasedError"></p>
-          <div class="superbased-actions">
-            <button class="auth-option secondary" type="button" @click="$store.chat.closeSuperBasedSettings()">Cancel</button>
-            <button class="auth-option" type="submit">Save connection</button>
-          </div>
-        </form>
-      </div>
-    </div>
 
     <div
       class="modal-overlay"
@@ -348,7 +248,7 @@
       <div class="modal agent-connect-modal">
         <button class="modal-close" type="button" @click="$store.chat.closeAgentConnect()">&times;</button>
         <h2>Agent Connect</h2>
-        <p>Copy an agent package with the v4 guide, live OpenAPI docs, service endpoint, and workspace connection key.</p>
+        <p>Copy an agent package with `llms.txt`, live OpenAPI docs, service endpoint, and the workspace connection key.</p>
         <div class="agent-connect-content">
           <button
             class="copy-button"
@@ -2663,6 +2563,14 @@
               Current workspace:
               <span x-text="$store.chat.currentWorkspace?.name || $store.chat.workspaceOwnerNpub || 'None selected'"></span>
             </p>
+            <p class="settings-field-help">
+              SuperBased host:
+              <span x-text="$store.chat.currentWorkspaceBackendName"></span>
+            </p>
+            <p class="settings-field-help">
+              Server:
+              <span x-text="$store.chat.currentWorkspaceBackendUrl || 'Not configured'"></span>
+            </p>
             <div class="workspace-avatar-settings-row">
               <template x-if="$store.chat.workspaceProfileAvatarPreviewUrl">
                 <img class="workspace-avatar-settings-preview" :src="$store.chat.workspaceProfileAvatarPreviewUrl" alt="Workspace avatar preview" />
@@ -2714,10 +2622,139 @@
                 :disabled="$store.chat.workspaceProfileSaving || !$store.chat.workspaceProfileDirty"
               >Reset</button>
             </div>
+            <div class="workspace-danger-zone">
+              <span class="avatar-menu-label">Danger zone</span>
+              <p class="settings-field-help">Remove this workspace from Flight Deck. All local data will be deleted. The workspace will remain on SuperBased and can be re-added with a connection token.</p>
+              <button
+                type="button"
+                class="btn-danger"
+                @click="$store.chat.removeWorkspace($store.chat.currentWorkspaceOwnerNpub)"
+                :disabled="!$store.chat.currentWorkspaceOwnerNpub || $store.chat.removingWorkspace"
+                x-text="$store.chat.removingWorkspace ? 'Removing...' : 'Remove workspace'"
+              ></button>
+            </div>
           </section>
           </div>
 
           <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'connection'">
+          <section class="settings-panel">
+            <div class="settings-panel-header">
+              <div>
+                <h2>SuperBased</h2>
+                <p>Configure the current workspace backend and transport without leaving Settings.</p>
+              </div>
+            </div>
+
+            <div class="cvm-toggle">
+              <label>
+                <input
+                  type="checkbox"
+                  :checked="$store.chat.useCvmSync"
+                  @change="$store.chat.toggleCvmSync()"
+                >
+                <span>Use Context VM relay transport</span>
+              </label>
+              <p x-show="$store.chat.useCvmSync">Stored now for V4 compatibility. Active sync is still HTTP until CVM transport lands.</p>
+            </div>
+
+            <div class="superbased-connection-details">
+              <div class="connection-status connected" x-show="$store.chat.backendUrl">
+                <span class="status-dot"></span>
+                <span>Configured</span>
+              </div>
+              <div class="connection-info">
+                <div class="info-row">
+                  <span class="info-label">Host</span>
+                  <span class="info-value" x-text="$store.chat.currentWorkspaceBackendName"></span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Transport</span>
+                  <span class="info-value" x-text="$store.chat.superbasedTransportLabel"></span>
+                </div>
+                <div class="info-row" x-show="$store.chat.currentWorkspaceBackendUrl">
+                  <span class="info-label">Server</span>
+                  <span class="info-value" x-text="$store.chat.currentWorkspaceBackendUrl"></span>
+                </div>
+                <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.relayUrl">
+                  <span class="info-label">Relay</span>
+                  <span class="info-value" x-text="$store.chat.superbasedConnectionConfig?.relayUrl"></span>
+                </div>
+                <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.serverNpub || $store.chat.superbasedConnectionConfig?.serverPubkeyHex">
+                  <span class="info-label">Service</span>
+                  <span
+                    class="info-value info-npub"
+                    x-text="$store.chat.superbasedConnectionConfig?.serverNpub || $store.chat.superbasedConnectionConfig?.serverPubkeyHex"
+                  ></span>
+                </div>
+                <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.workspaceOwnerNpub || $store.chat.workspaceOwnerNpub">
+                  <span class="info-label">Workspace owner</span>
+                  <span class="info-value info-npub" x-text="$store.chat.superbasedConnectionConfig?.workspaceOwnerNpub || $store.chat.workspaceOwnerNpub"></span>
+                </div>
+                <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.appNpub">
+                  <span class="info-label">App</span>
+                  <span class="info-value info-npub" x-text="$store.chat.superbasedConnectionConfig?.appNpub"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="workspace-selector-panel" x-show="$store.chat.isLoggedIn">
+              <div class="workspace-selector-header">
+                <strong>Workspaces</strong>
+                <button class="auth-option secondary" type="button" @click="$store.chat.openWorkspaceBootstrapModal()">New workspace</button>
+              </div>
+              <div class="workspace-selector-list" x-show="$store.chat.knownWorkspaces.length > 0">
+                <template x-for="workspace in $store.chat.knownWorkspaces" :key="workspace.workspaceOwnerNpub">
+                  <button
+                    type="button"
+                    class="workspace-selector-row"
+                    :class="{ 'workspace-selector-row-active': $store.chat.currentWorkspaceOwnerNpub === workspace.workspaceOwnerNpub }"
+                    @click="$store.chat.selectWorkspace(workspace.workspaceOwnerNpub)"
+                  >
+                    <span class="workspace-selector-name" x-text="workspace.name"></span>
+                    <span class="workspace-selector-meta" x-text="workspace.description || workspace.workspaceOwnerNpub"></span>
+                  </button>
+                </template>
+              </div>
+              <p class="auth-extension-hint" x-show="$store.chat.knownWorkspaces.length === 0">No workspaces yet. Create one to start using group-based records.</p>
+            </div>
+
+            <div class="preset-connect-panel" x-show="!$store.chat.backendUrl">
+              <button
+                type="button"
+                class="preset-connect-btn"
+                @click="$store.chat.connectToPreset('https://sb4.otherstuff.ai')"
+                :disabled="$store.chat.presetConnecting"
+              >
+                <span x-show="!$store.chat.presetConnecting">The Other Stuff &mdash; SuperBased</span>
+                <span x-show="$store.chat.presetConnecting">Connecting...</span>
+              </button>
+            </div>
+
+            <form class="auth-form" @submit.prevent="$store.chat.saveConnectionSettings()">
+              <label>
+                <span>Connection key</span>
+                <textarea
+                  x-model="$store.chat.superbasedTokenInput"
+                  rows="3"
+                  placeholder="Paste SuperBased connection key"
+                  class="token-input"
+                ></textarea>
+              </label>
+              <label>
+                <span>HTTP backend override</span>
+                <input type="text" x-model="$store.chat.backendUrl" placeholder="https://sb.example.com" />
+              </label>
+              <label>
+                <span>Default bot npub</span>
+                <input type="text" x-model="$store.chat.botNpub" placeholder="npub1..." />
+              </label>
+              <p class="auth-error" x-show="$store.chat.superbasedError" x-text="$store.chat.superbasedError"></p>
+              <div class="superbased-actions">
+                <button class="auth-option" type="submit">Save connection</button>
+              </div>
+            </form>
+          </section>
+
           <section class="settings-panel harness-settings-panel">
             <div class="settings-panel-header">
               <div>

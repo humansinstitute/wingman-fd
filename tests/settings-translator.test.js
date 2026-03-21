@@ -30,6 +30,9 @@ describe('settings translator', () => {
           record_id: 'workspace-settings:npub_workspace',
           data: {
             workspace_owner_npub: 'npub_workspace',
+            workspace_name: 'Other Stuff',
+            workspace_description: 'Workspace profile',
+            workspace_avatar_url: 'storage://avatar-1',
             wingman_harness_url: 'wm21.otherstuff.ai',
           },
         }),
@@ -39,6 +42,9 @@ describe('settings translator', () => {
 
     expect(row.workspace_owner_npub).toBe('npub_workspace');
     expect(row.record_id).toBe('workspace-settings:npub_workspace');
+    expect(row.workspace_name).toBe('Other Stuff');
+    expect(row.workspace_description).toBe('Workspace profile');
+    expect(row.workspace_avatar_url).toBe('storage://avatar-1');
     expect(row.wingman_harness_url).toBe('https://wm21.otherstuff.ai');
     expect(row.group_ids).toEqual(['gpub_workspace']);
     expect(row.sync_status).toBe('synced');
@@ -50,6 +56,9 @@ describe('settings translator', () => {
       record_id: 'workspace-settings:npub_workspace',
       owner_npub: 'npub_workspace',
       workspace_owner_npub: 'npub_workspace',
+      workspace_name: 'Other Stuff',
+      workspace_description: 'Workspace profile',
+      workspace_avatar_url: 'storage://avatar-1',
       wingman_harness_url: 'wm3.otherstuff.ai',
       group_ids: ['gpub_workspace'],
       signature_npub: 'npub_member',
@@ -63,6 +72,9 @@ describe('settings translator', () => {
     const payload = JSON.parse(envelope.owner_payload.ciphertext);
     expect(payload.collection_space).toBe('settings');
     expect(payload.data.workspace_owner_npub).toBe('npub_workspace');
+    expect(payload.data.workspace_name).toBe('Other Stuff');
+    expect(payload.data.workspace_description).toBe('Workspace profile');
+    expect(payload.data.workspace_avatar_url).toBe('storage://avatar-1');
     expect(payload.data.wingman_harness_url).toBe('https://wm3.otherstuff.ai');
   });
 

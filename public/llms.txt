@@ -1,0 +1,138 @@
+# Wingman Flight Deck llms.txt
+
+This is the canonical LLM handoff document for Wingman Flight Deck.
+
+If you received an Agent Connect package, read that package first and then use this file.
+
+## Primary instructions
+
+1. Use `llms_url` from the Agent Connect package as the semantic guide for this workspace.
+2. Use `connection_token` from the package to configure the target agent session against the same workspace.
+3. Use `service.openapi_url`, `service.docs_url`, and `service.health_url` from the package to inspect the live backend.
+4. Use Wingman Yoke when it is available in the target environment.
+
+Wingman Yoke should be the default integration path for workspace-aware automation because it can preserve the active workspace context and reduce manual setup drift.
+
+## Package fields
+
+The Agent Connect package includes:
+
+- `llms_url`: this document
+- `robots_url`: crawler and discovery hints
+- `service.direct_https_url`: the current SuperBased backend
+- `service.openapi_url`: live OpenAPI for the backend
+- `service.docs_url`: interactive API docs
+- `service.health_url`: service health endpoint
+- `service.service_npub`: service identity when available
+- `workspace.owner_npub`: workspace owner identity
+- `workspace.owner_pubkey`: workspace owner pubkey in hex when available
+- `app.app_npub`: Flight Deck app/schema identity
+- `connection_token`: a SuperBased connection key for another Coworker or agent session
+
+## How Wingman Flight Deck uses SuperBased
+
+Flight Deck is a workspace-scoped app built on SuperBased v4 groups and append-only records.
+
+- Groups define sharing boundaries.
+- Records are append-only and versioned.
+- Writes create a new record version instead of mutating rows in place.
+- Record families are scoped by the app namespace.
+- Local UI state is materialized from synced records.
+
+## Important identities
+
+There are three distinct identity layers:
+
+- Service identity: `service.service_npub`
+- Workspace owner identity: `workspace.owner_npub`
+- App/schema identity: `app.app_npub`
+
+Do not conflate service identity with workspace ownership.
+
+## Connection token
+
+The `connection_token` is a base64-encoded JSON object shaped like:
+
+```json
+{
+  "type": "superbased_connection",
+  "version": 2,
+  "direct_https_url": "https://sb4.otherstuff.studio",
+  "service_npub": "npub1...",
+  "workspace_owner_npub": "npub1...",
+  "app_npub": "npub1..."
+}
+```
+
+If `workspace_owner_npub` is absent, agents should default to the current signed-in user only when that is explicitly appropriate for the target workflow.
+
+## API summary
+
+Use the backend OpenAPI for exact request and response shapes.
+
+Common areas:
+
+- `POST /api/v4/groups`
+- `POST /api/v4/groups/{groupId}/members`
+- `GET /api/v4/groups`
+- `POST /api/v4/records/sync`
+- `GET /api/v4/records`
+- `POST /api/v4/storage/prepare`
+- `PUT /api/v4/storage/{objectId}`
+- `POST /api/v4/storage/{objectId}/complete`
+
+## Record conventions
+
+Current outbound Flight Deck payloads broadly look like:
+
+```json
+{
+  "app_namespace": "<app npub>",
+  "collection_space": "task",
+  "schema_version": 1,
+  "record_id": "<uuid>",
+  "data": {
+    "...": "family-specific fields",
+    "record_state": "active"
+  }
+}
+```
+
+Important current conventions:
+
+- `schema_version` is `1`
+- `record_state` is usually `active` or `deleted`
+- writes are version checked
+- payloads are wrapped in owner and group payload containers
+
+## Flight Deck record families
+
+Record families are namespaced by the app identity:
+
+- `<app_npub>:settings`
+- `<app_npub>:channel`
+- `<app_npub>:chat_message`
+- `<app_npub>:directory`
+- `<app_npub>:document`
+- `<app_npub>:task`
+- `<app_npub>:schedule`
+- `<app_npub>:comment`
+- `<app_npub>:audio_note`
+- `<app_npub>:scope`
+
+## Agent workflow
+
+For a new agent session:
+
+1. Import or parse the Agent Connect package.
+2. Read this `llms.txt`.
+3. Prefer Wingman Yoke if present.
+4. Verify the backend with `service.health_url`.
+5. Inspect `service.openapi_url` before making assumptions about route shape.
+6. Use the `connection_token` to bind the agent session to the same workspace.
+
+## Compatibility
+
+Older clients may still reference `/agentconnect.md` or `/llm.txt`.
+
+Treat both as compatibility shims. `llms.txt` is the source of truth.

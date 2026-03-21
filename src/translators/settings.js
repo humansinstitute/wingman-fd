@@ -23,11 +23,17 @@ export async function inboundWorkspaceSettings(record) {
   const payload = await decryptRecordPayload(record);
   const data = payload.data ?? payload;
   const workspaceOwnerNpub = String(data.workspace_owner_npub || record.owner_npub || '').trim();
+  const workspaceName = String(data.workspace_name || '').trim();
+  const workspaceDescription = String(data.workspace_description || '').trim();
+  const workspaceAvatarUrl = String(data.workspace_avatar_url || '').trim();
 
   return {
     workspace_owner_npub: workspaceOwnerNpub,
     record_id: record.record_id,
     owner_npub: record.owner_npub,
+    workspace_name: workspaceName,
+    workspace_description: workspaceDescription,
+    workspace_avatar_url: workspaceAvatarUrl || null,
     wingman_harness_url: normalizeHarnessUrl(data.wingman_harness_url),
     triggers: Array.isArray(data.triggers) ? data.triggers : [],
     group_ids: (record.group_payloads || []).map((groupPayload) => groupPayload.group_id || groupPayload.group_npub),
@@ -42,6 +48,9 @@ export async function outboundWorkspaceSettings({
   record_id,
   owner_npub,
   workspace_owner_npub = owner_npub,
+  workspace_name = '',
+  workspace_description = '',
+  workspace_avatar_url = null,
   wingman_harness_url = '',
   triggers = [],
   group_ids = [],
@@ -58,6 +67,9 @@ export async function outboundWorkspaceSettings({
     record_id,
     data: {
       workspace_owner_npub,
+      workspace_name: String(workspace_name || '').trim(),
+      workspace_description: String(workspace_description || '').trim(),
+      workspace_avatar_url: workspace_avatar_url == null ? null : (String(workspace_avatar_url || '').trim() || null),
       wingman_harness_url: normalizeHarnessUrl(wingman_harness_url),
       triggers: Array.isArray(triggers) ? triggers : [],
       record_state,

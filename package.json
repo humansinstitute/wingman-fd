@@ -8,7 +8,8 @@
     "start": "sh -c 'bunx vite preview --host 0.0.0.0 --port ${PORT:-8093} --strictPort'",
     "build": "bunx vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "alpinejs": "^3.14.8",

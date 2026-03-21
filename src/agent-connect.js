@@ -46,9 +46,9 @@ export function buildAgentConnectPackage({
 
   return {
     kind: 'coworker_agent_connect',
-    version: 4,
+    version: 5,
     generated_at: new Date().toISOString(),
-    guide_url: withPath(origin, '/agentconnect.md'),
+    llms_url: withPath(origin, '/llms.txt'),
     robots_url: withPath(origin, '/robots.txt'),
     service: {
       direct_https_url: currentBackendUrl,
@@ -68,7 +68,8 @@ export function buildAgentConnectPackage({
     },
     connection_token: effectiveToken,
     notes: [
-      'Use the guide_url for connection and record-shape instructions.',
+      'Read llms_url first for agent instructions and workspace semantics.',
+      'Use Wingman Yoke when it is available in the target environment.',
       'Use the service.open_api/docs URLs to inspect the live SuperBased v4 API.',
       'Use the connection_token to configure another Coworker/agent session against this workspace.',
     ],

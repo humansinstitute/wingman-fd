@@ -60,6 +60,35 @@ describe('workspace entry normalization', () => {
     });
   });
 
+  it('applies explicit clears from workspace settings payloads without wiping other fields', () => {
+    const existing = [{
+      workspaceOwnerNpub: 'npub1workspace',
+      name: 'Other Stuff',
+      description: 'Main workspace',
+      avatarUrl: 'storage://avatar-1',
+      directHttpsUrl: 'https://sb.example',
+      serviceNpub: 'npub1service',
+      appNpub: 'npub1app',
+      relayUrls: ['wss://relay.example'],
+      connectionToken: 'token-1',
+    }];
+
+    const merged = mergeWorkspaceEntries(existing, [{
+      workspace_owner_npub: 'npub1workspace',
+      workspace_description: '',
+      workspace_avatar_url: null,
+    }]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      workspaceOwnerNpub: 'npub1workspace',
+      name: 'Other Stuff',
+      description: '',
+      avatarUrl: null,
+      directHttpsUrl: 'https://sb.example',
+    });
+  });
+
   it('does not let token-derived workspace metadata erase an existing workspace name', () => {
     const existing = [{
       workspaceOwnerNpub: 'npub1workspaceowner',

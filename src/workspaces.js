@@ -1,6 +1,28 @@
 import { APP_NPUB } from './app-identity.js';
 import { buildSuperBasedConnectionToken, parseSuperBasedToken } from './superbased-token.js';
 
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function firstOwnValue(obj, keys) {
+  for (const key of keys) {
+    if (hasOwn(obj, key)) return { found: true, value: obj[key] };
+  }
+  return { found: false, value: undefined };
+}
+
+function sanitizeOptionalString(value) {
+  if (value == null) return null;
+  const trimmed = String(value || '').trim();
+  return trimmed || null;
+}
+
+function sanitizeRelayUrls(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => String(entry || '').trim()).filter(Boolean);
+}
+
 export function normalizeWorkspaceEntry(raw = {}) {
   const workspaceOwnerNpub = String(
     raw.workspaceOwnerNpub
@@ -19,9 +41,26 @@ export function normalizeWorkspaceEntry(raw = {}) {
   ).trim();
   const serviceNpub = String(raw.serviceNpub || raw.service_npub || '').trim() || null;
   const appNpub = String(raw.appNpub || raw.app_npub || APP_NPUB || '').trim() || null;
-  const relayUrls = Array.isArray(raw.relayUrls)
-    ? raw.relayUrls.map((value) => String(value || '').trim()).filter(Boolean)
-    : [];
+  const relayUrls = sanitizeRelayUrls(raw.relayUrls ?? raw.relay_urls);
+  const name = String(
+    raw.name
+    ?? raw.workspace_name
+    ?? raw.workspaceName
+    ?? ''
+  ).trim();
+  const description = String(
+    raw.description
+    ?? raw.workspace_description
+    ?? raw.workspaceDescription
+    ?? ''
+  ).trim();
+  const avatarUrl = sanitizeOptionalString(
+    raw.avatarUrl
+    ?? raw.avatar_url
+    ?? raw.workspace_avatar_url
+    ?? raw.workspaceAvatarUrl
+    ?? null,
+  );
 
   const connectionToken = raw.connectionToken
     || raw.connection_token
@@ -35,8 +74,9 @@ export function normalizeWorkspaceEntry(raw = {}) {
 
   return {
     workspaceOwnerNpub,
-    name: String(raw.name || '').trim() || 'Untitled workspace',
-    description: String(raw.description || '').trim(),
+    name,
+    description,
+    avatarUrl,
     directHttpsUrl,
     serviceNpub,
     appNpub,
@@ -52,6 +92,36 @@ export function normalizeWorkspaceEntry(raw = {}) {
   };
 }
 
+function normalizeWorkspacePatch(raw = {}) {
+  const normalized = normalizeWorkspaceEntry(raw);
+  if (!normalized) return null;
+
+  const patch = { workspaceOwnerNpub: normalized.workspaceOwnerNpub };
+  const fieldMap = [
+    [['name', 'workspace_name', 'workspaceName'], 'name'],
+    [['description', 'workspace_description', 'workspaceDescription'], 'description'],
+    [['avatarUrl', 'avatar_url', 'workspace_avatar_url', 'workspaceAvatarUrl'], 'avatarUrl'],
+    [['directHttpsUrl', 'direct_https_url', 'backendUrl', 'httpUrl'], 'directHttpsUrl'],
+    [['serviceNpub', 'service_npub'], 'serviceNpub'],
+    [['appNpub', 'app_npub'], 'appNpub'],
+    [['defaultGroupNpub', 'default_group_npub'], 'defaultGroupNpub'],
+    [['defaultGroupId', 'default_group_id'], 'defaultGroupId'],
+    [['privateGroupNpub', 'private_group_npub'], 'privateGroupNpub'],
+    [['privateGroupId', 'private_group_id'], 'privateGroupId'],
+    [['creatorNpub', 'creator_npub'], 'creatorNpub'],
+    [['wrappedWorkspaceNsec', 'wrapped_workspace_nsec'], 'wrappedWorkspaceNsec'],
+    [['wrappedByNpub', 'wrapped_by_npub'], 'wrappedByNpub'],
+    [['connectionToken', 'connection_token'], 'connectionToken'],
+  ];
+
+  for (const [keys, normalizedKey] of fieldMap) {
+    if (firstOwnValue(raw, keys).found) patch[normalizedKey] = normalized[normalizedKey];
+  }
+  if (firstOwnValue(raw, ['relayUrls', 'relay_urls']).found) patch.relayUrls = normalized.relayUrls;
+
+  return patch;
+}
+
 export function mergeWorkspaceEntries(existing = [], incoming = []) {
   const next = new Map();
   for (const entry of existing) {
@@ -59,12 +129,14 @@ export function mergeWorkspaceEntries(existing = [], incoming = []) {
     if (normalized) next.set(normalized.workspaceOwnerNpub, normalized);
   }
   for (const entry of incoming) {
-    const normalized = normalizeWorkspaceEntry(entry);
-    if (!normalized) continue;
-    next.set(normalized.workspaceOwnerNpub, {
-      ...(next.get(normalized.workspaceOwnerNpub) || {}),
-      ...normalized,
+    const patch = normalizeWorkspacePatch(entry);
+    if (!patch) continue;
+    const current = next.get(patch.workspaceOwnerNpub) || {};
+    const merged = normalizeWorkspaceEntry({
+      ...current,
+      ...patch,
     });
+    if (merged) next.set(merged.workspaceOwnerNpub, merged);
   }
   return [...next.values()];
 }
@@ -72,14 +144,23 @@ export function mergeWorkspaceEntries(existing = [], incoming = []) {
 export function workspaceFromToken(token, extras = {}) {
   const parsed = parseSuperBasedToken(token);
   if (!parsed?.isValid || !parsed?.directHttpsUrl) return null;
-  return normalizeWorkspaceEntry({
-    workspaceOwnerNpub: parsed.workspaceOwnerNpub || extras.workspaceOwnerNpub,
-    name: extras.name || '',
-    description: extras.description || '',
+  const workspaceOwnerNpub = String(parsed.workspaceOwnerNpub || extras.workspaceOwnerNpub || '').trim();
+  if (!workspaceOwnerNpub) return null;
+
+  const workspace = {
+    workspaceOwnerNpub,
     directHttpsUrl: parsed.directHttpsUrl,
     serviceNpub: parsed.serviceNpub,
     appNpub: parsed.appNpub,
     relayUrls: parsed.relayUrls || [],
     connectionToken: token,
-  });
+  };
+
+  const name = String(parsed.workspaceName || extras.name || '').trim();
+  if (name) workspace.name = name;
+
+  const description = String(extras.description || '').trim();
+  if (description) workspace.description = description;
+
+  return workspace;
 }

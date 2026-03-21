@@ -84,6 +84,7 @@ import {
   deleteSyncQuarantineEntry,
   clearSyncQuarantineForFamilies,
   deleteRuntimeRecordByFamily,
+  deleteWorkspaceDb,
 } from './db.js';
 import {
   setBaseUrl,
@@ -155,7 +156,7 @@ import {
 } from './task-scope-cascade.js';
 import { outboundWorkspaceSettings, normalizeHarnessUrl } from './translators/settings.js';
 import { flightDeckLog } from './logging.js';
-import { runSync, pullRecordsForFamilies } from './worker/sync-worker.js';
+import { runSync, pullRecordsForFamilies, checkStaleness } from './worker/sync-worker.js';
 import { parseSuperBasedToken } from './superbased-token.js';
 import { buildAgentConnectPackage } from './agent-connect.js';
 import {
@@ -180,6 +181,16 @@ import {
 import { fetchProfileByNpub } from './profiles.js';
 import { APP_NPUB, DEFAULT_SUPERBASED_URL } from './app-identity.js';
 import { mergeWorkspaceEntries, normalizeWorkspaceEntry, workspaceFromToken } from './workspaces.js';
+import {
+  getPrivateGroupNpub as resolvePrivateGroupNpub,
+  getPrivateGroupRef as resolvePrivateGroupRef,
+  getWorkspaceSettingsGroupNpub as resolveWorkspaceSettingsGroupNpub,
+  getWorkspaceSettingsGroupRef as resolveWorkspaceSettingsGroupRef,
+} from './workspace-group-refs.js';
+import {
+  buildStoragePrepareBody,
+  normalizeStorageGroupIds as normalizeStorageAccessGroupIds,
+} from './storage-payloads.js';
 import { buildSuperBasedConnectionToken } from './superbased-token.js';
 import { decryptAudioBytes, encryptAudioBlob, measureAudioDuration } from './audio-notes.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
@@ -335,7 +346,6 @@ export function initApp() {
     popstateHandler: null,
     showAvatarMenu: false,
     showChannelSettingsModal: false,
-    showSuperBasedModal: false,
     presetConnecting: false,
     // Connect modal (two-step)
     showConnectModal: false,
@@ -357,6 +367,20 @@ export function initApp() {
     knownHosts: [],
     showAgentConnectModal: false,
     syncStatus: 'synced',
+    syncSession: {
+      state: 'synced',
+      phase: 'idle',
+      startedAt: null,
+      finishedAt: null,
+      lastSuccessAt: null,
+      currentFamily: null,
+      completedFamilies: 0,
+      totalFamilies: 0,
+      pushed: 0,
+      pushTotal: 0,
+      pulled: 0,
+      error: null,
+    },
     hasForcedInitialBackfill: false,
     hasForcedTaskFamilyBackfill: false,
     backgroundSyncTimer: null,
@@ -514,6 +538,7 @@ export function initApp() {
     currentWorkspaceOwnerNpub: '',
     showWorkspaceSwitcherMenu: false,
     workspaceSwitchPendingNpub: '',
+    removingWorkspace: false,
     workspaceSettingsRecordId: '',
     workspaceSettingsVersion: 0,
     workspaceSettingsGroupIds: [],
@@ -643,6 +668,25 @@ export function initApp() {
       return 'Choose or create a workspace';
     },
 
+    get currentWorkspaceBackendUrl() {
+      return String(
+        this.currentWorkspace?.directHttpsUrl
+        || this.superbasedConnectionConfig?.directHttpsUrl
+        || this.backendUrl
+        || ''
+      ).trim();
+    },
+
+    get currentWorkspaceBackendName() {
+      const backendUrl = this.currentWorkspaceBackendUrl;
+      if (!backendUrl) return 'Self Hosted';
+      const cleanUrl = normalizeBackendUrl(backendUrl);
+      const host = this.mergedHostsList.find((entry) => normalizeBackendUrl(entry.url) === cleanUrl);
+      const label = String(host?.label || '').trim();
+      if (!label || label === cleanUrl || label === host?.url) return 'Self Hosted';
+      return label;
+    },
+
     get currentWorkspaceAvatarUrl() {
       return this.getWorkspaceAvatar(this.currentWorkspace || this.activeWorkspaceOwnerNpub);
     },
@@ -664,11 +708,17 @@ export function initApp() {
     },
 
     get memberPrivateGroupNpub() {
-      return this.memberPrivateGroup?.group_id
-        || this.currentWorkspace?.privateGroupId
-        || this.memberPrivateGroup?.group_npub
-        || this.currentWorkspace?.privateGroupNpub
-        || null;
+      return resolvePrivateGroupNpub({
+        memberPrivateGroup: this.memberPrivateGroup,
+        currentWorkspace: this.currentWorkspace,
+      });
+    },
+
+    get memberPrivateGroupRef() {
+      return resolvePrivateGroupRef({
+        memberPrivateGroup: this.memberPrivateGroup,
+        currentWorkspace: this.currentWorkspace,
+      });
     },
 
     get superbasedTransportLabel() {
@@ -1090,7 +1140,7 @@ export function initApp() {
     },
 
     getTaskBoardWriteGroup(scopeId) {
-      if (scopeId === UNSCOPED_TASK_BOARD_ID) return this.getWorkspaceSettingsGroupNpub();
+      if (scopeId === UNSCOPED_TASK_BOARD_ID) return this.getWorkspaceSettingsGroupRef();
       const scope = this.scopesMap.get(scopeId);
       if (!scope) return null;
       return this.getScopeShareGroupIds(scope)[0] || null;
@@ -1098,7 +1148,7 @@ export function initApp() {
 
     buildTaskBoardAssignment(scopeId, fallbackTask = null) {
       if (scopeId === UNSCOPED_TASK_BOARD_ID) {
-        const groupId = this.getWorkspaceSettingsGroupNpub();
+        const groupId = this.getWorkspaceSettingsGroupRef();
         const shares = groupId ? this.buildScopeDefaultShares([groupId]) : this.getDefaultPrivateShares();
         return {
           scope_id: null,
@@ -1405,9 +1455,22 @@ export function initApp() {
       });
     },
 
+    get visibleBoardTasks() {
+      let tasks = this.boardScopedTasks.filter((t) => t.state !== 'archive');
+      const query = String(this.taskFilter || '').trim().toLowerCase();
+      if (query) {
+        tasks = tasks.filter((t) =>
+          String(t.title || '').toLowerCase().includes(query)
+          || String(t.description || '').toLowerCase().includes(query)
+          || String(t.tags || '').toLowerCase().includes(query)
+        );
+      }
+      return tasks;
+    },
+
     get allTaskTags() {
       const tagSet = new Set();
-      for (const task of this.boardScopedTasks) {
+      for (const task of this.visibleBoardTasks) {
         for (const tag of parseTaskTags(task.tags)) {
           tagSet.add(tag);
         }
@@ -1432,7 +1495,7 @@ export function initApp() {
 
     get selectedBoardWriteGroup() {
       return this.getTaskBoardWriteGroup(this.selectedBoardId)
-        || this.getWorkspaceSettingsGroupNpub()
+        || this.getWorkspaceSettingsGroupRef()
         || null;
     },
 
@@ -1449,7 +1512,7 @@ export function initApp() {
     getScheduleAssignedGroupLabel(groupId) {
       const resolvedGroupId = this.resolveGroupId(groupId);
       if (!resolvedGroupId) return 'Unassigned';
-      if (resolvedGroupId === this.memberPrivateGroupNpub) return 'Private group';
+      if (resolvedGroupId === this.memberPrivateGroupRef) return 'Private group';
       return this.scheduleAssignableGroups.find((group) => group.groupId === resolvedGroupId)?.label || resolvedGroupId;
     },
 
@@ -1553,7 +1616,7 @@ export function initApp() {
       return this.taskBoards.map((board) => ({
         groupId: board.id,
         label: board.label,
-        subtitle: board.id === this.memberPrivateGroupNpub ? 'Private group' : board.id,
+        subtitle: board.id === this.memberPrivateGroupRef ? 'Private group' : board.id,
       }));
     },
 
@@ -1922,12 +1985,19 @@ export function initApp() {
       this.workspaceHarnessUrl = String(row?.wingman_harness_url || '').trim();
       this.workspaceTriggers = Array.isArray(row?.triggers) ? [...row.triggers] : [];
       if (row?.workspace_owner_npub) {
-        this.mergeKnownWorkspaces([{
+        const workspacePatch = {
           workspaceOwnerNpub: row.workspace_owner_npub,
-          ...(row.workspace_name ? { name: row.workspace_name } : {}),
-          ...(row.workspace_description ? { description: row.workspace_description } : {}),
-          ...(row.workspace_avatar_url ? { avatarUrl: row.workspace_avatar_url } : {}),
-        }]);
+        };
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) {
+          workspacePatch.name = row.workspace_name;
+        }
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_description')) {
+          workspacePatch.description = row.workspace_description;
+        }
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) {
+          workspacePatch.avatarUrl = row.workspace_avatar_url;
+        }
+        this.mergeKnownWorkspaces([workspacePatch]);
       }
       if (overwriteInput || !this.wingmanHarnessDirty) {
         this.wingmanHarnessInput = this.workspaceHarnessUrl;
@@ -1948,10 +2018,30 @@ export function initApp() {
     },
 
     getWorkspaceSettingsGroupNpub() {
-      return this.currentWorkspace?.defaultGroupId
-        || this.currentWorkspace?.defaultGroupNpub
-        || this.memberPrivateGroupNpub
-        || null;
+      return resolveWorkspaceSettingsGroupNpub({
+        memberPrivateGroup: this.memberPrivateGroup,
+        currentWorkspace: this.currentWorkspace,
+      });
+    },
+
+    getWorkspaceSettingsGroupRef() {
+      return resolveWorkspaceSettingsGroupRef({
+        memberPrivateGroup: this.memberPrivateGroup,
+        currentWorkspace: this.currentWorkspace,
+      });
+    },
+
+    getAudioRecorderStorageGroupIds(context = this.audioRecorderContext) {
+      if (context === 'chat' || context === 'thread') {
+        return normalizeStorageAccessGroupIds(this.selectedChannel?.group_ids ?? []);
+      }
+      if (context === 'task-comment') {
+        return normalizeStorageAccessGroupIds(this.editingTask?.group_ids ?? []);
+      }
+      if (context === 'doc-comment' || context === 'doc-reply') {
+        return normalizeStorageAccessGroupIds(this.selectedDocument?.group_ids ?? []);
+      }
+      return [];
     },
 
     get repairFamilyOptions() {
@@ -2096,6 +2186,66 @@ export function initApp() {
       }
     },
 
+    async removeWorkspace(workspaceOwnerNpub) {
+      if (!workspaceOwnerNpub || this.removingWorkspace) return;
+      const workspace = this.knownWorkspaces.find((w) => w.workspaceOwnerNpub === workspaceOwnerNpub);
+      const label = workspace?.name || workspaceOwnerNpub;
+      if (!confirm(`Remove workspace "${label}"?\n\nThis will delete all local data for this workspace. The workspace will remain on SuperBased and can be re-added later.`)) {
+        return;
+      }
+
+      this.removingWorkspace = true;
+      this.stopBackgroundSync();
+
+      const isCurrentWorkspace = this.currentWorkspaceOwnerNpub === workspaceOwnerNpub;
+
+      // Remove from known workspaces list
+      this.knownWorkspaces = this.knownWorkspaces.filter((w) => w.workspaceOwnerNpub !== workspaceOwnerNpub);
+
+      // Delete the local IndexedDB for this workspace
+      try {
+        await deleteWorkspaceDb(workspaceOwnerNpub);
+      } catch (error) {
+        console.warn('Failed to delete workspace database:', error?.message || error);
+      }
+
+      if (isCurrentWorkspace) {
+        // Clear runtime state
+        this.channels = [];
+        this.messages = [];
+        this.groups = [];
+        this.documents = [];
+        this.directories = [];
+        this.tasks = [];
+        this.schedules = [];
+        this.audioNotes = [];
+        this.taskComments = [];
+        this.showNewScheduleModal = false;
+        this.hasForcedInitialBackfill = false;
+        this.hasForcedTaskFamilyBackfill = false;
+        this.currentWorkspaceOwnerNpub = '';
+
+        if (this.knownWorkspaces.length > 0) {
+          // Switch to next available workspace and land on home
+          await this.selectWorkspace(this.knownWorkspaces[0].workspaceOwnerNpub);
+          await this.persistWorkspaceSettings();
+          this.navigateTo('status');
+          this.ensureBackgroundSync(true);
+        } else {
+          // No workspaces left — go back to workspace bootstrap
+          this.ownerNpub = '';
+          this.showWorkspaceBootstrapModal = true;
+          this.navigateTo('status');
+          await this.persistWorkspaceSettings();
+        }
+      } else {
+        await this.persistWorkspaceSettings();
+        this.ensureBackgroundSync();
+      }
+
+      this.removingWorkspace = false;
+    },
+
     async loadRemoteWorkspaces() {
       if (!this.session?.npub || !this.backendUrl) return;
       try {
@@ -2165,7 +2315,6 @@ export function initApp() {
       this.showWorkspaceBootstrapModal = true;
       this.showWorkspaceSwitcherMenu = false;
       this.mobileNavOpen = false;
-      this.showSuperBasedModal = false;
     },
 
     closeWorkspaceBootstrapModal() {
@@ -2683,15 +2832,16 @@ export function initApp() {
       }
 
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const writeGroupNpub = this.getWorkspaceSettingsGroupNpub();
+      const settingsGroupId = this.getWorkspaceSettingsGroupRef();
       try {
-        const prepared = await prepareStorageObject({
-          owner_npub: workspaceOwnerNpub,
-          content_type: file.type || 'image/png',
-          size_bytes: file.size || bytes.byteLength,
-          file_name: this.defaultPastedImageName(file, 'workspace-avatar'),
-          access_group_npubs: writeGroupNpub ? [writeGroupNpub] : [],
-        });
+        const prepared = await prepareStorageObject(buildStoragePrepareBody({
+          ownerNpub: workspaceOwnerNpub,
+          ownerGroupId: settingsGroupId,
+          accessGroupIds: settingsGroupId ? [settingsGroupId] : [],
+          contentType: file.type || 'image/png',
+          sizeBytes: file.size || bytes.byteLength,
+          fileName: this.defaultPastedImageName(file, 'workspace-avatar'),
+        }));
         await uploadStorageObject(prepared, bytes, file.type || 'image/png');
         await completeStorageObject(prepared.object_id, {
           size_bytes: bytes.byteLength,
@@ -2700,8 +2850,22 @@ export function initApp() {
         return `storage://${prepared.object_id}`;
       } catch (error) {
         const message = String(error?.message || error);
-        if (message.includes('404')) {
-          throw new Error(`Workspace avatar upload requires SuperBased storage on ${this.backendUrl || 'the workspace backend'}, but /api/v4/storage is not available there.`);
+        flightDeckLog('error', 'storage', 'workspace avatar upload failed', {
+          backendUrl: this.backendUrl || null,
+          workspaceOwnerNpub,
+          requestUrl: error?.requestUrl || null,
+          method: error?.method || null,
+          status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+          message,
+        });
+        if (
+          Number(error?.status) === 404
+          && String(error?.requestUrl || '').endsWith('/api/v4/storage/prepare')
+        ) {
+          throw new Error(
+            `Workspace avatar upload requires SuperBased storage on ${this.backendUrl || 'the workspace backend'}, `
+            + 'but POST /api/v4/storage/prepare returned 404 there.',
+          );
         }
         throw error;
       }
@@ -2729,8 +2893,8 @@ export function initApp() {
         }
         const workspaceOwnerNpub = workspace.workspaceOwnerNpub;
         const now = new Date().toISOString();
-        const writeGroupNpub = this.getWorkspaceSettingsGroupNpub();
-        const groupIds = writeGroupNpub ? [writeGroupNpub] : [...(this.workspaceSettingsGroupIds || [])];
+        const writeGroupRef = this.getWorkspaceSettingsGroupRef();
+        const groupIds = writeGroupRef ? [writeGroupRef] : [...(this.workspaceSettingsGroupIds || [])];
         const nextVersion = Math.max(1, Number(this.workspaceSettingsVersion || 0) + 1);
         const recordId = this.workspaceSettingsRecordId || workspaceSettingsRecordId(workspaceOwnerNpub);
         const description = String(this.workspaceProfileDescriptionInput || '').trim();
@@ -2766,7 +2930,7 @@ export function initApp() {
           version: nextVersion,
           previous_version: Math.max(0, nextVersion - 1),
           signature_npub: this.session?.npub || workspaceOwnerNpub,
-          write_group_npub: writeGroupNpub,
+          write_group_npub: writeGroupRef,
         });
         await addPendingWrite({
           record_id: recordId,
@@ -2810,8 +2974,8 @@ export function initApp() {
       }
 
       const now = new Date().toISOString();
-      const writeGroupNpub = this.getWorkspaceSettingsGroupNpub();
-      const groupIds = writeGroupNpub ? [writeGroupNpub] : [...(this.workspaceSettingsGroupIds || [])];
+      const writeGroupRef = this.getWorkspaceSettingsGroupRef();
+      const groupIds = writeGroupRef ? [writeGroupRef] : [...(this.workspaceSettingsGroupIds || [])];
       const nextVersion = Math.max(1, Number(this.workspaceSettingsVersion || 0) + 1);
       const recordId = this.workspaceSettingsRecordId || workspaceSettingsRecordId(workspaceOwnerNpub);
       const localRow = {
@@ -2840,7 +3004,7 @@ export function initApp() {
         version: nextVersion,
         previous_version: Math.max(0, nextVersion - 1),
         signature_npub: this.session.npub,
-        write_group_npub: writeGroupNpub,
+        write_group_npub: writeGroupRef,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -3052,7 +3216,6 @@ export function initApp() {
       }
       localStorage.setItem('use_cvm_sync', this.useCvmSync ? 'true' : 'false');
       await this.saveSettings();
-      this.showSuperBasedModal = false;
       this.showAvatarMenu = false;
       if (this.currentWorkspaceOwnerNpub) {
         await this.selectWorkspace(this.currentWorkspaceOwnerNpub);
@@ -3086,12 +3249,6 @@ export function initApp() {
       } finally {
         this.presetConnecting = false;
       }
-    },
-
-    openSuperBasedSettings() {
-      this.showAvatarMenu = false;
-      this.superbasedError = null;
-      this.showSuperBasedModal = true;
     },
 
     // --- Connect modal (two-step) ---
@@ -3284,11 +3441,6 @@ export function initApp() {
       return merged;
     },
 
-    closeSuperBasedSettings() {
-      this.showSuperBasedModal = false;
-      this.superbasedError = null;
-    },
-
     toggleCvmSync() {
       this.useCvmSync = !this.useCvmSync;
       localStorage.setItem('use_cvm_sync', this.useCvmSync ? 'true' : 'false');
@@ -3431,6 +3583,7 @@ export function initApp() {
       this.backgroundSyncInFlight = true;
       try {
         await this.performSync({ silent: true });
+        await this.checkForStaleness();
       } catch (error) {
         flightDeckLog('error', 'sync', 'background sync failed', {
           backendUrl: this.backendUrl || null,
@@ -3443,6 +3596,42 @@ export function initApp() {
       }
     },
 
+    updateSyncSession(updates) {
+      Object.assign(this.syncSession, updates);
+    },
+
+    syncProgressLabel() {
+      const s = this.syncSession;
+      if (s.phase === 'idle' || s.phase === 'done') return '';
+      if (s.phase === 'checking') return 'Checking...';
+      if (s.phase === 'pushing') return `Pushing ${s.pushed} / ${s.pushTotal}`;
+      if (s.phase === 'pulling') {
+        const familyPart = s.currentFamily ? `Fetching ${s.currentFamily}` : 'Pulling';
+        return `${familyPart} (${s.completedFamilies} / ${s.totalFamilies} collections)`;
+      }
+      if (s.phase === 'applying') return 'Applying...';
+      if (s.phase === 'error') return 'Sync error';
+      return '';
+    },
+
+    syncProgressPercent() {
+      const s = this.syncSession;
+      if (s.phase === 'pushing' && s.pushTotal > 0) return Math.round((s.pushed / s.pushTotal) * 50);
+      if (s.phase === 'pulling' && s.totalFamilies > 0) return 50 + Math.round((s.completedFamilies / s.totalFamilies) * 45);
+      if (s.phase === 'applying' || s.phase === 'done') return 100;
+      if (s.phase === 'checking') return 5;
+      return 0;
+    },
+
+    lastSyncTimeLabel() {
+      const t = this.syncSession.lastSuccessAt;
+      if (!t) return 'Never';
+      const diff = Date.now() - t;
+      if (diff < 60000) return 'Just now';
+      if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+      return new Date(t).toLocaleTimeString();
+    },
+
     async performSync({ silent = false, showBusy = !silent } = {}) {
       if (!this.session?.npub || !this.backendUrl) {
         if (!silent) this.error = 'Configure settings first';
@@ -3451,6 +3640,7 @@ export function initApp() {
 
       if (!silent) this.error = null;
       if (showBusy) this.syncing = true;
+      this.updateSyncSession({ state: 'syncing', phase: 'checking', startedAt: Date.now(), error: null, pushed: 0, pushTotal: 0, pulled: 0, completedFamilies: 0, totalFamilies: 0, currentFamily: null });
       flightDeckLog('info', 'sync', 'sync started', {
         silent,
         showBusy,
@@ -3458,6 +3648,11 @@ export function initApp() {
         ownerNpub: this.workspaceOwnerNpub || null,
         viewerNpub: this.session?.npub || null,
       });
+
+      const onProgress = (update) => {
+        this.updateSyncSession(update);
+      };
+
       try {
         await this.refreshGroups();
         if (
@@ -3473,7 +3668,8 @@ export function initApp() {
           await clearSyncState();
           this.hasForcedInitialBackfill = true;
         }
-        const result = await runSync(this.workspaceOwnerNpub, this.session.npub);
+        const result = await runSync(this.workspaceOwnerNpub, this.session.npub, onProgress);
+        this.updateSyncSession({ phase: 'applying' });
         await this.refreshGroups();
         await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
         await this.refreshAddressBook();
@@ -3490,6 +3686,7 @@ export function initApp() {
         if (this.docsEditorOpen && this.selectedDocId) {
           await this.loadDocComments(this.selectedDocId);
         }
+        this.updateSyncSession({ phase: 'done', finishedAt: Date.now(), lastSuccessAt: Date.now(), state: 'synced' });
         await this.refreshSyncStatus();
         await this.refreshStatusRecentChanges();
         flightDeckLog('info', 'sync', 'sync completed', {
@@ -3502,6 +3699,7 @@ export function initApp() {
         return result;
       } catch (error) {
         if (!silent) this.error = error.message;
+        this.updateSyncSession({ phase: 'error', state: 'error', error: error.message, finishedAt: Date.now() });
         flightDeckLog('error', 'sync', 'sync failed', {
           backendUrl: this.backendUrl,
           ownerNpub: this.workspaceOwnerNpub || null,
@@ -3521,7 +3719,15 @@ export function initApp() {
       }
       const pending = await getPendingWrites();
       const quarantine = await this.refreshSyncQuarantine();
-      this.syncStatus = pending.length > 0 ? 'unsynced' : quarantine.length > 0 ? 'quarantined' : 'synced';
+      if (pending.length > 0) {
+        this.syncStatus = 'unsynced';
+      } else if (quarantine.length > 0) {
+        this.syncStatus = 'quarantined';
+      } else if (this.syncSession.state === 'error') {
+        this.syncStatus = 'error';
+      } else {
+        this.syncStatus = 'synced';
+      }
       if (pending.length > 0) {
         flightDeckLog('debug', 'sync', 'pending writes remain after sync status refresh', {
           pendingCount: pending.length,
@@ -3531,6 +3737,19 @@ export function initApp() {
             createdAt: row.created_at,
           })),
         });
+      }
+    },
+
+    async checkForStaleness() {
+      if (!this.workspaceOwnerNpub || this.syncing) return;
+      try {
+        const result = await checkStaleness(this.workspaceOwnerNpub);
+        if (result.stale && this.syncStatus === 'synced') {
+          this.syncStatus = 'stale';
+          this.updateSyncSession({ state: 'stale' });
+        }
+      } catch {
+        // Staleness check is opportunistic — do not break anything
       }
     },
 
@@ -4094,12 +4313,13 @@ export function initApp() {
 
       try {
         const encrypted = await encryptAudioBlob(this._audioRecorderBlob);
-        const prepared = await prepareStorageObject({
-          owner_npub: this.workspaceOwnerNpub,
-          content_type: this._audioRecorderBlob.type || 'audio/webm;codecs=opus',
-          size_bytes: encrypted.encryptedBytes.byteLength,
-          file_name: `${(this.audioRecorderTitle || this.getAudioRecorderDefaultTitle()).replace(/[^a-zA-Z0-9._-]/g, '_')}.webm`,
-        });
+        const prepared = await prepareStorageObject(buildStoragePrepareBody({
+          ownerNpub: this.workspaceOwnerNpub,
+          accessGroupIds: this.getAudioRecorderStorageGroupIds(this.audioRecorderContext),
+          contentType: this._audioRecorderBlob.type || 'audio/webm;codecs=opus',
+          sizeBytes: encrypted.encryptedBytes.byteLength,
+          fileName: `${(this.audioRecorderTitle || this.getAudioRecorderDefaultTitle()).replace(/[^a-zA-Z0-9._-]/g, '_')}.webm`,
+        }));
         await uploadStorageObject(
           prepared,
           encrypted.encryptedBytes,
@@ -4849,7 +5069,7 @@ export function initApp() {
         level,
         parentId,
         scopesMap: this.scopesMap,
-        fallbackGroupId: this.memberPrivateGroupNpub || this.scopeAssignableGroups[0]?.groupId || null,
+        fallbackGroupId: this.memberPrivateGroupRef || this.scopeAssignableGroups[0]?.groupId || null,
       }).map((groupId) => this.resolveGroupId(groupId));
     },
 
@@ -8270,13 +8490,14 @@ export function initApp() {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         const fileName = this.defaultPastedImageName(file, options.fileLabel || 'inline');
-        const prepared = await prepareStorageObject({
-          owner_npub: ownerNpub,
-          content_type: file.type || 'image/png',
-          size_bytes: file.size || bytes.byteLength,
-          file_name: fileName,
-          access_group_npubs: options.accessGroupNpubs ?? [],
-        });
+        const prepared = await prepareStorageObject(buildStoragePrepareBody({
+          ownerNpub,
+          ownerGroupId: options.ownerGroupId,
+          accessGroupIds: options.accessGroupIds ?? options.accessGroupNpubs ?? [],
+          contentType: file.type || 'image/png',
+          sizeBytes: file.size || bytes.byteLength,
+          fileName,
+        }));
         await uploadStorageObject(prepared, bytes, file.type || 'image/png');
         await completeStorageObject(prepared.object_id, {
           size_bytes: bytes.byteLength,
@@ -8303,7 +8524,7 @@ export function initApp() {
       await this.handleInlineImagePaste(event, {
         modelKey: context === 'thread' ? 'threadInput' : 'messageInput',
         ownerNpub: channel.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-        accessGroupNpubs: channel.group_ids ?? [],
+        accessGroupIds: channel.group_ids ?? [],
         fileLabel: context === 'thread' ? 'thread' : 'chat',
         uploadCounterContext: context,
       });
@@ -8314,7 +8535,7 @@ export function initApp() {
       await this.handleInlineImagePaste(event, {
         modelKey: 'editingTask.description',
         ownerNpub: this.editingTask.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-        accessGroupNpubs: this.editingTask.group_ids ?? [],
+        accessGroupIds: this.editingTask.group_ids ?? [],
         fileLabel: 'task',
       });
     },
@@ -8324,7 +8545,7 @@ export function initApp() {
       await this.handleInlineImagePaste(event, {
         modelKey: 'newTaskCommentBody',
         ownerNpub: this.editingTask.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-        accessGroupNpubs: this.editingTask.group_ids ?? [],
+        accessGroupIds: this.editingTask.group_ids ?? [],
         fileLabel: 'task-comment',
       });
     },
@@ -8335,7 +8556,7 @@ export function initApp() {
       const handled = await this.handleInlineImagePaste(event, {
         modelKey: 'docEditorContent',
         ownerNpub: doc.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-        accessGroupNpubs: doc.group_ids ?? [],
+        accessGroupIds: doc.group_ids ?? [],
         fileLabel: 'doc',
       });
       if (handled) this.handleDocSourceInput(this.docEditorContent);
@@ -8347,7 +8568,7 @@ export function initApp() {
       const handled = await this.handleInlineImagePaste(event, {
         modelKey: 'docBlockBuffer',
         ownerNpub: doc.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-        accessGroupNpubs: doc.group_ids ?? [],
+        accessGroupIds: doc.group_ids ?? [],
         fileLabel: 'doc-block',
       });
       if (handled) this.updateDocBlockBuffer(this.docBlockBuffer);
@@ -8359,7 +8580,7 @@ export function initApp() {
       await this.handleInlineImagePaste(event, {
         modelKey: 'newDocCommentBody',
         ownerNpub: doc.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-        accessGroupNpubs: doc.group_ids ?? [],
+        accessGroupIds: doc.group_ids ?? [],
         fileLabel: 'doc-comment',
       });
     },
@@ -8370,7 +8591,7 @@ export function initApp() {
       await this.handleInlineImagePaste(event, {
         modelKey: 'newDocCommentReplyBody',
         ownerNpub: doc.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-        accessGroupNpubs: doc.group_ids ?? [],
+        accessGroupIds: doc.group_ids ?? [],
         fileLabel: 'doc-reply',
       });
     },

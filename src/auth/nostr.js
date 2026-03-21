@@ -220,6 +220,10 @@ export async function signLoginEvent(method, supplemental = null) {
     const pubkey = await window.nostr.getPublicKey();
     const event = { ...buildUnsignedEvent(method), pubkey };
     const signedEvent = await window.nostr.signEvent(event);
+    if (signedEvent?.pubkey !== pubkey) {
+      throw new Error('NIP-07 signer pubkey changed during login. Sign in again.');
+    }
+    setMemoryPubkey(pubkey);
     await storeCredentials({ method: 'extension', pubkey, authEvent: signedEvent });
     return signedEvent;
   }
@@ -294,8 +298,17 @@ export async function createNip98AuthHeader(url, method, body = null) {
     if (!available) {
       throw new Error('No NIP-07 browser extension found.');
     }
-    const pubkey = getMemoryPubkey() || creds.pubkey || await window.nostr.getPublicKey();
+    const currentPubkey = await window.nostr.getPublicKey();
+    const expectedPubkey = getMemoryPubkey() || creds.pubkey || currentPubkey;
+    if (currentPubkey !== expectedPubkey) {
+      throw new Error('NIP-07 signer pubkey changed since login. Sign in again.');
+    }
+    const pubkey = currentPubkey;
     const signedEvent = await serialNip07SignEvent({ ...eventTemplate, pubkey });
+    if (signedEvent?.pubkey !== pubkey) {
+      throw new Error('NIP-07 signer returned a different pubkey than the active session. Sign in again.');
+    }
+    setMemoryPubkey(pubkey);
     return `Nostr ${btoa(JSON.stringify(signedEvent))}`;
   }
 

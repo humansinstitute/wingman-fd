@@ -20,13 +20,15 @@ describe('buildAgentConnectPackage', () => {
     });
 
     expect(pkg.kind).toBe('coworker_agent_connect');
+    expect(pkg.version).toBe(5);
     expect(pkg.service.direct_https_url).toBe('https://sb4.otherstuff.studio');
     expect(pkg.service.openapi_url).toBe('https://sb4.otherstuff.studio/openapi.json');
-    expect(pkg.guide_url).toBe('https://open-cap-rose.wm21.otherstuff.ai/agentconnect.md');
+    expect(pkg.llms_url).toBe('https://open-cap-rose.wm21.otherstuff.ai/llms.txt');
     expect(pkg.workspace.owner_npub).toBe('npub1owner');
     expect(pkg.workspace.owner_pubkey).toBe('a'.repeat(64));
     expect(pkg.app.app_npub).toMatch(/^npub1/);
     expect(pkg.connection_token).toBeTruthy();
+    expect(pkg.notes).toContain('Use Wingman Yoke when it is available in the target environment.');
   });
 
   it('generates a connection token when one is not already present', () => {

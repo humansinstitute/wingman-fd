@@ -39,10 +39,22 @@ function getCandidateBaseUrls({ preferCurrentOrigin = false } = {}) {
   return [...new Set(ordered.filter(Boolean))];
 }
 
-async function json(resp) {
+async function buildApiError(resp, { requestUrl = '', method = 'GET', prefix = 'API' } = {}) {
+  const text = await resp.text().catch(() => '');
+  const requestMethod = String(method || 'GET').toUpperCase();
+  const location = requestUrl ? ` ${requestMethod} ${requestUrl}` : '';
+  const suffix = text ? `: ${text}` : '';
+  const error = new Error(`${prefix} ${resp.status}${location}${suffix}`);
+  error.status = resp.status;
+  error.method = requestMethod;
+  error.requestUrl = requestUrl || null;
+  error.responseText = text;
+  return error;
+}
+
+async function json(resp, requestMeta = {}) {
   if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`API ${resp.status}: ${text}`);
+    throw await buildApiError(resp, requestMeta);
   }
   return resp.json();
 }
@@ -79,6 +91,11 @@ async function signedFetchAbsolute(requestUrl, { method = 'GET', body } = {}) {
 }
 
 async function signedFetchWithFallbacks(path, { method = 'GET', body } = {}, options = {}) {
+  const result = await signedFetchWithFallbackMeta(path, { method, body }, options);
+  return result.response;
+}
+
+async function signedFetchWithFallbackMeta(path, { method = 'GET', body } = {}, options = {}) {
   const candidateBaseUrls = getCandidateBaseUrls(options);
   if (candidateBaseUrls.length === 0) {
     throw new Error('Backend URL not configured');
@@ -92,32 +109,38 @@ async function signedFetchWithFallbacks(path, { method = 'GET', body } = {}, opt
     try {
       const response = await signedFetchAbsolute(requestUrl, { method, body });
       if (response.status !== 404 && response.status !== 405) {
-        return response;
+        return { response, requestUrl };
       }
       lastResponse = response;
+      lastResponse._requestUrl = requestUrl;
     } catch (error) {
       lastError = error;
     }
   }
 
-  if (lastResponse) return lastResponse;
+  if (lastResponse) {
+    return {
+      response: lastResponse,
+      requestUrl: lastResponse._requestUrl || `${candidateBaseUrls[0]}${path}`,
+    };
+  }
   throw lastError || new Error(`Request failed for ${path}`);
 }
 
 async function signedFetchBytes(path) {
+  const requestUrl = url(path);
   const resp = await signedFetch(path);
   if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`API ${resp.status}: ${text}`);
+    throw await buildApiError(resp, { requestUrl, method: 'GET' });
   }
   return new Uint8Array(await resp.arrayBuffer());
 }
 
 async function signedFetchBlob(path) {
+  const requestUrl = url(path);
   const resp = await signedFetch(path);
   if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`API ${resp.status}: ${text}`);
+    throw await buildApiError(resp, { requestUrl, method: 'GET' });
   }
   return resp.blob();
 }
@@ -125,117 +148,167 @@ async function signedFetchBlob(path) {
 // --- Groups ---
 
 export async function createGroup({ owner_npub, name, group_npub, member_keys }) {
+  const requestUrl = url('/api/v4/groups');
   const resp = await signedFetch('/api/v4/groups', {
     method: 'POST',
     body: { owner_npub, name, group_npub, member_keys },
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'POST' });
 }
 
 export async function addGroupMember(groupId, { member_npub, wrapped_group_nsec, wrapped_by_npub }) {
+  const requestPath = `/api/v4/groups/${groupId}/members`;
+  const requestUrl = url(requestPath);
   const resp = await signedFetch(`/api/v4/groups/${groupId}/members`, {
     method: 'POST',
     body: { member_npub, wrapped_group_nsec, wrapped_by_npub },
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'POST' });
 }
 
 export async function rotateGroup(groupId, { group_npub, member_keys, name }) {
+  const requestPath = `/api/v4/groups/${groupId}/rotate`;
+  const requestUrl = url(requestPath);
   const resp = await signedFetch(`/api/v4/groups/${groupId}/rotate`, {
     method: 'POST',
     body: { group_npub, member_keys, name },
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'POST' });
 }
 
 export async function deleteGroupMember(groupId, memberNpub) {
-  const resp = await signedFetch(`/api/v4/groups/${groupId}/members/${encodeURIComponent(memberNpub)}`, {
+  const requestPath = `/api/v4/groups/${groupId}/members/${encodeURIComponent(memberNpub)}`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetch(requestPath, {
     method: 'DELETE',
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'DELETE' });
 }
 
 export async function getGroups(npub) {
-  const resp = await signedFetch(`/api/v4/groups?npub=${encodeURIComponent(npub)}`);
-  return json(resp);
+  const requestPath = `/api/v4/groups?npub=${encodeURIComponent(npub)}`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetch(requestPath);
+  return json(resp, { requestUrl, method: 'GET' });
 }
 
 export async function getGroupKeys(memberNpub) {
-  const resp = await signedFetch(`/api/v4/groups/keys?member_npub=${encodeURIComponent(memberNpub)}`);
-  return json(resp);
+  const requestPath = `/api/v4/groups/keys?member_npub=${encodeURIComponent(memberNpub)}`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetch(requestPath);
+  return json(resp, { requestUrl, method: 'GET' });
 }
 
 export async function updateGroup(groupId, { name }) {
+  const requestPath = `/api/v4/groups/${groupId}`;
+  const requestUrl = url(requestPath);
   const resp = await signedFetch(`/api/v4/groups/${groupId}`, {
     method: 'PATCH',
     body: { name },
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'PATCH' });
 }
 
 export async function deleteGroup(groupId) {
+  const requestPath = `/api/v4/groups/${groupId}`;
+  const requestUrl = url(requestPath);
   const resp = await signedFetch(`/api/v4/groups/${groupId}`, {
     method: 'DELETE',
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'DELETE' });
 }
 
 // --- Workspaces ---
 
 export async function createWorkspace(body) {
+  const requestPath = '/api/v4/workspaces';
+  const requestUrl = url(requestPath);
   const resp = await signedFetchWithFallbacks('/api/v4/workspaces', {
     method: 'POST',
     body,
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'POST' });
 }
 
 export async function getWorkspaces(memberNpub) {
-  const resp = await signedFetchWithFallbacks(`/api/v4/workspaces?member_npub=${encodeURIComponent(memberNpub)}`, {});
-  return json(resp);
+  const requestPath = `/api/v4/workspaces?member_npub=${encodeURIComponent(memberNpub)}`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetchWithFallbacks(requestPath, {});
+  return json(resp, { requestUrl, method: 'GET' });
 }
 
 export async function recoverWorkspace(body) {
+  const requestPath = '/api/v4/workspaces/recover';
+  const requestUrl = url(requestPath);
   const resp = await signedFetchWithFallbacks('/api/v4/workspaces/recover', {
     method: 'POST',
     body,
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'POST' });
 }
 
 export async function updateWorkspace(workspaceOwnerNpub, body) {
-  const resp = await signedFetchWithFallbacks(`/api/v4/workspaces/${encodeURIComponent(workspaceOwnerNpub)}`, {
+  const requestPath = `/api/v4/workspaces/${encodeURIComponent(workspaceOwnerNpub)}`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetchWithFallbacks(requestPath, {
     method: 'PATCH',
     body,
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'PATCH' });
 }
 
 // --- Storage ---
 
 export async function prepareStorageObject(body) {
-  const resp = await signedFetch('/api/v4/storage/prepare', {
+  const requestPath = '/api/v4/storage/prepare';
+  const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath, {
     method: 'POST',
     body,
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'POST' });
 }
 
 export async function uploadStorageObject(prepared, bytes, contentType = 'application/octet-stream') {
   const uploadUrl = String(prepared?.upload_url || '').trim();
-  if (!uploadUrl) {
-    throw new Error('Missing upload URL for storage object.');
+  const payload = {
+    base64_data: bytesToBase64(bytes),
+  };
+  const fallbackPath = `/api/v4/storage/${prepared.object_id}`;
+  const { response: fallbackResp, requestUrl: fallbackUrl } = await signedFetchWithFallbackMeta(fallbackPath, {
+    method: 'PUT',
+    body: payload,
+  });
+  if (fallbackResp.ok) {
+    return json(fallbackResp, { requestUrl: fallbackUrl, method: 'PUT' });
   }
 
-  const directResp = await fetch(uploadUrl, {
+  const fallbackError = await buildApiError(fallbackResp, {
+    requestUrl: fallbackUrl,
     method: 'PUT',
-    headers: {
-      'Content-Type': contentType,
-    },
-    body: bytes,
   });
+  if (fallbackResp.status !== 404 && fallbackResp.status !== 405) {
+    throw fallbackError;
+  }
 
-  if (directResp.ok) {
+  if (!uploadUrl) {
+    throw fallbackError;
+  }
+
+  let directUploadFailure = null;
+  let directResp;
+  try {
+    directResp = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': contentType,
+      },
+      body: bytes,
+    });
+  } catch (error) {
+    directUploadFailure = error instanceof Error ? error : new Error(String(error));
+  }
+
+  if (directResp?.ok) {
     return {
       object_id: prepared.object_id,
       size_bytes: bytes.byteLength,
@@ -243,41 +316,73 @@ export async function uploadStorageObject(prepared, bytes, contentType = 'applic
     };
   }
 
-  // Fallback for environments still using backend-proxied upload.
-  const payload = {
-    base64_data: bytesToBase64(bytes),
-  };
-  const fallbackResp = await signedFetch(`/api/v4/storage/${prepared.object_id}`, {
-    method: 'PUT',
-    body: payload,
-  });
-  return json(fallbackResp);
+  if (directResp && !directResp.ok) {
+    directUploadFailure = await buildApiError(directResp, {
+      requestUrl: uploadUrl,
+      method: 'PUT',
+      prefix: 'Storage upload',
+    });
+  }
+
+  if (directUploadFailure) {
+    fallbackError.directUploadMessage = directUploadFailure.message;
+    fallbackError.message = `${fallbackError.message} | direct upload failed after backend upload fallback: ${directUploadFailure.message}`;
+  }
+  throw fallbackError;
 }
 
 export async function completeStorageObject(objectId, body = {}) {
-  const resp = await signedFetch(`/api/v4/storage/${objectId}/complete`, {
+  const requestPath = `/api/v4/storage/${objectId}/complete`;
+  const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath, {
     method: 'POST',
     body,
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'POST' });
 }
 
 export async function getStorageDownloadUrl(objectId) {
-  const resp = await signedFetch(`/api/v4/storage/${objectId}/download-url`);
-  return json(resp);
+  const requestPath = `/api/v4/storage/${objectId}/download-url`;
+  const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath);
+  return json(resp, { requestUrl, method: 'GET' });
 }
 
 export async function getStorageObject(objectId) {
-  const resp = await signedFetch(`/api/v4/storage/${objectId}`);
-  return json(resp);
+  const requestPath = `/api/v4/storage/${objectId}`;
+  const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath);
+  return json(resp, { requestUrl, method: 'GET' });
 }
 
 export async function downloadStorageObject(objectId) {
-  return signedFetchBytes(`/api/v4/storage/${objectId}/content`);
+  const requestPath = `/api/v4/storage/${objectId}/content`;
+  const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath);
+  if (!resp.ok) {
+    throw await buildApiError(resp, { requestUrl, method: 'GET' });
+  }
+  return new Uint8Array(await resp.arrayBuffer());
 }
 
 export async function downloadStorageObjectBlob(objectId) {
-  return signedFetchBlob(`/api/v4/storage/${objectId}/content`);
+  const requestPath = `/api/v4/storage/${objectId}/content`;
+  const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath);
+  if (!resp.ok) {
+    throw await buildApiError(resp, { requestUrl, method: 'GET' });
+  }
+  return resp.blob();
+}
+
+// --- Records summary ---
+
+export async function fetchRecordsSummary(ownerNpub) {
+  try {
+    const resp = await signedFetch(`/api/v4/records/summary?owner_npub=${encodeURIComponent(ownerNpub)}`);
+    if (resp.status === 404 || resp.status === 405) {
+      return { available: false, families: [] };
+    }
+    const data = await json(resp);
+    return { available: true, ...data };
+  } catch {
+    return { available: false, families: [] };
+  }
 }
 
 // --- Records sync ---
@@ -297,6 +402,7 @@ export async function syncRecords({ owner_npub, records }) {
     );
   }
 
+  const requestUrl = url('/api/v4/records/sync');
   const resp = await signedFetch('/api/v4/records/sync', {
     method: 'POST',
     body: {
@@ -305,7 +411,7 @@ export async function syncRecords({ owner_npub, records }) {
       group_write_tokens: groupWriteTokens,
     },
   });
-  return json(resp);
+  return json(resp, { requestUrl, method: 'POST' });
 }
 
 export async function fetchRecords({ owner_npub, viewer_npub, record_family_hash, since }) {
@@ -313,6 +419,8 @@ export async function fetchRecords({ owner_npub, viewer_npub, record_family_hash
   if (viewer_npub) params.set('viewer_npub', viewer_npub);
   if (record_family_hash) params.set('record_family_hash', record_family_hash);
   if (since) params.set('since', since);
-  const resp = await signedFetch(`/api/v4/records?${params}`);
-  return json(resp);
+  const requestPath = `/api/v4/records?${params}`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetch(requestPath);
+  return json(resp, { requestUrl, method: 'GET' });
 }
