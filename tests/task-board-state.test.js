@@ -14,6 +14,7 @@ import {
   computeFilteredTasks,
   UNSCOPED_TASK_BOARD_ID,
   TASK_BOARD_STORAGE_KEY,
+  TASK_BOARD_STORAGE_KEY_SUFFIX,
   WEEKDAY_OPTIONS,
 } from '../src/task-board-state.js';
 
@@ -61,9 +62,12 @@ describe('task-board-state constants', () => {
     expect(UNSCOPED_TASK_BOARD_ID).toBe('__unscoped__');
   });
 
-  it('exports TASK_BOARD_STORAGE_KEY', () => {
-    expect(typeof TASK_BOARD_STORAGE_KEY).toBe('string');
-    expect(TASK_BOARD_STORAGE_KEY.length).toBeGreaterThan(0);
+  it('exports TASK_BOARD_STORAGE_KEY (legacy)', () => {
+    expect(TASK_BOARD_STORAGE_KEY).toBe('coworker:last-task-board-id');
+  });
+
+  it('exports TASK_BOARD_STORAGE_KEY_SUFFIX for namespaced keys', () => {
+    expect(TASK_BOARD_STORAGE_KEY_SUFFIX).toBe('last-task-board-id');
   });
 
   it('exports WEEKDAY_OPTIONS', () => {

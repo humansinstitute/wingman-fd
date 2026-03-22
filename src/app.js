@@ -19,7 +19,6 @@ import { peopleProfilesManagerMixin } from './people-profiles-manager.js';
 import { connectSettingsManagerMixin } from './connect-settings-manager.js';
 import {
   taskBoardStateMixin,
-  TASK_BOARD_STORAGE_KEY,
   UNSCOPED_TASK_BOARD_ID,
   WEEKDAY_OPTIONS,
 } from './task-board-state.js';
@@ -135,7 +134,7 @@ import {
   buildStoragePrepareBody,
 } from './storage-payloads.js';
 
-// Constants TASK_BOARD_STORAGE_KEY, UNSCOPED_TASK_BOARD_ID, WEEKDAY_OPTIONS imported from task-board-state.js
+// Constants UNSCOPED_TASK_BOARD_ID, WEEKDAY_OPTIONS imported from task-board-state.js
 
 
 /**

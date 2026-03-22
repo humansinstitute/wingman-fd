@@ -35,7 +35,16 @@ import { toRaw } from './utils/state-helpers.js';
 // Constants
 // ---------------------------------------------------------------------------
 
+export const TASK_BOARD_STORAGE_KEY_SUFFIX = 'last-task-board-id';
+/** @deprecated Use namespacedBoardKey() instead */
 export const TASK_BOARD_STORAGE_KEY = 'coworker:last-task-board-id';
+
+function namespacedBoardKey(slug) {
+  return slug
+    ? `coworker:${slug}:${TASK_BOARD_STORAGE_KEY_SUFFIX}`
+    : TASK_BOARD_STORAGE_KEY;
+}
+
 export const UNSCOPED_TASK_BOARD_ID = '__unscoped__';
 export const RECENT_TASK_BOARD_ID = '__recent__';
 export const ALL_TASK_BOARD_ID = '__all__';
@@ -503,13 +512,28 @@ export const taskBoardStateMixin = {
 
   readStoredTaskBoardId() {
     if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(TASK_BOARD_STORAGE_KEY) || null;
+    const slug = this.currentWorkspaceSlug;
+    const key = namespacedBoardKey(slug);
+    // Migrate: if namespaced key is empty but legacy key has a value, copy it over
+    if (slug) {
+      const namespaced = window.localStorage.getItem(key);
+      if (!namespaced) {
+        const legacy = window.localStorage.getItem(TASK_BOARD_STORAGE_KEY);
+        if (legacy) {
+          window.localStorage.setItem(key, legacy);
+          window.localStorage.removeItem(TASK_BOARD_STORAGE_KEY);
+          return legacy;
+        }
+      }
+    }
+    return window.localStorage.getItem(key) || null;
   },
 
   persistSelectedBoardId(boardId) {
     if (typeof window === 'undefined') return;
-    if (boardId) window.localStorage.setItem(TASK_BOARD_STORAGE_KEY, boardId);
-    else window.localStorage.removeItem(TASK_BOARD_STORAGE_KEY);
+    const key = namespacedBoardKey(this.currentWorkspaceSlug);
+    if (boardId) window.localStorage.setItem(key, boardId);
+    else window.localStorage.removeItem(key);
   },
 
   validateSelectedBoardId() {
