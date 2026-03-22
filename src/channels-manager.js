@@ -35,6 +35,8 @@ import {
   wrapKnownGroupKeyForMember,
 } from './crypto/group-keys.js';
 import { sameListBySignature, toRaw } from './utils/state-helpers.js';
+import { buildSuperBasedConnectionToken } from './superbased-token.js';
+import { APP_NPUB } from './app-identity.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -664,6 +666,76 @@ export const channelsManagerMixin = {
       this.error = error?.message || 'Failed to delete group';
     } finally {
       this.groupDeletePendingId = null;
+    }
+  },
+
+  // --- Share invite link ---
+
+  resetShareInvite() {
+    this.shareInviteNpub = '';
+    this.shareInviteGroupId = '';
+    this.shareInviteUrl = '';
+    this.shareInvitePending = false;
+    this.shareInviteError = null;
+    this.shareInviteCopied = false;
+  },
+
+  async generateShareLink() {
+    const inviteeNpub = String(this.shareInviteNpub || '').trim();
+    const groupId = String(this.shareInviteGroupId || '').trim();
+
+    if (!inviteeNpub || !inviteeNpub.startsWith('npub1')) {
+      this.shareInviteError = 'Enter a valid npub for the invitee';
+      return;
+    }
+    if (!groupId) {
+      this.shareInviteError = 'Select a group';
+      return;
+    }
+    if (!this.session?.npub) {
+      this.shareInviteError = 'Sign in first';
+      return;
+    }
+
+    this.shareInvitePending = true;
+    this.shareInviteError = null;
+    this.shareInviteUrl = '';
+    this.shareInviteCopied = false;
+
+    try {
+      const group = this.groups.find((g) => g.group_id === groupId || g.group_npub === groupId);
+      if (!group) throw new Error('Group not found');
+
+      const alreadyMember = (group.member_npubs || []).includes(inviteeNpub);
+      if (!alreadyMember) {
+        await this.addEncryptedGroupMember(groupId, inviteeNpub);
+      }
+
+      const ownerNpub = this.currentWorkspaceOwnerNpub || this.ownerNpub;
+      const token = buildSuperBasedConnectionToken({
+        directHttpsUrl: this.backendUrl,
+        serviceNpub: this.connectHostServiceNpub || '',
+        workspaceOwnerNpub: ownerNpub,
+        appNpub: APP_NPUB,
+      });
+
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      this.shareInviteUrl = `${origin}?token=${encodeURIComponent(token)}`;
+    } catch (error) {
+      this.shareInviteError = error?.message || 'Failed to generate share link';
+    } finally {
+      this.shareInvitePending = false;
+    }
+  },
+
+  async copyShareLink() {
+    if (!this.shareInviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(this.shareInviteUrl);
+      this.shareInviteCopied = true;
+      setTimeout(() => { this.shareInviteCopied = false; }, 2000);
+    } catch {
+      this.shareInviteError = 'Failed to copy link';
     }
   },
 };

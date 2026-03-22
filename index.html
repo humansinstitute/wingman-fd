@@ -3080,6 +3080,48 @@
               </template>
             </ul>
           </section>
+
+          <section class="settings-panel" style="margin-top: 1.5rem;">
+            <h2>Invite via link</h2>
+            <p class="groups-subtitle">Add someone to a group and generate a connection link they can use to join this workspace.</p>
+
+            <label class="docs-field-label">Invitee npub</label>
+            <input class="new-group-input" type="text" x-model="$store.chat.shareInviteNpub"
+              placeholder="npub1..." :disabled="$store.chat.shareInvitePending" />
+
+            <label class="docs-field-label" style="margin-top: 0.75rem;">Group</label>
+            <select class="new-group-input" x-model="$store.chat.shareInviteGroupId" :disabled="$store.chat.shareInvitePending || $store.chat.groups.length === 0">
+              <option value="">Select a group…</option>
+              <template x-for="group in $store.chat.groups" :key="group.group_id">
+                <option :value="group.group_id" x-text="group.name || 'Untitled group'"></option>
+              </template>
+            </select>
+
+            <p class="groups-empty" x-show="$store.chat.groups.length === 0">Create a group first.</p>
+
+            <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+              <button type="button" class="btn-confirm"
+                @click="$store.chat.generateShareLink()"
+                :disabled="$store.chat.shareInvitePending || !$store.chat.shareInviteNpub || !$store.chat.shareInviteGroupId"
+                x-text="$store.chat.shareInvitePending ? 'Generating…' : 'Generate link'"></button>
+              <button type="button" class="btn-cancel" x-show="$store.chat.shareInviteUrl"
+                @click="$store.chat.resetShareInvite()">Clear</button>
+            </div>
+
+            <p class="groups-subtitle" style="color: var(--error-color, #e53e3e); margin-top: 0.5rem;"
+              x-show="$store.chat.shareInviteError" x-text="$store.chat.shareInviteError"></p>
+
+            <div x-show="$store.chat.shareInviteUrl" style="margin-top: 1rem;">
+              <label class="docs-field-label">Share link</label>
+              <div style="display: flex; gap: 0.5rem; align-items: stretch;">
+                <input class="new-group-input" type="text" :value="$store.chat.shareInviteUrl" readonly
+                  style="flex: 1; font-size: 0.8rem;" @click="$event.target.select()" />
+                <button type="button" class="btn-confirm"
+                  @click="$store.chat.copyShareLink()"
+                  x-text="$store.chat.shareInviteCopied ? 'Copied!' : 'Copy'"></button>
+              </div>
+            </div>
+          </section>
           </div>
         </div>
 
