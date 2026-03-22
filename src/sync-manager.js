@@ -1,0 +1,503 @@
+/**
+ * Sync lifecycle, repair, and quarantine methods extracted from app.js.
+ *
+ * The syncManagerMixin object contains methods and getters that use `this`
+ * (the Alpine store) and should be spread into the store definition via applyMixins.
+ */
+
+import {
+  getPendingWrites,
+  getPendingWritesByFamilies,
+  clearSyncState,
+  clearRuntimeFamilies,
+  clearSyncStateForFamilies,
+  getSyncQuarantineEntries,
+  deleteSyncQuarantineEntry,
+  clearSyncQuarantineForFamilies,
+  deleteRuntimeRecordByFamily,
+} from './db.js';
+import { runSync, pullRecordsForFamilies, checkStaleness } from './worker/sync-worker.js';
+import { flightDeckLog } from './logging.js';
+import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
+
+// ---------------------------------------------------------------------------
+// Mixin — methods and getters that use `this` (the Alpine store)
+// ---------------------------------------------------------------------------
+
+export const syncManagerMixin = {
+
+  // --- repair UI ---
+
+  get repairFamilyOptions() {
+    return SYNC_FAMILY_OPTIONS;
+  },
+
+  isRepairFamilySelected(familyId) {
+    return this.repairSelectedFamilyIds.includes(familyId);
+  },
+
+  toggleRepairFamily(familyId) {
+    this.repairError = null;
+    this.repairNotice = '';
+    if (this.isRepairFamilySelected(familyId)) {
+      this.repairSelectedFamilyIds = this.repairSelectedFamilyIds.filter((candidate) => candidate !== familyId);
+      return;
+    }
+    this.repairSelectedFamilyIds = [...this.repairSelectedFamilyIds, familyId];
+  },
+
+  selectAllRepairFamilies() {
+    this.repairError = null;
+    this.repairNotice = '';
+    this.repairSelectedFamilyIds = SYNC_FAMILY_OPTIONS.map((family) => family.id);
+  },
+
+  clearRepairFamilies() {
+    this.repairError = null;
+    this.repairNotice = '';
+    this.repairSelectedFamilyIds = [];
+  },
+
+  // --- sync quarantine ---
+
+  get hasSyncQuarantine() {
+    return this.syncQuarantine.length > 0;
+  },
+
+  syncQuarantineFamilyLabel(entry) {
+    return getSyncFamily(entry?.family_id || entry?.family_hash)?.label || entry?.family_id || entry?.family_hash || 'Unknown family';
+  },
+
+  syncQuarantineRecordLabel(entry) {
+    const recordId = String(entry?.record_id || '').trim();
+    if (!recordId) return 'Unknown record';
+    return recordId.length > 16 ? `${recordId.slice(0, 8)}…${recordId.slice(-4)}` : recordId;
+  },
+
+  formatSyncQuarantineTimestamp(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString();
+  },
+
+  async refreshSyncQuarantine() {
+    this.syncQuarantine = await getSyncQuarantineEntries();
+    return this.syncQuarantine;
+  },
+
+  // --- sync lifecycle ---
+
+  getSyncCadenceMs() {
+    if (!this.session?.npub || !this.backendUrl) return null;
+    if (typeof document !== 'undefined' && document.hidden) return null;
+    if (this.navSection === 'chat' && this.selectedChannelId) return this.FAST_SYNC_MS;
+    if (this.navSection === 'docs') return this.FAST_SYNC_MS;
+    if (this.navSection === 'tasks') return this.FAST_SYNC_MS;
+    if (this.navSection === 'calendar') return this.FAST_SYNC_MS;
+    if (this.navSection === 'schedules') return this.FAST_SYNC_MS;
+    if (this.navSection === 'scopes') return this.FAST_SYNC_MS;
+    return this.IDLE_SYNC_MS;
+  },
+
+  stopBackgroundSync() {
+    if (this.backgroundSyncTimer) {
+      clearTimeout(this.backgroundSyncTimer);
+      this.backgroundSyncTimer = null;
+    }
+    if (this.visibilityHandler && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+  },
+
+  scheduleBackgroundSync(delayMs = null) {
+    if (this.backgroundSyncTimer) clearTimeout(this.backgroundSyncTimer);
+    const cadence = delayMs ?? this.getSyncCadenceMs();
+    if (!cadence) {
+      this.backgroundSyncTimer = null;
+      return;
+    }
+    this.backgroundSyncTimer = setTimeout(() => {
+      this.backgroundSyncTimer = null;
+      this.backgroundSyncTick();
+    }, cadence);
+  },
+
+  ensureBackgroundSync(runSoon = false) {
+    if (!this.visibilityHandler && typeof document !== 'undefined') {
+      this.visibilityHandler = () => this.ensureBackgroundSync(true);
+      document.addEventListener('visibilitychange', this.visibilityHandler);
+    }
+    this.scheduleBackgroundSync(runSoon ? 50 : null);
+  },
+
+  async backgroundSyncTick() {
+    const cadence = this.getSyncCadenceMs();
+    if (!cadence) return;
+
+    if (this.backgroundSyncInFlight) {
+      this.scheduleBackgroundSync(cadence);
+      return;
+    }
+
+    this.backgroundSyncInFlight = true;
+    try {
+      await this.performSync({ silent: true });
+      await this.checkForStaleness();
+    } catch (error) {
+      flightDeckLog('error', 'sync', 'background sync failed', {
+        backendUrl: this.backendUrl || null,
+        ownerNpub: this.workspaceOwnerNpub || null,
+        error: error?.message || String(error),
+      });
+    } finally {
+      this.backgroundSyncInFlight = false;
+      this.scheduleBackgroundSync();
+    }
+  },
+
+  // --- sync session UI ---
+
+  updateSyncSession(updates) {
+    Object.assign(this.syncSession, updates);
+  },
+
+  syncProgressLabel() {
+    const s = this.syncSession;
+    if (s.phase === 'idle' || s.phase === 'done') return '';
+    if (s.phase === 'checking') return 'Checking...';
+    if (s.phase === 'pushing') return `Pushing ${s.pushed} / ${s.pushTotal}`;
+    if (s.phase === 'pulling') {
+      const familyPart = s.currentFamily ? `Fetching ${s.currentFamily}` : 'Pulling';
+      return `${familyPart} (${s.completedFamilies} / ${s.totalFamilies} collections)`;
+    }
+    if (s.phase === 'applying') return 'Applying...';
+    if (s.phase === 'error') return 'Sync error';
+    return '';
+  },
+
+  syncProgressPercent() {
+    const s = this.syncSession;
+    if (s.phase === 'pushing' && s.pushTotal > 0) return Math.round((s.pushed / s.pushTotal) * 50);
+    if (s.phase === 'pulling' && s.totalFamilies > 0) return 50 + Math.round((s.completedFamilies / s.totalFamilies) * 45);
+    if (s.phase === 'applying' || s.phase === 'done') return 100;
+    if (s.phase === 'checking') return 5;
+    return 0;
+  },
+
+  lastSyncTimeLabel() {
+    const t = this.syncSession.lastSuccessAt;
+    if (!t) return 'Never';
+    const diff = Date.now() - t;
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    return new Date(t).toLocaleTimeString();
+  },
+
+  // --- sync execution ---
+
+  async performSync({ silent = false, showBusy = !silent } = {}) {
+    if (!this.session?.npub || !this.backendUrl) {
+      if (!silent) this.error = 'Configure settings first';
+      return { pushed: 0, pulled: 0 };
+    }
+
+    if (!silent) this.error = null;
+    if (showBusy) this.syncing = true;
+    this.updateSyncSession({ state: 'syncing', phase: 'checking', startedAt: Date.now(), error: null, pushed: 0, pushTotal: 0, pulled: 0, completedFamilies: 0, totalFamilies: 0, currentFamily: null });
+    flightDeckLog('info', 'sync', 'sync started', {
+      silent,
+      showBusy,
+      backendUrl: this.backendUrl,
+      ownerNpub: this.workspaceOwnerNpub || null,
+      viewerNpub: this.session?.npub || null,
+    });
+
+    const onProgress = (update) => {
+      this.updateSyncSession(update);
+    };
+
+    try {
+      await this.refreshGroups();
+      if (
+        !this.hasForcedInitialBackfill
+        && this.groups.length > 0
+        && this.channels.length === 0
+        && this.messages.length === 0
+        && this.documents.length === 0
+        && this.directories.length === 0
+        && this.tasks.length === 0
+        && this.taskComments.length === 0
+      ) {
+        await clearSyncState();
+        this.hasForcedInitialBackfill = true;
+      }
+      const result = await runSync(this.workspaceOwnerNpub, this.session.npub, onProgress);
+      this.updateSyncSession({ phase: 'applying' });
+      await this.refreshGroups();
+      await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
+      await this.ensureTaskFamilyBackfill();
+      await this.ensureTaskBoardScopeSetup();
+      if (this.docsEditorOpen && this.selectedDocId) {
+        await this.loadDocComments(this.selectedDocId);
+      }
+      this.updateSyncSession({ phase: 'done', finishedAt: Date.now(), lastSuccessAt: Date.now(), state: 'synced' });
+      await this.refreshSyncStatus();
+      await this.refreshStatusRecentChanges();
+      flightDeckLog('info', 'sync', 'sync completed', {
+        backendUrl: this.backendUrl,
+        ownerNpub: this.workspaceOwnerNpub || null,
+        pushed: result?.pushed ?? 0,
+        pulled: result?.pulled ?? 0,
+        syncStatus: this.syncStatus,
+      });
+      return result;
+    } catch (error) {
+      if (!silent) this.error = error.message;
+      this.updateSyncSession({ phase: 'error', state: 'error', error: error.message, finishedAt: Date.now() });
+      flightDeckLog('error', 'sync', 'sync failed', {
+        backendUrl: this.backendUrl,
+        ownerNpub: this.workspaceOwnerNpub || null,
+        error: error?.message || String(error),
+      });
+      throw error;
+    } finally {
+      if (showBusy) this.syncing = false;
+      await this.refreshSyncStatus();
+    }
+  },
+
+  async syncNow() {
+    try {
+      await this.performSync({ silent: false });
+    } catch (e) {
+      // performSync already surfaced the error state
+    }
+    this.ensureBackgroundSync();
+  },
+
+  async refreshSyncStatus() {
+    if (this.syncing) {
+      this.syncStatus = 'syncing';
+      return;
+    }
+    const pending = await getPendingWrites();
+    const quarantine = await this.refreshSyncQuarantine();
+    if (pending.length > 0) {
+      this.syncStatus = 'unsynced';
+    } else if (quarantine.length > 0) {
+      this.syncStatus = 'quarantined';
+    } else if (this.syncSession.state === 'error') {
+      this.syncStatus = 'error';
+    } else {
+      this.syncStatus = 'synced';
+    }
+    if (pending.length > 0) {
+      flightDeckLog('debug', 'sync', 'pending writes remain after sync status refresh', {
+        pendingCount: pending.length,
+        pending: pending.slice(0, 10).map((row) => ({
+          recordId: row.record_id,
+          family: row.record_family_hash,
+          createdAt: row.created_at,
+        })),
+      });
+    }
+  },
+
+  async checkForStaleness() {
+    if (!this.workspaceOwnerNpub || this.syncing) return;
+    try {
+      const result = await checkStaleness(this.workspaceOwnerNpub);
+      if (result.stale && this.syncStatus === 'synced') {
+        this.syncStatus = 'stale';
+        this.updateSyncSession({ state: 'stale' });
+      }
+    } catch {
+      // Staleness check is opportunistic — do not break anything
+    }
+  },
+
+  // --- task family backfill ---
+
+  async ensureTaskFamilyBackfill() {
+    if (this.hasForcedTaskFamilyBackfill) return false;
+    if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) return false;
+    if (this.tasks.length > 0) return false;
+    if (this.groups.length === 0) return false;
+    if (this.scopes.length === 0 && !this.selectedBoardId) return false;
+
+    this.hasForcedTaskFamilyBackfill = true;
+    flightDeckLog('info', 'sync', 'forcing full task-family backfill on empty local task cache', {
+      backendUrl: this.backendUrl,
+      ownerNpub: this.workspaceOwnerNpub,
+      scopesCount: this.scopes.length,
+      selectedBoardId: this.selectedBoardId || null,
+    });
+
+    await clearSyncStateForFamilies(['task']);
+    await this.pullFamiliesFromBackend(['task'], { forceFull: true });
+    await this.refreshTasks();
+
+    flightDeckLog('info', 'sync', 'task-family backfill completed', {
+      ownerNpub: this.workspaceOwnerNpub,
+      taskCount: this.tasks.length,
+    });
+
+    return true;
+  },
+
+  // --- repair / restore ---
+
+  async restoreFamiliesFromSuperBased(familyIds, options = {}) {
+    const dedupedFamilyIds = [...new Set((familyIds || []).filter(Boolean))];
+    if (dedupedFamilyIds.length === 0) {
+      throw new Error('Select at least one record family.');
+    }
+
+    const pending = await getPendingWritesByFamilies(dedupedFamilyIds);
+    if (pending.length > 0) {
+      const blockingFamilies = [...new Set(
+        pending
+          .map((row) => getSyncFamily(row.record_family_hash)?.label)
+          .filter(Boolean)
+      )];
+      throw new Error(`Cannot restore while unsynced local changes exist in: ${blockingFamilies.join(', ')}. Sync or resolve them first.`);
+    }
+
+    if (options.confirm !== false && typeof window !== 'undefined') {
+      const labels = dedupedFamilyIds.map((familyId) => getSyncFamily(familyId)?.label || familyId);
+      const confirmed = window.confirm(`Restore ${labels.join(', ')} from SuperBased? This clears local cache for the selected families and rebuilds it from the backend.`);
+      if (!confirmed) return { cancelled: true, restored: 0 };
+    }
+
+    await clearRuntimeFamilies(dedupedFamilyIds);
+    await clearSyncStateForFamilies(dedupedFamilyIds);
+    await clearSyncQuarantineForFamilies(dedupedFamilyIds);
+    await this.pullFamiliesFromBackend(dedupedFamilyIds, { forceFull: true });
+    await this.refreshStateForFamilies(dedupedFamilyIds);
+    await this.refreshSyncQuarantine();
+    return { cancelled: false, restored: dedupedFamilyIds.length };
+  },
+
+  async pullFamiliesFromBackend(familyIds, options = {}) {
+    if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) {
+      throw new Error('Configure settings first');
+    }
+    const hashes = getSyncFamilyHashes(familyIds);
+    if (hashes.length === 0) return { pulled: 0 };
+    return pullRecordsForFamilies(this.workspaceOwnerNpub, this.session.npub, hashes, options);
+  },
+
+  async refreshStateForFamilies(familyIds = []) {
+    const selected = new Set(familyIds);
+    if (selected.has('settings')) {
+      await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
+    }
+    if (selected.has('channel')) await this.refreshChannels();
+    if (selected.has('chat_message')) await this.refreshMessages();
+    if (selected.has('audio_note')) await this.refreshAudioNotes();
+    if (selected.has('directory')) await this.refreshDirectories();
+    if (selected.has('document')) await this.refreshDocuments();
+    if (selected.has('task')) await this.refreshTasks();
+    if (selected.has('schedule')) await this.refreshSchedules();
+    if (selected.has('scope')) await this.refreshScopes();
+    if (selected.has('task') || selected.has('scope')) await this.ensureTaskBoardScopeSetup();
+    if (selected.has('comment') && this.activeTaskId) {
+      await this.loadTaskComments(this.activeTaskId);
+    }
+    if ((selected.has('comment') || selected.has('audio_note')) && this.docsEditorOpen && this.selectedDocId) {
+      await this.loadDocComments(this.selectedDocId);
+    }
+    await this.refreshStatusRecentChanges();
+    await this.refreshSyncStatus();
+  },
+
+  async restoreSelectedFamiliesFromSuperBased() {
+    const familyIds = [...new Set(this.repairSelectedFamilyIds)];
+    if (familyIds.length === 0) {
+      this.repairError = 'Select at least one record family.';
+      return;
+    }
+
+    this.repairError = null;
+    this.repairNotice = '';
+
+    this.repairBusy = true;
+    try {
+      const result = await this.restoreFamiliesFromSuperBased(familyIds);
+      if (result.cancelled) return;
+      this.repairNotice = `Restored ${result.restored} record ${result.restored === 1 ? 'family' : 'families'} from SuperBased.`;
+    } catch (error) {
+      this.repairError = error?.message || 'Failed to restore selected record families.';
+    } finally {
+      this.repairBusy = false;
+    }
+  },
+
+  // --- quarantine actions ---
+
+  async dismissSyncQuarantineIssue(entry) {
+    this.syncQuarantineError = null;
+    this.syncQuarantineNotice = '';
+    this.syncQuarantineBusy = true;
+    try {
+      await deleteSyncQuarantineEntry(entry.family_hash, entry.record_id);
+      await this.refreshSyncStatus();
+      this.syncQuarantineNotice = `Dismissed quarantine issue for ${this.syncQuarantineRecordLabel(entry)}.`;
+    } catch (error) {
+      this.syncQuarantineError = error?.message || 'Failed to dismiss quarantine issue.';
+    } finally {
+      this.syncQuarantineBusy = false;
+    }
+  },
+
+  async retrySyncQuarantineIssue(entry) {
+    const familyId = getSyncFamily(entry?.family_id || entry?.family_hash)?.id;
+    if (!familyId) {
+      this.syncQuarantineError = 'Unknown sync family for this quarantine issue.';
+      return;
+    }
+
+    this.syncQuarantineError = null;
+    this.syncQuarantineNotice = '';
+    this.syncQuarantineBusy = true;
+    try {
+      const result = await this.restoreFamiliesFromSuperBased([familyId], { confirm: false });
+      if (result.cancelled) return;
+      this.syncQuarantineNotice = `Rebuilt ${this.syncQuarantineFamilyLabel(entry)} from SuperBased.`;
+    } catch (error) {
+      this.syncQuarantineError = error?.message || 'Failed to retry quarantined family.';
+    } finally {
+      this.syncQuarantineBusy = false;
+    }
+  },
+
+  async deleteLocalQuarantinedRecord(entry) {
+    const family = getSyncFamily(entry?.family_id || entry?.family_hash);
+    if (!family?.id) {
+      this.syncQuarantineError = 'Unknown sync family for this quarantine issue.';
+      return;
+    }
+
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(`Delete local ${this.syncQuarantineFamilyLabel(entry)} record ${this.syncQuarantineRecordLabel(entry)}? This only affects browser state.`);
+      if (!confirmed) return;
+    }
+
+    this.syncQuarantineError = null;
+    this.syncQuarantineNotice = '';
+    this.syncQuarantineBusy = true;
+    try {
+      await deleteRuntimeRecordByFamily(family.id, entry.record_id);
+      await deleteSyncQuarantineEntry(entry.family_hash, entry.record_id);
+      await this.refreshStateForFamilies([family.id]);
+      await this.refreshSyncStatus();
+      this.syncQuarantineNotice = `Deleted local ${this.syncQuarantineFamilyLabel(entry)} record ${this.syncQuarantineRecordLabel(entry)}.`;
+    } catch (error) {
+      this.syncQuarantineError = error?.message || 'Failed to delete local quarantined record.';
+    } finally {
+      this.syncQuarantineBusy = false;
+    }
+  },
+};
