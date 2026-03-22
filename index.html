@@ -2598,6 +2598,15 @@
               @input="$store.chat.handleWorkspaceProfileField('name', $event.target.value)"
               placeholder="Workspace name"
             />
+            <label class="settings-field-label" for="workspace-slug-input">URL slug</label>
+            <input
+              id="workspace-slug-input"
+              type="text"
+              x-model="$store.chat.workspaceProfileSlugInput"
+              @input="$store.chat.handleWorkspaceProfileField('slug', $event.target.value)"
+              placeholder="be-free"
+            />
+            <p class="settings-field-help">Used in the URL: /<span x-text="$store.chat.workspaceProfileSlugInput || 'workspace'"></span>/chat — changing this will break old bookmarked URLs.</p>
             <label class="settings-field-label" for="workspace-description-input">Description</label>
             <textarea
               id="workspace-description-input"

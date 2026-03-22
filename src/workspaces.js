@@ -12,6 +12,16 @@ function firstOwnValue(obj, keys) {
   return { found: false, value: undefined };
 }
 
+export function slugify(text) {
+  return String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'workspace';
+}
+
 function sanitizeOptionalString(value) {
   if (value == null) return null;
   const trimmed = String(value || '').trim();
@@ -75,9 +85,12 @@ export function normalizeWorkspaceEntry(raw = {}) {
       relayUrls,
     });
 
+  const slug = String(raw.slug || '').trim() || slugify(name);
+
   return {
     workspaceOwnerNpub,
     name,
+    slug,
     description,
     avatarUrl,
     directHttpsUrl,
@@ -102,6 +115,7 @@ function normalizeWorkspacePatch(raw = {}) {
   const patch = { workspaceOwnerNpub: normalized.workspaceOwnerNpub };
   const fieldMap = [
     [['name', 'workspace_name', 'workspaceName'], 'name'],
+    [['slug'], 'slug'],
     [['description', 'workspace_description', 'workspaceDescription'], 'description'],
     [['avatarUrl', 'avatar_url', 'workspace_avatar_url', 'workspaceAvatarUrl'], 'avatarUrl'],
     [['directHttpsUrl', 'direct_https_url', 'backendUrl', 'httpUrl'], 'directHttpsUrl'],
@@ -142,6 +156,11 @@ export function mergeWorkspaceEntries(existing = [], incoming = []) {
     if (merged) next.set(merged.workspaceOwnerNpub, merged);
   }
   return [...next.values()];
+}
+
+export function findWorkspaceBySlug(workspaces, slug) {
+  if (!slug || !Array.isArray(workspaces)) return null;
+  return workspaces.find((w) => w.slug === slug) || null;
 }
 
 export function workspaceFromToken(token, extras = {}) {

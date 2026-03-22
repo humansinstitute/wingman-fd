@@ -68,6 +68,7 @@ export default defineConfig({
   preview: {
     host: '0.0.0.0',
   },
+  appType: 'spa',
   build: {
     outDir: 'dist',
   },
