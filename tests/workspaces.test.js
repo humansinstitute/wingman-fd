@@ -32,6 +32,32 @@ describe('workspace entry normalization', () => {
     });
   });
 
+  it('recovers backend metadata from a saved connection token', () => {
+    const token = btoa(JSON.stringify({
+      type: 'superbased_connection',
+      version: 2,
+      direct_https_url: 'https://sb4.otherstuff.studio',
+      service_npub: 'npub1service',
+      workspace_owner_npub: 'npub1workspace',
+      app_npub: 'npub1app',
+      relays: ['wss://relay.example'],
+    }));
+
+    const workspace = normalizeWorkspaceEntry({
+      workspace_owner_npub: 'npub1workspace',
+      connection_token: token,
+    });
+
+    expect(workspace).toMatchObject({
+      workspaceOwnerNpub: 'npub1workspace',
+      directHttpsUrl: 'https://sb4.otherstuff.studio',
+      serviceNpub: 'npub1service',
+      appNpub: 'npub1app',
+      relayUrls: ['wss://relay.example'],
+      connectionToken: token,
+    });
+  });
+
   it('preserves existing metadata when incoming workspace payloads are partial', () => {
     const existing = [{
       workspaceOwnerNpub: 'npub1workspace',

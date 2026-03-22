@@ -24,10 +24,13 @@ function sanitizeRelayUrls(value) {
 }
 
 export function normalizeWorkspaceEntry(raw = {}) {
+  const token = String(raw.connectionToken || raw.connection_token || '').trim();
+  const parsedToken = token ? parseSuperBasedToken(token) : { isValid: false };
   const workspaceOwnerNpub = String(
     raw.workspaceOwnerNpub
     || raw.workspace_owner_npub
     || raw.owner_npub
+    || parsedToken.workspaceOwnerNpub
     || ''
   ).trim();
   if (!workspaceOwnerNpub) return null;
@@ -37,11 +40,12 @@ export function normalizeWorkspaceEntry(raw = {}) {
     || raw.direct_https_url
     || raw.backendUrl
     || raw.httpUrl
+    || parsedToken.directHttpsUrl
     || ''
   ).trim();
-  const serviceNpub = String(raw.serviceNpub || raw.service_npub || '').trim() || null;
-  const appNpub = String(raw.appNpub || raw.app_npub || APP_NPUB || '').trim() || null;
-  const relayUrls = sanitizeRelayUrls(raw.relayUrls ?? raw.relay_urls);
+  const serviceNpub = String(raw.serviceNpub || raw.service_npub || parsedToken.serviceNpub || '').trim() || null;
+  const appNpub = String(raw.appNpub || raw.app_npub || parsedToken.appNpub || APP_NPUB || '').trim() || null;
+  const relayUrls = sanitizeRelayUrls(raw.relayUrls ?? raw.relay_urls ?? parsedToken.relayUrls);
   const name = String(
     raw.name
     ?? raw.workspace_name
@@ -62,8 +66,7 @@ export function normalizeWorkspaceEntry(raw = {}) {
     ?? null,
   );
 
-  const connectionToken = raw.connectionToken
-    || raw.connection_token
+  const connectionToken = token
     || buildSuperBasedConnectionToken({
       directHttpsUrl,
       serviceNpub,

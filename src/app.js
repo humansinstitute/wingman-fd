@@ -4,11 +4,14 @@
  */
 
 import Alpine from 'alpinejs';
+import { liveQuery } from 'dexie';
 import { commentBelongsToDocBlock } from './doc-comment-anchors.js';
 import {
   rankMainFeedMessages,
   rankThreadReplies,
+  resolveVisibleThreadReplyCount,
   sortMessagesByUpdatedAt,
+  visibleThreadReplies,
 } from './chat-order.js';
 import { renderMarkdownToHtml } from './markdown.js';
 import { resolveChannelLabel } from './channel-labels.js';
@@ -34,6 +37,7 @@ import {
   getSettings,
   saveSettings,
   getWorkspaceSettings,
+  getWorkspaceSettingsSnapshot,
   upsertWorkspaceSettings,
   getCachedStorageImage,
   cacheStorageImage,
@@ -241,6 +245,32 @@ function storageObjectIdFromRef(value) {
   return match?.[1] || '';
 }
 
+function storageImageCacheKey(objectId, backendUrl = '') {
+  const normalizedObjectId = String(objectId || '').trim();
+  const normalizedBackendUrl = String(backendUrl || '').trim().replace(/\/+$/, '');
+  if (!normalizedObjectId) return '';
+  return normalizedBackendUrl ? `${normalizedBackendUrl}::${normalizedObjectId}` : normalizedObjectId;
+}
+
+function defaultRecordSignature(record) {
+  return [
+    String(record?.record_id || ''),
+    String(record?.updated_at || ''),
+    String(record?.version ?? ''),
+    String(record?.record_state || ''),
+    String(record?.sync_status || ''),
+  ].join('|');
+}
+
+function sameListBySignature(current = [], next = [], signatureFor = defaultRecordSignature) {
+  if (current === next) return true;
+  if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) return false;
+  for (let index = 0; index < current.length; index += 1) {
+    if (signatureFor(current[index]) !== signatureFor(next[index])) return false;
+  }
+  return true;
+}
+
 function parseMarkdownBlocks(content) {
   const source = String(content || '').replace(/\r\n?/g, '\n');
   if (!source.trim()) return [];
@@ -390,7 +420,16 @@ export function initApp() {
     docConnectorScrollHandler: null,
     docConnectorResizeHandler: null,
     chatFeedScrollFrame: null,
+    threadRepliesScrollFrame: null,
     chatPreviewMeasureFrame: null,
+    sharedLiveSubscriptions: [],
+    workspaceLiveSubscriptions: [],
+    channelLiveSubscription: null,
+    taskCommentsLiveSubscription: null,
+    docCommentsLiveSubscription: null,
+    docCommentBackfillAttemptsByDocId: {},
+    pendingChatScrollToLatest: false,
+    pendingThreadScrollToLatest: false,
 
     // data
     channels: [],
@@ -535,6 +574,7 @@ export function initApp() {
     superbasedTokenInput: '',
     superbasedError: null,
     knownWorkspaces: [],
+    workspaceProfileRowsByOwner: {},
     currentWorkspaceOwnerNpub: '',
     showWorkspaceSwitcherMenu: false,
     workspaceSwitchPendingNpub: '',
@@ -605,6 +645,7 @@ export function initApp() {
     loginError: null,
     storageImageUrlCache: {},
     storageImageLoadPromises: {},
+    workspaceProfileHydrationPromises: {},
     _storageImageHydrateScheduled: false,
 
     get isLoggedIn() {
@@ -736,17 +777,15 @@ export function initApp() {
 
     get threadMessages() {
       if (!this.activeThreadId) return [];
-      return [...rankThreadReplies(this.messages, this.activeThreadId)].reverse();
+      return rankThreadReplies(this.messages, this.activeThreadId);
     },
 
     get resolvedThreadVisibleReplyCount() {
-      const focusIndex = this.threadMessages.findIndex((message) => message.record_id === this.focusMessageId);
-      if (focusIndex >= 0) return Math.max(this.threadVisibleReplyCount, focusIndex + 1);
-      return this.threadVisibleReplyCount;
+      return resolveVisibleThreadReplyCount(this.threadMessages, this.threadVisibleReplyCount, this.focusMessageId);
     },
 
     get visibleThreadMessages() {
-      return this.threadMessages.slice(0, this.resolvedThreadVisibleReplyCount);
+      return visibleThreadReplies(this.messages, this.activeThreadId, this.threadVisibleReplyCount, this.focusMessageId);
     },
 
     get hiddenThreadReplyCount() {
@@ -1039,25 +1078,54 @@ export function initApp() {
       return this.knownWorkspaces.find((entry) => entry.workspaceOwnerNpub === workspaceOwnerNpub) || null;
     },
 
+    getWorkspaceDisplayEntry(workspace) {
+      const workspaceOwnerNpub = typeof workspace === 'string' ? workspace : workspace?.workspaceOwnerNpub;
+      if (!workspaceOwnerNpub) return typeof workspace === 'object' ? workspace : null;
+      const known = this.getWorkspaceByOwner(workspaceOwnerNpub) || (typeof workspace === 'object' ? workspace : null) || {};
+      const profile = this.workspaceProfileRowsByOwner?.[workspaceOwnerNpub] || {};
+      return {
+        ...known,
+        ...profile,
+        workspaceOwnerNpub,
+      };
+    },
+
     getWorkspaceName(workspace) {
-      return String(workspace?.name || '').trim() || 'Untitled workspace';
+      const entry = this.getWorkspaceDisplayEntry(workspace);
+      return String(entry?.name || '').trim() || 'Untitled workspace';
     },
 
     getWorkspaceMeta(workspace) {
-      return String(workspace?.description || '').trim() || workspace?.workspaceOwnerNpub || '';
+      const entry = this.getWorkspaceDisplayEntry(workspace);
+      return String(entry?.description || '').trim() || entry?.workspaceOwnerNpub || '';
+    },
+
+    getWorkspaceStorageBackendUrl(workspace) {
+      const entry = this.getWorkspaceDisplayEntry(workspace);
+      const workspaceOwnerNpub = entry?.workspaceOwnerNpub || '';
+      if (entry?.directHttpsUrl) return String(entry.directHttpsUrl).trim();
+      if (workspaceOwnerNpub && workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) {
+        return this.currentWorkspaceBackendUrl;
+      }
+      return '';
     },
 
     getWorkspaceAvatar(workspace) {
-      const entry = typeof workspace === 'string' ? this.getWorkspaceByOwner(workspace) : workspace;
-      const workspaceOwnerNpub = typeof workspace === 'string' ? workspace : workspace?.workspaceOwnerNpub;
+      const entry = this.getWorkspaceDisplayEntry(workspace);
+      const workspaceOwnerNpub = entry?.workspaceOwnerNpub || '';
       const storedAvatar = String(entry?.avatarUrl || entry?.avatar_url || '').trim();
       const storedObjectId = storageObjectIdFromRef(storedAvatar);
       if (storedObjectId) {
-        const resolved = this.storageImageUrlCache?.[storedObjectId];
+        const backendUrl = this.getWorkspaceStorageBackendUrl(entry || workspaceOwnerNpub);
+        const cacheKey = storageImageCacheKey(storedObjectId, backendUrl);
+        const resolved = this.storageImageUrlCache?.[cacheKey];
         if (resolved) return resolved;
-        this.resolveStorageImageUrl(storedObjectId).catch(() => {});
+        this.resolveStorageImageUrl(storedObjectId, { backendUrl }).catch(() => {});
       } else if (storedAvatar) {
         return storedAvatar;
+      }
+      if (workspaceOwnerNpub) {
+        void this.ensureWorkspaceProfileHydrated(workspaceOwnerNpub);
       }
       return workspaceOwnerNpub ? this.getSenderAvatar(workspaceOwnerNpub) : null;
     },
@@ -1071,6 +1139,9 @@ export function initApp() {
     toggleWorkspaceSwitcherMenu() {
       if (this.isWorkspaceSwitching) return;
       this.showWorkspaceSwitcherMenu = !this.showWorkspaceSwitcherMenu;
+      if (this.showWorkspaceSwitcherMenu) {
+        void this.hydrateKnownWorkspaceProfiles();
+      }
     },
 
     closeWorkspaceSwitcherMenu() {
@@ -1900,6 +1971,89 @@ export function initApp() {
       this.syncWorkspaceProfileDraft();
     },
 
+    async hydrateKnownWorkspaceProfiles() {
+      if (!Array.isArray(this.knownWorkspaces) || this.knownWorkspaces.length === 0) return;
+
+      const patches = [];
+      const overlay = { ...(this.workspaceProfileRowsByOwner || {}) };
+      for (const workspace of this.knownWorkspaces) {
+        const workspaceOwnerNpub = String(workspace?.workspaceOwnerNpub || '').trim();
+        if (!workspaceOwnerNpub) continue;
+        const row = await getWorkspaceSettingsSnapshot(workspaceOwnerNpub);
+        if (!row?.workspace_owner_npub) continue;
+        const patch = {
+          workspaceOwnerNpub: row.workspace_owner_npub,
+        };
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) patch.name = row.workspace_name;
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_description')) patch.description = row.workspace_description;
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) patch.avatarUrl = row.workspace_avatar_url;
+        patches.push(patch);
+        overlay[workspaceOwnerNpub] = {
+          ...(overlay[workspaceOwnerNpub] || {}),
+          ...patch,
+        };
+      }
+
+      if (patches.length === 0) return;
+      this.workspaceProfileRowsByOwner = overlay;
+      const before = JSON.stringify(this.knownWorkspaces);
+      this.mergeKnownWorkspaces(patches);
+      if (JSON.stringify(this.knownWorkspaces) !== before) {
+        await this.persistWorkspaceSettings();
+      }
+    },
+
+    async ensureWorkspaceProfileHydrated(workspaceOwnerNpub) {
+      const owner = String(workspaceOwnerNpub || '').trim();
+      if (!owner) return;
+
+      const existing = this.getWorkspaceByOwner(owner);
+      if (String(existing?.avatarUrl || '').trim()) return;
+
+      const pending = this.workspaceProfileHydrationPromises?.[owner];
+      if (pending) return pending;
+
+      const loadPromise = (async () => {
+        const row = await getWorkspaceSettingsSnapshot(owner);
+        if (!row?.workspace_owner_npub) return;
+
+        const patch = {
+          workspaceOwnerNpub: row.workspace_owner_npub,
+        };
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) patch.name = row.workspace_name;
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_description')) patch.description = row.workspace_description;
+        if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) patch.avatarUrl = row.workspace_avatar_url;
+
+        this.workspaceProfileRowsByOwner = {
+          ...(this.workspaceProfileRowsByOwner || {}),
+          [owner]: {
+            ...(this.workspaceProfileRowsByOwner?.[owner] || {}),
+            ...patch,
+          },
+        };
+
+        const before = JSON.stringify(this.getWorkspaceByOwner(owner) || {});
+        this.mergeKnownWorkspaces([patch]);
+        const after = JSON.stringify(this.getWorkspaceByOwner(owner) || {});
+        if (after !== before) {
+          await this.persistWorkspaceSettings();
+        }
+      })();
+
+      this.workspaceProfileHydrationPromises = {
+        ...(this.workspaceProfileHydrationPromises || {}),
+        [owner]: loadPromise,
+      };
+
+      try {
+        await loadPromise;
+      } finally {
+        const next = { ...(this.workspaceProfileHydrationPromises || {}) };
+        delete next[owner];
+        this.workspaceProfileHydrationPromises = next;
+      }
+    },
+
     revokeWorkspaceAvatarPreviewObjectUrl() {
       if (this.workspaceProfilePendingAvatarObjectUrl?.startsWith('blob:')) {
         URL.revokeObjectURL(this.workspaceProfilePendingAvatarObjectUrl);
@@ -1916,6 +2070,7 @@ export function initApp() {
       const workspace = this.currentWorkspace;
       const storedAvatar = String(workspace?.avatarUrl || '').trim();
       const storedObjectId = storageObjectIdFromRef(storedAvatar);
+      const backendUrl = this.getWorkspaceStorageBackendUrl(workspace);
       this.revokeWorkspaceAvatarPreviewObjectUrl();
       this.workspaceProfilePendingAvatarFile = null;
       this.workspaceProfileNameInput = String(workspace?.name || '').trim();
@@ -1923,7 +2078,7 @@ export function initApp() {
       this.workspaceProfileAvatarInput = storedAvatar;
       this.setWorkspaceAvatarPreview(storedObjectId ? '' : (this.getWorkspaceAvatar(workspace) || ''));
       if (storedObjectId) {
-        this.resolveStorageImageUrl(storedObjectId)
+        this.resolveStorageImageUrl(storedObjectId, { backendUrl })
           .then((url) => {
             if (this.workspaceProfileDirty) return;
             if (this.workspaceProfileAvatarInput !== storedAvatar) return;
@@ -1997,6 +2152,13 @@ export function initApp() {
         if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) {
           workspacePatch.avatarUrl = row.workspace_avatar_url;
         }
+        this.workspaceProfileRowsByOwner = {
+          ...(this.workspaceProfileRowsByOwner || {}),
+          [row.workspace_owner_npub]: {
+            ...(this.workspaceProfileRowsByOwner?.[row.workspace_owner_npub] || {}),
+            ...workspacePatch,
+          },
+        };
         this.mergeKnownWorkspaces([workspacePatch]);
       }
       if (overwriteInput || !this.wingmanHarnessDirty) {
@@ -2136,6 +2298,8 @@ export function initApp() {
       this.workspaceSwitchPendingNpub = workspace.workspaceOwnerNpub;
       this.showWorkspaceSwitcherMenu = false;
       try {
+        this.startSharedLiveQueries();
+        this.stopWorkspaceLiveQueries();
         this.currentWorkspaceOwnerNpub = workspace.workspaceOwnerNpub;
         openWorkspaceDb(workspace.workspaceOwnerNpub);
         this.showWorkspaceBootstrapModal = false;
@@ -2159,8 +2323,10 @@ export function initApp() {
           this.cancelEditSchedule();
           this.hasForcedInitialBackfill = false;
           this.hasForcedTaskFamilyBackfill = false;
+          this.docCommentBackfillAttemptsByDocId = {};
         }
 
+        this.startWorkspaceLiveQueries();
         this.selectedBoardId = this.readStoredTaskBoardId() || null;
         this.validateSelectedBoardId();
         await this.persistWorkspaceSettings();
@@ -2198,6 +2364,7 @@ export function initApp() {
       this.stopBackgroundSync();
 
       const isCurrentWorkspace = this.currentWorkspaceOwnerNpub === workspaceOwnerNpub;
+      if (isCurrentWorkspace) this.stopWorkspaceLiveQueries();
 
       // Remove from known workspaces list
       this.knownWorkspaces = this.knownWorkspaces.filter((w) => w.workspaceOwnerNpub !== workspaceOwnerNpub);
@@ -2250,13 +2417,16 @@ export function initApp() {
       if (!this.session?.npub || !this.backendUrl) return;
       try {
         const serviceNpub = await this.fetchBackendServiceNpub();
+        const backendUrl = normalizeBackendUrl(this.backendUrl);
         const result = await getWorkspaces(this.session.npub);
         const workspaces = (result.workspaces || []).map((entry) => ({
           ...entry,
+          directHttpsUrl: entry.direct_https_url || entry.directHttpsUrl || backendUrl,
           serviceNpub,
           appNpub: this.superbasedConnectionConfig?.appNpub || null,
         }));
         this.mergeKnownWorkspaces(workspaces);
+        await this.hydrateKnownWorkspaceProfiles();
       } catch (error) {
         console.debug('loadRemoteWorkspaces failed:', error?.message || error);
       }
@@ -2387,6 +2557,7 @@ export function initApp() {
       this.initRouteSync();
       this.initDocCommentConnector();
       await migrateFromLegacyDb();
+      this.startSharedLiveQueries();
       const settings = await getSettings();
       if (settings) {
         this.backendUrl = normalizeBackendUrl(settings.backendUrl ?? '');
@@ -2413,6 +2584,7 @@ export function initApp() {
       }
       if (!this.backendUrl) this.backendUrl = guessDefaultBackendUrl();
       if (this.backendUrl) setBaseUrl(this.backendUrl);
+      await this.hydrateKnownWorkspaceProfiles();
       this.ensureBackgroundSync();
       await this.maybeAutoLogin();
       this.updateWorkspaceBootstrapPrompt();
@@ -2448,6 +2620,182 @@ export function initApp() {
         await this.refreshStatusRecentChanges();
         if (this.defaultAgentNpub) this.resolveChatProfile(this.defaultAgentNpub);
       }
+    },
+
+    createLiveSubscription(query, onNext) {
+      return liveQuery(query).subscribe({
+        next: (value) => {
+          Promise.resolve(onNext(value)).catch((error) => {
+            console.error('Live query update failed:', error?.message || error);
+          });
+        },
+        error: (error) => {
+          console.error('Live query failed:', error?.message || error);
+        },
+      });
+    },
+
+    stopLiveSubscription(subscription) {
+      if (!subscription) return;
+      try {
+        subscription.unsubscribe();
+      } catch {
+        /* ignore */
+      }
+    },
+
+    stopSharedLiveQueries() {
+      for (const subscription of this.sharedLiveSubscriptions) {
+        this.stopLiveSubscription(subscription);
+      }
+      this.sharedLiveSubscriptions = [];
+    },
+
+    stopWorkspaceLiveQueries() {
+      for (const subscription of this.workspaceLiveSubscriptions) {
+        this.stopLiveSubscription(subscription);
+      }
+      this.workspaceLiveSubscriptions = [];
+      this.stopSelectedChannelLiveQuery();
+      this.stopTaskCommentsLiveQuery();
+      this.stopDocCommentsLiveQuery();
+    },
+
+    stopSelectedChannelLiveQuery() {
+      this.stopLiveSubscription(this.channelLiveSubscription);
+      this.channelLiveSubscription = null;
+    },
+
+    stopTaskCommentsLiveQuery() {
+      this.stopLiveSubscription(this.taskCommentsLiveSubscription);
+      this.taskCommentsLiveSubscription = null;
+    },
+
+    stopDocCommentsLiveQuery() {
+      this.stopLiveSubscription(this.docCommentsLiveSubscription);
+      this.docCommentsLiveSubscription = null;
+    },
+
+    stopAllLiveQueries() {
+      this.stopSharedLiveQueries();
+      this.stopWorkspaceLiveQueries();
+    },
+
+    startSharedLiveQueries() {
+      if (this.sharedLiveSubscriptions.length > 0) return;
+      this.sharedLiveSubscriptions = [
+        this.createLiveSubscription(
+          () => getAddressBookPeople(),
+          (people) => this.applyAddressBookPeople(people),
+        ),
+      ];
+    },
+
+    startWorkspaceLiveQueries() {
+      this.stopWorkspaceLiveQueries();
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub) return;
+
+      this.workspaceLiveSubscriptions = [
+        this.createLiveSubscription(
+          () => getChannelsByOwner(ownerNpub),
+          (channels) => this.applyChannels(channels),
+        ),
+        this.createLiveSubscription(
+          () => getAudioNotesByOwner(ownerNpub),
+          (audioNotes) => this.applyAudioNotes(audioNotes),
+        ),
+        this.createLiveSubscription(
+          () => getDirectoriesByOwner(ownerNpub),
+          (directories) => this.applyDirectories(directories),
+        ),
+        this.createLiveSubscription(
+          () => getDocumentsByOwner(ownerNpub),
+          (documents) => this.applyDocuments(documents),
+        ),
+        this.createLiveSubscription(
+          () => getTasksByOwner(ownerNpub),
+          (tasks) => this.applyTasks(tasks),
+        ),
+        this.createLiveSubscription(
+          () => getSchedulesByOwner(ownerNpub),
+          (schedules) => this.applySchedules(schedules),
+        ),
+        this.createLiveSubscription(
+          () => getScopesByOwner(ownerNpub),
+          (scopes) => this.applyScopes(scopes),
+        ),
+      ];
+
+      this.startSelectedChannelLiveQuery();
+    },
+
+    startSelectedChannelLiveQuery() {
+      this.stopSelectedChannelLiveQuery();
+
+      const workspaceOwnerNpub = this.workspaceOwnerNpub;
+      const channelId = this.selectedChannelId;
+
+      if (!workspaceOwnerNpub || !channelId) {
+        this.applyMessages([], { scrollToLatest: false });
+        return;
+      }
+
+      this.channelLiveSubscription = this.createLiveSubscription(
+        () => getMessagesByChannel(channelId),
+        (messages) => {
+          if (this.workspaceOwnerNpub !== workspaceOwnerNpub || this.selectedChannelId !== channelId) return;
+          return this.applyMessages(messages);
+        },
+      );
+    },
+
+    startTaskCommentsLiveQuery() {
+      this.stopTaskCommentsLiveQuery();
+
+      const workspaceOwnerNpub = this.workspaceOwnerNpub;
+      const taskId = this.activeTaskId;
+
+      if (!workspaceOwnerNpub || !taskId) {
+        this.applyTaskComments([]);
+        return;
+      }
+
+      this.taskCommentsLiveSubscription = this.createLiveSubscription(
+        () => getCommentsByTarget(taskId),
+        (comments) => {
+          if (this.workspaceOwnerNpub !== workspaceOwnerNpub || this.activeTaskId !== taskId) return;
+          return this.applyTaskComments(comments);
+        },
+      );
+    },
+
+    startDocCommentsLiveQuery(docId = this.selectedDocId) {
+      this.stopDocCommentsLiveQuery();
+
+      const workspaceOwnerNpub = this.workspaceOwnerNpub;
+      const targetDocId = String(docId || '').trim();
+      const documentFamilyHash = recordFamilyHash('document');
+
+      if (!workspaceOwnerNpub || !targetDocId || this.selectedDocType !== 'document') {
+        this.applyDocComments([]);
+        return;
+      }
+
+      this.docCommentsLiveSubscription = this.createLiveSubscription(
+        async () => {
+          const comments = await getCommentsByTarget(targetDocId);
+          return comments.filter((comment) => comment.target_record_family_hash === documentFamilyHash);
+        },
+        (comments) => {
+          if (
+            this.workspaceOwnerNpub !== workspaceOwnerNpub
+            || this.selectedDocType !== 'document'
+            || this.selectedDocId !== targetDocId
+          ) return;
+          return this.applyDocComments(comments, { docId: targetDocId, allowBackfill: true });
+        },
+      );
     },
 
     initRouteSync() {
@@ -2757,6 +3105,7 @@ export function initApp() {
 
     async logout() {
       this.stopBackgroundSync();
+      this.stopAllLiveQueries();
       this.clearDocCommentConnector();
       this.revokeStorageImageObjectUrls();
       await clearAutoLogin();
@@ -2784,6 +3133,7 @@ export function initApp() {
       this.newGroupMemberQuery = '';
       this.newGroupMembers = [];
       this.chatProfiles = {};
+      this.workspaceProfileRowsByOwner = {};
       this.workspaceSettingsRecordId = '';
       this.workspaceSettingsVersion = 0;
       this.workspaceSettingsGroupIds = [];
@@ -2803,6 +3153,7 @@ export function initApp() {
       this.wingmanHarnessError = null;
       this.wingmanHarnessDirty = false;
       this.hasForcedInitialBackfill = false;
+      this.docCommentBackfillAttemptsByDocId = {};
       this.loginError = null;
       this.error = null;
       this.showAvatarMenu = false;
@@ -2847,6 +3198,15 @@ export function initApp() {
           size_bytes: bytes.byteLength,
           sha256_hex: await this.sha256HexForBytes(bytes),
         });
+        const backendUrl = this.getWorkspaceStorageBackendUrl(this.currentWorkspace);
+        const cacheKey = storageImageCacheKey(prepared.object_id, backendUrl);
+        const blob = new Blob([bytes], { type: file.type || 'image/png' });
+        await cacheStorageImage({
+          object_id: cacheKey,
+          blob,
+          content_type: blob.type || 'application/octet-stream',
+        });
+        this.rememberStorageImageUrl(cacheKey, URL.createObjectURL(blob));
         return `storage://${prepared.object_id}`;
       } catch (error) {
         const message = String(error?.message || error);
@@ -3337,7 +3697,10 @@ export function initApp() {
       try {
         const result = await getWorkspaces(this.session.npub);
         this.connectWorkspaces = (result.workspaces || []).map((entry) => ({
-          ...entry, serviceNpub: this.connectHostServiceNpub, appNpub: APP_NPUB,
+          ...entry,
+          directHttpsUrl: entry.direct_https_url || entry.directHttpsUrl || this.connectHostUrl,
+          serviceNpub: this.connectHostServiceNpub,
+          appNpub: APP_NPUB,
         }));
       } catch (error) {
         this.connectWorkspacesError = `Failed to load workspaces: ${error?.message || error}`;
@@ -3672,16 +4035,7 @@ export function initApp() {
         this.updateSyncSession({ phase: 'applying' });
         await this.refreshGroups();
         await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
-        await this.refreshAddressBook();
-        await this.refreshChannels();
-        await this.refreshMessages();
-        await this.refreshAudioNotes();
-        await this.refreshDirectories();
-        await this.refreshDocuments();
-        await this.refreshScopes();
-        await this.refreshTasks();
         await this.ensureTaskFamilyBackfill();
-        await this.refreshSchedules();
         await this.ensureTaskBoardScopeSetup();
         if (this.docsEditorOpen && this.selectedDocId) {
           await this.loadDocComments(this.selectedDocId);
@@ -3935,15 +4289,7 @@ export function initApp() {
     async refreshChannels() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
-      this.channels = await getChannelsByOwner(ownerNpub);
-      for (const channel of this.channels) {
-        await this.rememberPeople(this.getChannelParticipants(channel), 'chat');
-      }
-      if (!this.selectedChannelId && this.channels.length > 0) {
-        this.selectedChannelId = this.channels[0].record_id;
-        await this.refreshMessages({ scrollToLatest: true });
-      }
-      this.updatePageTitle();
+      await this.applyChannels(await getChannelsByOwner(ownerNpub));
     },
 
     async refreshGroups() {
@@ -4101,6 +4447,63 @@ export function initApp() {
       });
     },
 
+    scheduleThreadRepliesScrollToBottom() {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return;
+      Alpine.nextTick(() => {
+        if (this.threadRepliesScrollFrame) window.cancelAnimationFrame(this.threadRepliesScrollFrame);
+        this.threadRepliesScrollFrame = window.requestAnimationFrame(() => {
+          this.threadRepliesScrollFrame = null;
+          const replies = document.querySelector('[data-thread-replies]');
+          if (!replies) return;
+          replies.scrollTop = replies.scrollHeight;
+        });
+      });
+    },
+
+    captureScrollAnchor({ containerSelector, itemSelector, itemAttribute }) {
+      if (typeof document === 'undefined') return null;
+      const container = document.querySelector(containerSelector);
+      if (!container) return null;
+
+      const containerRect = container.getBoundingClientRect();
+      const items = [...container.querySelectorAll(itemSelector)];
+      const anchorItem = items.find((item) => item.getBoundingClientRect().bottom > containerRect.top + 1) || null;
+
+      return {
+        containerSelector,
+        itemSelector,
+        itemAttribute,
+        itemId: anchorItem?.getAttribute(itemAttribute) || '',
+        offsetTop: anchorItem ? anchorItem.getBoundingClientRect().top - containerRect.top : 0,
+        atBottom: (container.scrollHeight - container.clientHeight - container.scrollTop) <= 8,
+      };
+    },
+
+    restoreScrollAnchor(anchor) {
+      if (!anchor || typeof window === 'undefined' || typeof document === 'undefined') return;
+      Alpine.nextTick(() => {
+        window.requestAnimationFrame(() => {
+          const container = document.querySelector(anchor.containerSelector);
+          if (!container) return;
+
+          if (anchor.atBottom) {
+            container.scrollTop = container.scrollHeight;
+            return;
+          }
+
+          if (!anchor.itemId) return;
+
+          const item = [...container.querySelectorAll(anchor.itemSelector)]
+            .find((candidate) => candidate.getAttribute(anchor.itemAttribute) === anchor.itemId);
+          if (!item) return;
+
+          const containerRect = container.getBoundingClientRect();
+          const itemRect = item.getBoundingClientRect();
+          container.scrollTop += (itemRect.top - containerRect.top) - anchor.offsetTop;
+        });
+      });
+    },
+
     autosizeComposer(textarea) {
       if (!textarea || typeof window === 'undefined') return;
       const styles = window.getComputedStyle(textarea);
@@ -4124,8 +4527,61 @@ export function initApp() {
       });
     },
 
+    applyAddressBookPeople(people = []) {
+      const nextPeople = Array.isArray(people) ? people : [];
+      if (sameListBySignature(this.addressBookPeople, nextPeople, (person) => [
+        String(person?.npub || ''),
+        String(person?.label || ''),
+        String(person?.avatar_url || ''),
+        String(person?.last_used_at || ''),
+      ].join('|'))) {
+        return;
+      }
+      this.addressBookPeople = nextPeople;
+    },
+
     async refreshAddressBook() {
-      this.addressBookPeople = await getAddressBookPeople();
+      this.applyAddressBookPeople(await getAddressBookPeople());
+    },
+
+    async applyChannels(channels = [], options = {}) {
+      const nextChannels = Array.isArray(channels) ? channels : [];
+      if (!sameListBySignature(this.channels, nextChannels, (channel) => [
+        String(channel?.record_id || ''),
+        String(channel?.updated_at || ''),
+        String(channel?.version ?? ''),
+        String(channel?.record_state || ''),
+      ].join('|'))) {
+        this.channels = nextChannels;
+      }
+
+      for (const channel of nextChannels) {
+        await this.rememberPeople(this.getChannelParticipants(channel), 'chat');
+      }
+
+      let nextSelectedChannelId = this.selectedChannelId;
+      if (nextSelectedChannelId && !nextChannels.some((channel) => channel.record_id === nextSelectedChannelId)) {
+        nextSelectedChannelId = nextChannels[0]?.record_id || null;
+      }
+      if (!nextSelectedChannelId && nextChannels.length > 0) {
+        nextSelectedChannelId = nextChannels[0].record_id;
+      }
+
+      if (nextSelectedChannelId !== this.selectedChannelId) {
+        this.selectedChannelId = nextSelectedChannelId;
+        this.expandedChatMessageIds = [];
+        this.truncatedChatMessageIds = [];
+        this.closeThread({ syncRoute: false });
+        this.pendingChatScrollToLatest = Boolean(nextSelectedChannelId);
+        this.startSelectedChannelLiveQuery();
+        if (options.syncRoute !== false) this.syncRoute(true);
+      }
+
+      if (!nextSelectedChannelId) {
+        await this.applyMessages([], { scrollToLatest: false });
+      }
+
+      this.updatePageTitle();
     },
 
     async selectChannel(recordId, options = {}) {
@@ -4133,7 +4589,8 @@ export function initApp() {
       this.expandedChatMessageIds = [];
       this.truncatedChatMessageIds = [];
       this.closeThread({ syncRoute: false });
-      await this.refreshMessages({ scrollToLatest: options.scrollToLatest !== false });
+      this.pendingChatScrollToLatest = options.scrollToLatest !== false;
+      this.startSelectedChannelLiveQuery();
       if (options.syncRoute !== false) this.syncRoute();
       this.ensureBackgroundSync(true);
     },
@@ -4437,35 +4894,85 @@ export function initApp() {
 
     // --- messages ---
 
-    async refreshMessages(options = {}) {
-      if (!this.selectedChannelId) {
-        this.messages = [];
-        this.activeThreadId = null;
-        return;
+    async applyMessages(messages = [], options = {}) {
+      const nextMessages = sortMessagesByUpdatedAt(Array.isArray(messages) ? messages : []);
+      const messagesChanged = !sameListBySignature(this.messages, nextMessages);
+      const chatFeedAnchor = messagesChanged
+        ? this.captureScrollAnchor({
+          containerSelector: '[data-chat-feed]',
+          itemSelector: '[data-message-id]',
+          itemAttribute: 'data-message-id',
+        })
+        : null;
+      const threadRepliesAnchor = messagesChanged
+        ? this.captureScrollAnchor({
+          containerSelector: '[data-thread-replies]',
+          itemSelector: '[data-thread-message-id]',
+          itemAttribute: 'data-thread-message-id',
+        })
+        : null;
+
+      if (messagesChanged) {
+        this.messages = nextMessages;
       }
-      this.messages = sortMessagesByUpdatedAt(await getMessagesByChannel(this.selectedChannelId));
-      for (const message of this.messages) {
+
+      for (const message of nextMessages) {
         await this.rememberPeople([message.sender_npub], 'chat');
       }
+
       if (
         this.activeThreadId
-        && !this.messages.some(msg => msg.record_id === this.activeThreadId || msg.parent_message_id === this.activeThreadId)
+        && !nextMessages.some((message) => message.record_id === this.activeThreadId || message.parent_message_id === this.activeThreadId)
       ) {
-        this.closeThread();
+        this.closeThread({ syncRoute: false });
       }
+
       this.syncChatPreviewState();
       this.scheduleChatPreviewMeasurement();
-      if (options.scrollToLatest === true) this.scheduleChatFeedScrollToBottom();
       this.scheduleStorageImageHydration();
+
+      const shouldScrollChatToLatest = options.scrollToLatest === true || this.pendingChatScrollToLatest || chatFeedAnchor?.atBottom;
+      const shouldScrollThreadToLatest = options.scrollThreadToLatest === true || this.pendingThreadScrollToLatest || threadRepliesAnchor?.atBottom;
+
+      if (shouldScrollChatToLatest) this.scheduleChatFeedScrollToBottom();
+      else if (chatFeedAnchor) this.restoreScrollAnchor(chatFeedAnchor);
+
+      if (shouldScrollThreadToLatest) this.scheduleThreadRepliesScrollToBottom();
+      else if (threadRepliesAnchor) this.restoreScrollAnchor(threadRepliesAnchor);
+
+      this.pendingChatScrollToLatest = false;
+      this.pendingThreadScrollToLatest = false;
+    },
+
+    async refreshMessages(options = {}) {
+      if (!this.selectedChannelId) {
+        await this.applyMessages([], { scrollToLatest: false });
+        return;
+      }
+      await this.applyMessages(await getMessagesByChannel(this.selectedChannelId), options);
+    },
+
+    async applyAudioNotes(audioNotes = []) {
+      const nextAudioNotes = Array.isArray(audioNotes) ? audioNotes : [];
+      if (!sameListBySignature(this.audioNotes, nextAudioNotes, (note) => [
+        String(note?.record_id || ''),
+        String(note?.updated_at || ''),
+        String(note?.version ?? ''),
+        String(note?.record_state || ''),
+        String(note?.transcript_status || ''),
+      ].join('|'))) {
+        this.audioNotes = nextAudioNotes;
+      }
+
+      for (const note of nextAudioNotes) {
+        await this.rememberPeople([note.sender_npub], 'audio-note');
+      }
     },
 
     async refreshAudioNotes() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
-      this.audioNotes = await getAudioNotesByOwner(ownerNpub);
-      for (const note of this.audioNotes) {
-        await this.rememberPeople([note.sender_npub], 'audio-note');
-      }
+      await this.applyAudioNotes(await getAudioNotesByOwner(ownerNpub));
     },
 
     patchMessageLocal(nextMessage) {
@@ -4495,19 +5002,33 @@ export function initApp() {
       this.patchMessageLocal(updated);
     },
 
+    applyDirectories(directories = []) {
+      const nextDirectories = Array.isArray(directories) ? directories : [];
+      if (!sameListBySignature(this.directories, nextDirectories)) {
+        this.directories = nextDirectories;
+      }
+      this.updatePageTitle();
+    },
+
     async refreshDirectories() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
-      this.directories = await getDirectoriesByOwner(ownerNpub);
+      this.applyDirectories(await getDirectoriesByOwner(ownerNpub));
+    },
+
+    applyDocuments(documents = []) {
+      const nextDocuments = Array.isArray(documents) ? documents : [];
+      if (!sameListBySignature(this.documents, nextDocuments)) {
+        this.documents = nextDocuments;
+      }
+      this.refreshOpenDocFromLatestDocument({ force: false });
       this.updatePageTitle();
     },
 
     async refreshDocuments() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
-      this.documents = await getDocumentsByOwner(ownerNpub);
-      this.refreshOpenDocFromLatestDocument({ force: false });
-      this.updatePageTitle();
+      this.applyDocuments(await getDocumentsByOwner(ownerNpub));
     },
 
     patchDirectoryLocal(nextDirectory) {
@@ -4560,6 +5081,8 @@ export function initApp() {
       this.activeThreadId = recordId;
       this.threadInput = '';
       this.threadVisibleReplyCount = this.THREAD_REPLY_PAGE_SIZE;
+      this.pendingThreadScrollToLatest = options.scrollToLatest !== false;
+      if (this.pendingThreadScrollToLatest) this.scheduleThreadRepliesScrollToBottom();
       if (options.syncRoute !== false) this.syncRoute();
     },
 
@@ -4577,11 +5100,18 @@ export function initApp() {
       this.threadInput = '';
       this.threadVisibleReplyCount = this.THREAD_REPLY_PAGE_SIZE;
       this.threadSize = 'default';
+      this.pendingThreadScrollToLatest = false;
       if (options.syncRoute !== false) this.syncRoute();
     },
 
     showMoreThreadMessages() {
+      const anchor = this.captureScrollAnchor({
+        containerSelector: '[data-thread-replies]',
+        itemSelector: '[data-thread-message-id]',
+        itemAttribute: 'data-thread-message-id',
+      });
       this.threadVisibleReplyCount += this.THREAD_REPLY_PAGE_SIZE;
+      this.restoreScrollAnchor(anchor);
     },
 
     getThreadParentMessage() {
@@ -4823,7 +5353,7 @@ export function initApp() {
         await this.selectChannel(item.channelId, { scrollToLatest: false });
       }
       if (item.threadId) {
-        this.openThread(item.threadId);
+        this.openThread(item.threadId, { scrollToLatest: false });
       } else {
         this.closeThread();
       }
@@ -4946,7 +5476,7 @@ export function initApp() {
             avatar_url: profile?.picture || null,
             source: 'profile',
             last_used_at: new Date().toISOString(),
-          }).then(() => this.refreshAddressBook());
+          }).catch(() => {});
         })
         .catch(() => {
           this.chatProfiles = {
@@ -4963,12 +5493,9 @@ export function initApp() {
 
     // --- tasks ---
 
-    async refreshTasks() {
-      const ownerNpub = this.workspaceOwnerNpub;
-      if (!ownerNpub) return;
-      const tasks = await getTasksByOwner(ownerNpub);
+    async applyTasks(tasks = []) {
       const normalizedTasks = [];
-      for (const task of tasks) {
+      for (const task of (Array.isArray(tasks) ? tasks : [])) {
         const normalizedGroups = this.normalizeTaskRowGroupRefs(task);
         const normalized = this.normalizeTaskRowScopeRefs(normalizedGroups);
         normalizedTasks.push(normalized);
@@ -4976,7 +5503,15 @@ export function initApp() {
           await upsertTask(normalized);
         }
       }
-      this.tasks = normalizedTasks;
+      if (!sameListBySignature(this.tasks, normalizedTasks, (task) => [
+        String(task?.record_id || ''),
+        String(task?.updated_at || ''),
+        String(task?.version ?? ''),
+        String(task?.record_state || ''),
+        String(task?.state || ''),
+      ].join('|'))) {
+        this.tasks = normalizedTasks;
+      }
       const assignedNpubs = [...new Set(normalizedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
       if (assignedNpubs.length > 0) {
         await this.rememberPeople(assignedNpubs, 'task-assignee');
@@ -4986,6 +5521,12 @@ export function initApp() {
       );
       this.normalizeTaskFilterTags();
       this.updatePageTitle();
+    },
+
+    async refreshTasks() {
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub) return;
+      await this.applyTasks(await getTasksByOwner(ownerNpub));
     },
 
     formatScheduleDays(days = []) {
@@ -5129,20 +5670,25 @@ export function initApp() {
       this.editingScopeGroupQuery = '';
     },
 
-    async refreshSchedules() {
-      const ownerNpub = this.workspaceOwnerNpub;
-      if (!ownerNpub) return;
-      const schedules = await getSchedulesByOwner(ownerNpub);
+    async applySchedules(schedules = []) {
       const normalizedSchedules = [];
-      for (const schedule of schedules) {
+      for (const schedule of (Array.isArray(schedules) ? schedules : [])) {
         const normalized = this.normalizeScheduleRowGroupRefs(schedule);
         normalizedSchedules.push(normalized);
         if (normalized !== schedule) {
           await upsertSchedule(normalized);
         }
       }
-      this.schedules = normalizedSchedules;
+      if (!sameListBySignature(this.schedules, normalizedSchedules)) {
+        this.schedules = normalizedSchedules;
+      }
       this.updatePageTitle();
+    },
+
+    async refreshSchedules() {
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub) return;
+      await this.applySchedules(await getSchedulesByOwner(ownerNpub));
     },
 
     setCalendarView(view) {
@@ -5684,6 +6230,7 @@ export function initApp() {
     },
 
     closeTaskDetail(options = {}) {
+      this.stopTaskCommentsLiveQuery();
       this.activeTaskId = null;
       this.editingTask = null;
       this.taskAssigneeQuery = '';
@@ -5780,8 +6327,28 @@ export function initApp() {
     },
 
     async loadTaskComments(taskId) {
-      if (!taskId) { this.taskComments = []; return; }
-      this.taskComments = await getCommentsByTarget(taskId);
+      if (!taskId) {
+        this.applyTaskComments([]);
+        return;
+      }
+      this.startTaskCommentsLiveQuery();
+      await this.applyTaskComments(await getCommentsByTarget(taskId));
+    },
+
+    async applyTaskComments(comments = []) {
+      const nextComments = Array.isArray(comments) ? comments : [];
+      if (!sameListBySignature(this.taskComments, nextComments, (comment) => [
+        String(comment?.record_id || ''),
+        String(comment?.updated_at || ''),
+        String(comment?.version ?? ''),
+        String(comment?.record_state || ''),
+      ].join('|'))) {
+        this.taskComments = nextComments;
+      }
+
+      for (const comment of nextComments) {
+        await this.rememberPeople([comment.sender_npub], 'task-comment');
+      }
       this.scheduleStorageImageHydration();
     },
 
@@ -5844,19 +6411,24 @@ export function initApp() {
 
     // --- scopes ---
 
-    async refreshScopes() {
-      const ownerNpub = this.workspaceOwnerNpub;
-      if (!ownerNpub) return;
-      const scopes = await getScopesByOwner(ownerNpub);
+    async applyScopes(scopes = []) {
       const normalizedScopes = [];
-      for (const scope of scopes) {
+      for (const scope of (Array.isArray(scopes) ? scopes : [])) {
         const normalized = this.normalizeScopeRowGroupRefs(scope);
         normalizedScopes.push(normalized);
         if (normalized !== scope) {
           await upsertScope(normalized);
         }
       }
-      this.scopes = normalizedScopes;
+      if (!sameListBySignature(this.scopes, normalizedScopes)) {
+        this.scopes = normalizedScopes;
+      }
+    },
+
+    async refreshScopes() {
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub) return;
+      await this.applyScopes(await getScopesByOwner(ownerNpub));
     },
 
     get scopesMap() {
@@ -6748,6 +7320,7 @@ export function initApp() {
     },
 
     navigateToFolder(folderId = null, options = {}) {
+      this.stopDocCommentsLiveQuery();
       this.currentFolderId = folderId || null;
       this.selectedDocType = null;
       this.selectedDocId = null;
@@ -6776,6 +7349,10 @@ export function initApp() {
       this.mobileNavOpen = false;
       const document = this.documents.find((item) => item.record_id === recordId);
       this.currentFolderId = document?.parent_directory_id || null;
+      this.docCommentBackfillAttemptsByDocId = {
+        ...this.docCommentBackfillAttemptsByDocId,
+        [recordId]: false,
+      };
       this.loadDocEditorFromSelection();
       this.loadDocComments(recordId);
       if (options.syncRoute !== false) this.syncRoute();
@@ -6783,6 +7360,7 @@ export function initApp() {
     },
 
     closeDocEditor(options = {}) {
+      this.stopDocCommentsLiveQuery();
       this.selectedDocType = null;
       this.selectedDocId = null;
       this.selectedDocCommentId = null;
@@ -6794,6 +7372,7 @@ export function initApp() {
       this.newDocCommentBody = '';
       this.newDocCommentReplyBody = '';
       this.showDocShareModal = false;
+      this.docCommentBackfillAttemptsByDocId = {};
       this.clearDocCommentConnector();
       this.loadDocEditorFromSelection();
       if (options.syncRoute !== false) this.syncRoute();
@@ -6851,24 +7430,60 @@ export function initApp() {
 
     async loadDocComments(docId) {
       if (!docId) {
-        this.docComments = [];
+        this.applyDocComments([]);
         return;
       }
+      this.startDocCommentsLiveQuery(docId);
       const documentFamilyHash = recordFamilyHash('document');
       let comments = (await getCommentsByTarget(docId))
         .filter((comment) => comment.target_record_family_hash === documentFamilyHash);
 
-      if (comments.length === 0 || await this.hasMissingDocCommentAudio(comments)) {
+      if (
+        (comments.length === 0 || await this.hasMissingDocCommentAudio(comments))
+        && !this.docCommentBackfillAttemptsByDocId[docId]
+      ) {
+        this.docCommentBackfillAttemptsByDocId = {
+          ...this.docCommentBackfillAttemptsByDocId,
+          [docId]: true,
+        };
         comments = await this.backfillDocCommentsFromBackend(docId, documentFamilyHash);
       }
 
-      this.docComments = comments;
-      for (const comment of comments) {
+      await this.applyDocComments(comments);
+    },
+
+    async applyDocComments(comments = [], options = {}) {
+      const nextComments = Array.isArray(comments) ? comments : [];
+      if (!sameListBySignature(this.docComments, nextComments, (comment) => [
+        String(comment?.record_id || ''),
+        String(comment?.updated_at || ''),
+        String(comment?.version ?? ''),
+        String(comment?.record_state || ''),
+      ].join('|'))) {
+        this.docComments = nextComments;
+      }
+
+      for (const comment of nextComments) {
         await this.rememberPeople([comment.sender_npub], 'doc-comment');
       }
+
+      if (
+        options.allowBackfill
+        && this.selectedDocType === 'document'
+        && this.selectedDocId
+        && !this.docCommentBackfillAttemptsByDocId[this.selectedDocId]
+        && (nextComments.length === 0 || await this.hasMissingDocCommentAudio(nextComments))
+      ) {
+        this.docCommentBackfillAttemptsByDocId = {
+          ...this.docCommentBackfillAttemptsByDocId,
+          [this.selectedDocId]: true,
+        };
+        await this.backfillDocCommentsFromBackend(this.selectedDocId, recordFamilyHash('document'));
+      }
+
       if (this.selectedDocCommentId) {
         const rootId = this.getDocCommentThreadId(this.selectedDocCommentId);
-        this.selectedDocCommentId = comments.some((comment) => comment.record_id === rootId) ? rootId : null;
+        this.selectedDocCommentId = nextComments.some((comment) => comment.record_id === rootId) ? rootId : null;
       }
       this.scheduleDocCommentConnectorUpdate();
       this.scheduleStorageImageHydration();
@@ -8389,53 +9004,65 @@ export function initApp() {
       this.storageImageLoadPromises = {};
     },
 
-    rememberStorageImageUrl(objectId, url) {
-      const previous = this.storageImageUrlCache?.[objectId];
+    rememberStorageImageUrl(cacheKey, url) {
+      const previous = this.storageImageUrlCache?.[cacheKey];
       if (previous && previous !== url && previous.startsWith('blob:')) {
         URL.revokeObjectURL(previous);
       }
       this.storageImageUrlCache = {
         ...(this.storageImageUrlCache || {}),
-        [objectId]: url,
+        [cacheKey]: url,
       };
       return url;
     },
 
-    async resolveStorageImageUrl(objectId) {
-      const existing = this.storageImageUrlCache?.[objectId];
+    async resolveStorageImageUrl(objectId, options = {}) {
+      const backendUrl = String(options?.backendUrl || '').trim();
+      const cacheKey = storageImageCacheKey(objectId, backendUrl);
+      const existing = this.storageImageUrlCache?.[cacheKey];
       if (existing) return existing;
 
-      const pending = this.storageImageLoadPromises?.[objectId];
+      const pending = this.storageImageLoadPromises?.[cacheKey];
       if (pending) return pending;
 
       const loadPromise = (async () => {
-        const cached = await getCachedStorageImage(objectId);
+        let cached = await getCachedStorageImage(cacheKey);
+        if (!cached && cacheKey !== objectId) {
+          cached = await getCachedStorageImage(objectId);
+          if (cached?.blob instanceof Blob && cached.blob.size > 0) {
+            await cacheStorageImage({
+              object_id: cacheKey,
+              blob: cached.blob,
+              content_type: cached.content_type || 'application/octet-stream',
+            });
+          }
+        }
         if (cached?.blob instanceof Blob && cached.blob.size > 0) {
-          return this.rememberStorageImageUrl(objectId, URL.createObjectURL(cached.blob));
+          return this.rememberStorageImageUrl(cacheKey, URL.createObjectURL(cached.blob));
         }
 
-        const blob = await downloadStorageObjectBlob(objectId);
+        const blob = await downloadStorageObjectBlob(objectId, { backendUrl });
         if (!(blob instanceof Blob) || blob.size === 0) {
           throw new Error(`No image data returned for ${objectId}`);
         }
         await cacheStorageImage({
-          object_id: objectId,
+          object_id: cacheKey,
           blob,
           content_type: blob.type || 'application/octet-stream',
         });
-        return this.rememberStorageImageUrl(objectId, URL.createObjectURL(blob));
+        return this.rememberStorageImageUrl(cacheKey, URL.createObjectURL(blob));
       })();
 
       this.storageImageLoadPromises = {
         ...(this.storageImageLoadPromises || {}),
-        [objectId]: loadPromise,
+        [cacheKey]: loadPromise,
       };
 
       try {
         return await loadPromise;
       } finally {
         const next = { ...(this.storageImageLoadPromises || {}) };
-        delete next[objectId];
+        delete next[cacheKey];
         this.storageImageLoadPromises = next;
       }
     },
@@ -8449,15 +9076,39 @@ export function initApp() {
         image.dataset.storageResolved = 'pending';
         this.resolveStorageImageUrl(objectId)
           .then((url) => {
+            const chatFeedAnchor = this.captureScrollAnchor({
+              containerSelector: '[data-chat-feed]',
+              itemSelector: '[data-message-id]',
+              itemAttribute: 'data-message-id',
+            });
+            const threadRepliesAnchor = this.captureScrollAnchor({
+              containerSelector: '[data-thread-replies]',
+              itemSelector: '[data-thread-message-id]',
+              itemAttribute: 'data-thread-message-id',
+            });
             image.src = url;
             image.dataset.storageResolved = 'true';
             image.classList.remove('md-storage-image-pending');
             this.scheduleChatPreviewMeasurement();
+            this.restoreScrollAnchor(chatFeedAnchor);
+            this.restoreScrollAnchor(threadRepliesAnchor);
           })
           .catch(() => {
+            const chatFeedAnchor = this.captureScrollAnchor({
+              containerSelector: '[data-chat-feed]',
+              itemSelector: '[data-message-id]',
+              itemAttribute: 'data-message-id',
+            });
+            const threadRepliesAnchor = this.captureScrollAnchor({
+              containerSelector: '[data-thread-replies]',
+              itemSelector: '[data-thread-message-id]',
+              itemAttribute: 'data-thread-message-id',
+            });
             image.dataset.storageResolved = 'error';
             image.classList.add('md-storage-image-error');
             this.scheduleChatPreviewMeasurement();
+            this.restoreScrollAnchor(chatFeedAnchor);
+            this.restoreScrollAnchor(threadRepliesAnchor);
           });
       }
     },
@@ -9111,6 +9762,7 @@ export function initApp() {
 
       await upsertMessage(localRow);
       this.patchMessageLocal(localRow);
+      this.scheduleChatFeedScrollToBottom();
       this.messageInput = '';
       this.messageAudioDrafts = [];
       this.scheduleComposerAutosize('message');
@@ -9189,6 +9841,7 @@ export function initApp() {
       };
       await upsertMessage(localRow);
       this.patchMessageLocal(localRow);
+      this.scheduleThreadRepliesScrollToBottom();
       this.threadInput = '';
       this.threadAudioDrafts = [];
       this.scheduleComposerAutosize('thread');

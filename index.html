@@ -1021,7 +1021,7 @@
                 </template>
 
                 <template x-for="msg in $store.chat.mainFeedMessages" :key="msg.record_id">
-                  <div class="chat-post" :class="{ 'chat-post-focused': $store.chat.isFocusedMessage(msg.record_id) }">
+                  <div class="chat-post" :class="{ 'chat-post-focused': $store.chat.isFocusedMessage(msg.record_id) }" :data-message-id="msg.record_id">
                     <span
                       class="chat-status-dot"
                       :class="msg.sync_status === 'synced' ? 'chat-status-dot-synced' : msg.sync_status === 'failed' ? 'chat-status-dot-failed' : 'chat-status-dot-pending'"
@@ -1127,9 +1127,16 @@
                 </div>
               </div>
 
-              <div class="thread-replies">
+              <div class="thread-replies" data-thread-replies>
+                <button
+                  type="button"
+                  class="thread-load-more-btn"
+                  x-show="$store.chat.hasMoreThreadMessages"
+                  @click="$store.chat.showMoreThreadMessages()"
+                  x-text="`Show ${Math.min($store.chat.hiddenThreadReplyCount, $store.chat.THREAD_REPLY_PAGE_SIZE)} older repl${Math.min($store.chat.hiddenThreadReplyCount, $store.chat.THREAD_REPLY_PAGE_SIZE) === 1 ? 'y' : 'ies'}`"
+                ></button>
                 <template x-if="$store.chat.getThreadParentMessage()">
-                  <div class="thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage($store.chat.getThreadParentMessage()?.record_id) }">
+                  <div class="thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage($store.chat.getThreadParentMessage()?.record_id) }" :data-thread-message-id="$store.chat.getThreadParentMessage()?.record_id || ''">
                     <span
                       class="thread-status-dot"
                       :class="$store.chat.getThreadParentMessage()?.sync_status === 'synced' ? 'thread-status-dot-synced' : $store.chat.getThreadParentMessage()?.sync_status === 'failed' ? 'thread-status-dot-failed' : 'thread-status-dot-pending'"
@@ -1168,7 +1175,7 @@
                 </template>
 
                 <template x-for="reply in $store.chat.visibleThreadMessages" :key="reply.record_id">
-                  <div class="thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage(reply.record_id) }">
+                  <div class="thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage(reply.record_id) }" :data-thread-message-id="reply.record_id">
                     <span
                       class="thread-status-dot"
                       :class="reply.sync_status === 'synced' ? 'thread-status-dot-synced' : reply.sync_status === 'failed' ? 'thread-status-dot-failed' : 'thread-status-dot-pending'"
@@ -1204,13 +1211,6 @@
                     </div>
                   </div>
                 </template>
-                <button
-                  type="button"
-                  class="thread-load-more-btn"
-                  x-show="$store.chat.hasMoreThreadMessages"
-                  @click="$store.chat.showMoreThreadMessages()"
-                  x-text="`Show ${Math.min($store.chat.hiddenThreadReplyCount, $store.chat.THREAD_REPLY_PAGE_SIZE)} older repl${Math.min($store.chat.hiddenThreadReplyCount, $store.chat.THREAD_REPLY_PAGE_SIZE) === 1 ? 'y' : 'ies'}`"
-                ></button>
               </div>
 
               <div class="thread-input-bar">

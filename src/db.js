@@ -191,6 +191,19 @@ export async function getWorkspaceSettings(workspaceOwnerNpub) {
   return wsDb().workspace_settings.get(workspaceOwnerNpub);
 }
 
+export async function getWorkspaceSettingsSnapshot(workspaceOwnerNpub) {
+  if (!workspaceOwnerNpub) return null;
+  const tempDb = createWorkspaceDb(workspaceOwnerNpub);
+  try {
+    await tempDb.open();
+    return tempDb.workspace_settings.get(workspaceOwnerNpub);
+  } catch {
+    return null;
+  } finally {
+    tempDb.close();
+  }
+}
+
 export async function upsertWorkspaceSettings(settings) {
   return wsDb().workspace_settings.put(sanitizeForStorage(settings));
 }

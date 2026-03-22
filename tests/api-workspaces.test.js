@@ -229,6 +229,29 @@ describe('workspace API host fallback', () => {
     expect(result).toBe(imageBlob);
   });
 
+  it('uses an explicit workspace backend for storage blob downloads', async () => {
+    const imageBlob = new Blob(['avatar'], { type: 'image/png' });
+    const fetchMock = vi.fn(async (requestUrl) => {
+      return {
+        ok: true,
+        status: 200,
+        blob: async () => imageBlob,
+        text: async () => '',
+      };
+    });
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+    const result = await api.downloadStorageObjectBlob('obj-1', {
+      backendUrl: 'https://sb.other.example',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://sb.other.example/api/v4/storage/obj-1/content');
+    expect(result).toBe(imageBlob);
+  });
+
   it('falls back to the current origin for storage blob downloads', async () => {
     const imageBlob = new Blob(['avatar'], { type: 'image/png' });
     const fetchMock = vi.fn(async (requestUrl) => {

@@ -39,3 +39,17 @@ export function rankThreadReplies(messages, parentMessageId) {
     messages.filter((message) => message.parent_message_id === parentMessageId)
   );
 }
+
+export function resolveVisibleThreadReplyCount(replies, visibleCount, focusMessageId = null) {
+  const requestedVisibleCount = Math.max(0, Number(visibleCount) || 0);
+  const safeReplies = Array.isArray(replies) ? replies : [];
+  const focusIndex = safeReplies.findIndex((message) => message.record_id === focusMessageId);
+  if (focusIndex >= 0) return Math.max(requestedVisibleCount, safeReplies.length - focusIndex);
+  return requestedVisibleCount;
+}
+
+export function visibleThreadReplies(messages, parentMessageId, visibleCount, focusMessageId = null) {
+  const replies = rankThreadReplies(messages, parentMessageId);
+  const resolvedVisibleCount = resolveVisibleThreadReplyCount(replies, visibleCount, focusMessageId);
+  return replies.slice(-resolvedVisibleCount);
+}

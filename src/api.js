@@ -361,8 +361,17 @@ export async function downloadStorageObject(objectId) {
   return new Uint8Array(await resp.arrayBuffer());
 }
 
-export async function downloadStorageObjectBlob(objectId) {
+export async function downloadStorageObjectBlob(objectId, options = {}) {
   const requestPath = `/api/v4/storage/${objectId}/content`;
+  const explicitBackendUrl = String(options?.backendUrl || '').trim().replace(/\/+$/, '');
+  if (explicitBackendUrl) {
+    const requestUrl = `${explicitBackendUrl}${requestPath}`;
+    const resp = await signedFetchAbsolute(requestUrl);
+    if (!resp.ok) {
+      throw await buildApiError(resp, { requestUrl, method: 'GET' });
+    }
+    return resp.blob();
+  }
   const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath);
   if (!resp.ok) {
     throw await buildApiError(resp, { requestUrl, method: 'GET' });
