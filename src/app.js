@@ -786,6 +786,22 @@ export function initApp() {
         this.knownWorkspaces = mergeWorkspaceEntries([], settings.knownWorkspaces ?? []);
         this.knownHosts = Array.isArray(settings.knownHosts) ? settings.knownHosts : [];
       }
+      // Extract ?token= from URL (e.g. share link) and use it to bootstrap workspace
+      if (typeof window !== 'undefined') {
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlToken = urlParams.get('token');
+        if (urlToken) {
+          const urlConfig = parseSuperBasedToken(urlToken);
+          if (urlConfig.isValid) {
+            this.superbasedTokenInput = urlToken;
+          }
+          // Clean token from URL so it doesn't persist in browser history
+          urlParams.delete('token');
+          const cleanSearch = urlParams.toString();
+          const cleanUrl = window.location.pathname + (cleanSearch ? '?' + cleanSearch : '') + window.location.hash;
+          window.history.replaceState(null, '', cleanUrl);
+        }
+      }
       if (this.superbasedTokenInput) {
         const config = parseSuperBasedToken(this.superbasedTokenInput);
         if (config.isValid && config.directHttpsUrl) {
