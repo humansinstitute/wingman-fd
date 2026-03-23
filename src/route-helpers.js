@@ -51,6 +51,7 @@ export function parseRouteLocation(href) {
       descendants: url.searchParams.get('descendants') || null,
       groupid: url.searchParams.get('groups') || url.searchParams.get('groupid') || null,
       taskid: url.searchParams.get('taskid') || null,
+      view: url.searchParams.get('view') || null,
     },
   };
 }

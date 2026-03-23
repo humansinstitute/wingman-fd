@@ -273,6 +273,7 @@ export function initApp() {
     showBoardPicker: false,
     boardPickerQuery: '',
     showBoardDescendantTasks: false,
+    taskViewMode: 'kanban',
     taskBoardScopeSetupInFlight: false,
     newTaskTitle: '',
     newSubtaskTitle: '',
@@ -1160,6 +1161,7 @@ export function initApp() {
         if (this.selectedBoardId) url.searchParams.set('scopeid', this.selectedBoardId);
         if (this.showBoardDescendantTasks) url.searchParams.set('descendants', '1');
         if (this.navSection === 'tasks' && this.activeTaskId) url.searchParams.set('taskid', this.activeTaskId);
+        if (this.navSection === 'tasks' && this.taskViewMode === 'list') url.searchParams.set('view', 'list');
       }
 
       return `${url.pathname}${url.search}`;
@@ -1226,6 +1228,8 @@ export function initApp() {
             || this.readStoredTaskBoardId()
             || this.preferredTaskBoardId;
           this.showBoardDescendantTasks = route.params.descendants === '1';
+          if (route.params.view === 'list') this.taskViewMode = 'list';
+          else this.taskViewMode = 'kanban';
           this.validateSelectedBoardId();
           this.normalizeTaskFilterTags();
           this.persistSelectedBoardId(this.selectedBoardId);

@@ -590,6 +590,32 @@
                 </svg>
               </template>
             </button>
+
+            <button
+              type="button"
+              class="board-descendant-toggle task-view-toggle"
+              @click="$store.chat.toggleTaskViewMode()"
+              :title="$store.chat.taskViewMode === 'kanban' ? 'Switch to list view' : 'Switch to kanban view'"
+            >
+              <template x-if="$store.chat.taskViewMode === 'kanban'">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="8" y1="6" x2="21" y2="6"></line>
+                  <line x1="8" y1="12" x2="21" y2="12"></line>
+                  <line x1="8" y1="18" x2="21" y2="18"></line>
+                  <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                  <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                  <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+              </template>
+              <template x-if="$store.chat.taskViewMode !== 'kanban'">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7"></rect>
+                  <rect x="14" y="3" width="7" height="7"></rect>
+                  <rect x="3" y="14" width="7" height="7"></rect>
+                  <rect x="14" y="14" width="7" height="7"></rect>
+                </svg>
+              </template>
+            </button>
           </div>
 
           <div class="task-bulk-bar" x-show="!$store.chat.showTaskDetail && $store.chat.selectedTaskCount > 0">
@@ -605,7 +631,7 @@
           </div>
 
           <!-- Kanban board -->
-          <div class="kanban-board" x-show="!$store.chat.showTaskDetail">
+          <div class="kanban-board" x-show="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'kanban'">
             <template x-for="col in $store.chat.boardColumns" :key="col.state">
               <div class="kanban-column" :class="`kanban-col-${col.state}`">
                 <div class="kanban-column-header">
@@ -686,6 +712,72 @@
                   </template>
                   <template x-if="col.tasks.length === 0 && col.state !== 'summary'">
                     <div class="kanban-empty">No tasks</div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- List view -->
+          <div class="task-list-view" x-show="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'list'">
+            <template x-for="group in $store.chat.listGroupedTasks" :key="group.state">
+              <div class="task-list-group">
+                <div class="task-list-group-header" :class="`task-list-group-${group.state}`">
+                  <span class="task-list-group-label" x-text="group.label"></span>
+                  <span class="kanban-column-count" x-text="group.tasks.length"></span>
+                </div>
+                <div class="task-list-rows">
+                  <template x-for="task in group.tasks" :key="task.record_id">
+                    <div
+                      class="task-list-row"
+                      :class="{ 'task-list-row-parent': group.state === 'summary' }"
+                      @click="$store.chat.handleTaskCardClick(task.record_id)"
+                    >
+                      <template x-if="group.state !== 'summary'">
+                        <label class="task-card-select" @click.stop>
+                          <input type="checkbox" :checked="$store.chat.isTaskSelected(task.record_id)" @change="$store.chat.toggleTaskSelection(task.record_id)" />
+                        </label>
+                      </template>
+                      <span class="task-list-title" x-text="task.title"></span>
+                      <template x-if="task.assigned_to_npub">
+                        <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(task.assigned_to_npub)">
+                          <template x-if="$store.chat.getSenderAvatar(task.assigned_to_npub)">
+                            <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar(task.assigned_to_npub)" alt="" />
+                          </template>
+                          <template x-if="!$store.chat.getSenderAvatar(task.assigned_to_npub)">
+                            <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(task.assigned_to_npub))"></span>
+                          </template>
+                        </div>
+                      </template>
+                      <span class="badge" :class="`priority-${task.priority}`" x-text="task.priority" x-show="task.priority && task.priority !== 'sand'"></span>
+                      <span class="badge badge-date" x-text="task.scheduled_for" x-show="task.scheduled_for"></span>
+                      <template x-if="group.state === 'summary'">
+                        <span class="badge" :class="`state-${$store.chat.computedParentState(task.record_id)}`" x-text="$store.chat.formatState($store.chat.computedParentState(task.record_id))"></span>
+                      </template>
+                    </div>
+                    <!-- Subtask indentation for summary/parent tasks -->
+                    <template x-if="group.state === 'summary'">
+                      <template x-for="sub in $store.chat.getSubtasks(task.record_id)" :key="sub.record_id">
+                        <div class="task-list-row task-list-row-subtask" @click="$store.chat.handleTaskCardClick(sub.record_id)">
+                          <label class="task-card-select" @click.stop>
+                            <input type="checkbox" :checked="$store.chat.isTaskSelected(sub.record_id)" @change="$store.chat.toggleTaskSelection(sub.record_id)" />
+                          </label>
+                          <span class="task-list-indent"></span>
+                          <span class="task-list-title" x-text="sub.title"></span>
+                          <span class="badge" :class="`state-${sub.state}`" x-text="$store.chat.formatState(sub.state)"></span>
+                          <template x-if="sub.assigned_to_npub">
+                            <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(sub.assigned_to_npub)">
+                              <template x-if="$store.chat.getSenderAvatar(sub.assigned_to_npub)">
+                                <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar(sub.assigned_to_npub)" alt="" />
+                              </template>
+                              <template x-if="!$store.chat.getSenderAvatar(sub.assigned_to_npub)">
+                                <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(sub.assigned_to_npub))"></span>
+                              </template>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                    </template>
                   </template>
                 </div>
               </div>

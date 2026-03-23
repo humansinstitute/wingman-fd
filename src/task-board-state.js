@@ -387,6 +387,16 @@ export const taskBoardStateMixin = {
     else this.syncRoute();
   },
 
+  toggleTaskViewMode() {
+    this.taskViewMode = this.taskViewMode === 'kanban' ? 'list' : 'kanban';
+    this.syncRoute();
+  },
+
+  get listGroupedTasks() {
+    const cols = this.boardColumns;
+    return cols.filter(col => col.tasks.length > 0);
+  },
+
   getTaskBoardOptionLabel(scopeId) {
     return getTaskBoardOptionLabel(scopeId, this.scopesMap);
   },
