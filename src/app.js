@@ -213,6 +213,7 @@ export function initApp() {
     hasForcedTaskFamilyBackfill: false,
     backgroundSyncTimer: null,
     backgroundSyncInFlight: false,
+    syncBackoffMs: 0,
     visibilityHandler: null,
     docConnectorFrame: null,
     docConnectorScrollHandler: null,

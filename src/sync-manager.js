@@ -145,15 +145,18 @@ export const syncManagerMixin = {
     try {
       await this.performSync({ silent: true });
       await this.checkForStaleness();
+      this.syncBackoffMs = 0;
     } catch (error) {
+      this.syncBackoffMs = Math.min(Math.max((this.syncBackoffMs || 0) * 2, 1000), 30000);
       flightDeckLog('error', 'sync', 'background sync failed', {
         backendUrl: this.backendUrl || null,
         ownerNpub: this.workspaceOwnerNpub || null,
         error: error?.message || String(error),
+        nextRetryMs: this.syncBackoffMs,
       });
     } finally {
       this.backgroundSyncInFlight = false;
-      this.scheduleBackgroundSync();
+      this.scheduleBackgroundSync(this.syncBackoffMs || null);
     }
   },
 
