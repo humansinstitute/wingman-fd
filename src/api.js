@@ -441,6 +441,14 @@ export async function syncRecords({ owner_npub, records }) {
   return json(resp, { requestUrl, method: 'POST' });
 }
 
+export async function fetchRecordHistory({ record_id, owner_npub, viewer_npub }) {
+  const params = new URLSearchParams({ owner_npub });
+  if (viewer_npub) params.set('viewer_npub', viewer_npub);
+  const requestPath = `/api/v4/records/${encodeURIComponent(record_id)}/history?${params}`;
+  const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath);
+  return json(resp, { requestUrl, method: 'GET' });
+}
+
 export async function fetchRecords({ owner_npub, viewer_npub, record_family_hash, since }) {
   const params = new URLSearchParams({ owner_npub });
   if (viewer_npub) params.set('viewer_npub', viewer_npub);

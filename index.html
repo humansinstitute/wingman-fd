@@ -1438,6 +1438,7 @@
                         <button type="button" @click="$store.chat.toggleDocCommentsVisible(); open = false">
                           <span x-text="$store.chat.docCommentsVisible ? 'Hide comments' : 'Show comments'"></span>
                         </button>
+                        <button type="button" @click="$store.chat.openDocVersioning(); open = false">Versioning</button>
                         <button type="button" @click="$store.chat.exportDocMarkdown(); open = false">Export as .md</button>
                         <button type="button" @click="$store.chat.exportDocPDF(); open = false">Export as .pdf</button>
                         <button type="button" class="doc-actions-delete" @click="$store.chat.deleteSelectedDocItem(); open = false">Delete document</button>
@@ -1711,6 +1712,52 @@
                 </div>
               </section>
             </template>
+          </div>
+
+          <!-- Doc Versioning View -->
+          <div class="doc-modal-backdrop" x-show="$store.chat.docVersioningOpen" x-cloak @click.self="$store.chat.closeDocVersioning()">
+            <div class="doc-modal-card doc-versioning-modal">
+              <div class="doc-versioning-header">
+                <h3>Version History</h3>
+                <div class="doc-versioning-header-actions">
+                  <button type="button" class="doc-versioning-action-btn" :disabled="$store.chat.docVersioningSelectedIndex < 0" @click="$store.chat.copyDocVersionSource()" title="Copy source markdown">Copy Source</button>
+                  <button type="button" class="doc-versioning-action-btn doc-versioning-restore-btn" :disabled="$store.chat.docVersioningSelectedIndex < 0" @click="$store.chat.restoreDocVersion()">Restore</button>
+                  <button class="modal-close" type="button" @click="$store.chat.closeDocVersioning()">&times;</button>
+                </div>
+              </div>
+              <div class="doc-versioning-body">
+                <aside class="doc-versioning-list">
+                  <template x-if="$store.chat.docVersioningLoading">
+                    <div class="doc-versioning-status">Loading versions...</div>
+                  </template>
+                  <template x-if="$store.chat.docVersioningError">
+                    <div class="doc-versioning-status doc-versioning-error" x-text="$store.chat.docVersioningError"></div>
+                  </template>
+                  <template x-if="!$store.chat.docVersioningLoading && !$store.chat.docVersioningError && $store.chat.docVersionHistory.length === 0">
+                    <div class="doc-versioning-status">No version history available.</div>
+                  </template>
+                  <template x-for="(ver, index) in $store.chat.docVersionHistory" :key="ver.version">
+                    <button type="button"
+                      class="doc-version-item"
+                      :class="{ 'doc-version-item-selected': $store.chat.docVersioningSelectedIndex === index }"
+                      @click="$store.chat.selectDocVersion(index)"
+                    >
+                      <span class="doc-version-number" x-text="'v' + ver.version"></span>
+                      <span class="doc-version-title" x-text="ver.title"></span>
+                      <span class="doc-version-date" x-text="$store.chat.formatRelativeTime(ver.updated_at)"></span>
+                    </button>
+                  </template>
+                </aside>
+                <div class="doc-versioning-preview">
+                  <template x-if="$store.chat.docVersioningSelectedIndex >= 0">
+                    <div class="doc-versioning-preview-content" x-html="$store.chat.docVersioningPreviewHtml"></div>
+                  </template>
+                  <template x-if="$store.chat.docVersioningSelectedIndex < 0 && !$store.chat.docVersioningLoading">
+                    <div class="doc-versioning-status">Select a version to preview.</div>
+                  </template>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="doc-modal-backdrop" x-show="$store.chat.showDocShareModal" x-cloak @click.self="$store.chat.closeDocShareModal()">

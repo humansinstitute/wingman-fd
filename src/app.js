@@ -254,6 +254,12 @@ export function initApp() {
     selectedDocType: null,
     selectedDocId: null,
     selectedDocCommentId: null,
+    docVersioningOpen: false,
+    docVersionHistory: [],
+    docVersioningLoading: false,
+    docVersioningError: null,
+    docVersioningSelectedIndex: -1,
+    docVersioningPreviewHtml: '',
     activeTaskId: null,
     tasks: [],
     schedules: [],
@@ -1148,6 +1154,7 @@ export function initApp() {
         if (this.selectedDocType === 'document' && this.selectedDocId) {
           url.searchParams.set('docid', this.selectedDocId);
         }
+        if (this.docVersioningOpen) url.searchParams.set('versioning', '1');
         if (this.selectedDocCommentId) url.searchParams.set('commentid', this.selectedDocCommentId);
       } else if (this.navSection === 'tasks' || this.navSection === 'calendar') {
         if (this.selectedBoardId) url.searchParams.set('scopeid', this.selectedBoardId);
@@ -1204,6 +1211,7 @@ export function initApp() {
           this.selectedDocCommentId = route.params.commentid || null;
           if (route.params.docid) {
             this.openDoc(route.params.docid, { syncRoute: false, commentId: route.params.commentid || null });
+            if (route.params.versioning) this.openDocVersioning();
           } else if (route.params.folderid) {
             this.navigateToFolder(route.params.folderid, { syncRoute: false });
           } else {

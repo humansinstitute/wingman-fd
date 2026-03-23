@@ -24,6 +24,9 @@ import { recordFamilyHash } from './translators/chat.js';
 import { outboundDocument, outboundDirectory } from './translators/docs.js';
 import { outboundComment } from './translators/comments.js';
 import { toRaw } from './utils/state-helpers.js';
+import { fetchRecordHistory } from './api.js';
+import { inboundDocument } from './translators/docs.js';
+import { renderMarkdownToHtml } from './markdown.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -161,6 +164,11 @@ export const docsManagerMixin = {
     this.newDocCommentBody = '';
     this.newDocCommentReplyBody = '';
     this.showDocShareModal = false;
+    this.docVersioningOpen = false;
+    this.docVersionHistory = [];
+    this.docVersioningSelectedIndex = -1;
+    this.docVersioningPreviewHtml = '';
+    this.docVersioningError = null;
     this.docCommentBackfillAttemptsByDocId = {};
     this.clearDocCommentConnector();
     this.loadDocEditorFromSelection();
@@ -1221,6 +1229,90 @@ export const docsManagerMixin = {
       this.docAutosaveState = 'error';
       throw error;
     }
+  },
+
+  async openDocVersioning() {
+    if (!this.selectedDocId || this.selectedDocType !== 'document') return;
+    this.docVersioningOpen = true;
+    this.docVersionHistory = [];
+    this.docVersioningLoading = true;
+    this.docVersioningError = null;
+    this.docVersioningSelectedIndex = -1;
+    this.docVersioningPreviewHtml = '';
+    this.syncRoute();
+
+    try {
+      const ownerNpub = this.workspaceOwnerNpub || this.userNpub;
+      const result = await fetchRecordHistory({
+        record_id: this.selectedDocId,
+        owner_npub: ownerNpub,
+        viewer_npub: this.userNpub,
+      });
+      const versions = Array.isArray(result.versions) ? result.versions : (Array.isArray(result) ? result : []);
+      const decoded = [];
+      for (const ver of versions) {
+        try {
+          const doc = await inboundDocument(ver);
+          decoded.push({
+            version: ver.version ?? doc.version ?? 1,
+            title: doc.title || 'Untitled',
+            content: doc.content || '',
+            updated_at: ver.updated_at || doc.updated_at || '',
+          });
+        } catch {
+          decoded.push({
+            version: ver.version ?? 0,
+            title: `Version ${ver.version ?? '?'} (encrypted)`,
+            content: '',
+            updated_at: ver.updated_at || '',
+          });
+        }
+      }
+      decoded.sort((a, b) => b.version - a.version);
+      this.docVersionHistory = decoded;
+      if (decoded.length > 0) this.selectDocVersion(0);
+    } catch (error) {
+      this.docVersioningError = error?.status === 404
+        ? 'Version history not available for this document.'
+        : `Failed to load version history: ${error?.message || error}`;
+    } finally {
+      this.docVersioningLoading = false;
+    }
+  },
+
+  closeDocVersioning() {
+    this.docVersioningOpen = false;
+    this.docVersionHistory = [];
+    this.docVersioningSelectedIndex = -1;
+    this.docVersioningPreviewHtml = '';
+    this.docVersioningError = null;
+    this.syncRoute();
+  },
+
+  selectDocVersion(index) {
+    if (index < 0 || index >= this.docVersionHistory.length) return;
+    this.docVersioningSelectedIndex = index;
+    const ver = this.docVersionHistory[index];
+    this.docVersioningPreviewHtml = renderMarkdownToHtml(ver.content || '');
+  },
+
+  async restoreDocVersion() {
+    const ver = this.docVersionHistory[this.docVersioningSelectedIndex];
+    if (!ver || !this.selectedDocId) return;
+    this.docEditorTitle = ver.title;
+    this.docEditorContent = ver.content;
+    this.docEditorBlocks = parseMarkdownBlocks(ver.content);
+    this.docEditingBlockIndex = -1;
+    this.docBlockBuffer = '';
+    this.closeDocVersioning();
+    await this.saveSelectedDocItem();
+  },
+
+  copyDocVersionSource() {
+    const ver = this.docVersionHistory[this.docVersioningSelectedIndex];
+    if (!ver) return;
+    const fullMd = `# ${ver.title}\n\n${ver.content}`;
+    navigator.clipboard.writeText(fullMd).catch(() => {});
   },
 
   exportDocMarkdown() {
