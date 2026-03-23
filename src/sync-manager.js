@@ -16,7 +16,7 @@ import {
   clearSyncQuarantineForFamilies,
   deleteRuntimeRecordByFamily,
 } from './db.js';
-import { runSync, pullRecordsForFamilies, checkStaleness } from './worker/sync-worker.js';
+import { runSync, pullRecordsForFamilies } from './worker/sync-worker.js';
 import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
 
@@ -144,7 +144,7 @@ export const syncManagerMixin = {
     this.backgroundSyncInFlight = true;
     try {
       await this.performSync({ silent: true });
-      await this.checkForStaleness();
+      // checkForStaleness removed — heartbeat in runSync replaces it
       this.syncBackoffMs = 0;
     } catch (error) {
       this.syncBackoffMs = Math.min(Math.max((this.syncBackoffMs || 0) * 2, 1000), 30000);
@@ -172,8 +172,10 @@ export const syncManagerMixin = {
     if (s.phase === 'checking') return 'Checking...';
     if (s.phase === 'pushing') return `Pushing ${s.pushed} / ${s.pushTotal}`;
     if (s.phase === 'pulling') {
+      if (s.heartbeat && s.totalFamilies === 0) return 'Up to date';
       const familyPart = s.currentFamily ? `Fetching ${s.currentFamily}` : 'Pulling';
-      return `${familyPart} (${s.completedFamilies} / ${s.totalFamilies} collections)`;
+      const suffix = s.heartbeat ? ' (heartbeat)' : '';
+      return `${familyPart} (${s.completedFamilies} / ${s.totalFamilies} collections)${suffix}`;
     }
     if (s.phase === 'applying') return 'Applying...';
     if (s.phase === 'error') return 'Sync error';
@@ -308,18 +310,7 @@ export const syncManagerMixin = {
     }
   },
 
-  async checkForStaleness() {
-    if (!this.workspaceOwnerNpub || this.syncing) return;
-    try {
-      const result = await checkStaleness(this.workspaceOwnerNpub);
-      if (result.stale && this.syncStatus === 'synced') {
-        this.syncStatus = 'stale';
-        this.updateSyncSession({ state: 'stale' });
-      }
-    } catch {
-      // Staleness check is opportunistic — do not break anything
-    }
-  },
+  // checkForStaleness removed — heartbeat-first sync in runSync replaces it
 
   // --- task family backfill ---
 

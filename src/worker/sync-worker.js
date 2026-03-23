@@ -35,7 +35,7 @@ import {
   deleteSyncQuarantineEntry,
 } from '../db.js';
 
-import { syncRecords, fetchRecords, getBaseUrl, fetchRecordsSummary } from '../api.js';
+import { syncRecords, fetchRecords, getBaseUrl, fetchRecordsSummary, fetchHeartbeat } from '../api.js';
 import { inboundChannel, inboundChatMessage, recordFamilyHash } from '../translators/chat.js';
 import { inboundDocument, inboundDirectory } from '../translators/docs.js';
 import { inboundTask } from '../translators/tasks.js';
@@ -237,7 +237,40 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
 }
 
 /**
+ * Ask the server which families have updates since our local cursors.
+ * Returns { stale_families: string[], server_cursors: {}, heartbeatUsed: true }
+ * On failure (e.g. 404 from old Tower), returns null so caller can fall back.
+ */
+export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub) {
+  openWorkspaceDb(ownerNpub);
+
+  const familyCursors = {};
+  for (const family of DEFAULT_FAMILIES) {
+    const sinceKey = `sync_since:${family}`;
+    const cursor = await getSyncState(sinceKey);
+    familyCursors[family] = cursor || null;
+  }
+
+  try {
+    const result = await fetchHeartbeat({
+      owner_npub: ownerNpub,
+      viewer_npub: viewerNpub,
+      family_cursors: familyCursors,
+    });
+    return { ...result, heartbeatUsed: true };
+  } catch (error) {
+    flightDeckLog('warn', 'sync', 'heartbeat check failed, falling back to full pull', {
+      ownerNpub,
+      error: error?.message || String(error),
+    });
+    return null;
+  }
+}
+
+/**
  * Full sync cycle: push then pull.
+ * Uses heartbeat-first approach: asks the server which families changed,
+ * then only pulls stale families. Falls back to full pull if heartbeat unavailable.
  */
 export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress) {
   if (!getBaseUrl()) throw new Error('Backend URL not configured');
@@ -246,12 +279,30 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress) {
 
   const pushResult = await flushPendingWrites(ownerNpub, onProgress);
 
+  // Heartbeat: ask server which families have updates
+  const heartbeat = await heartbeatCheck(ownerNpub, viewerNpub);
+
+  if (heartbeat && Array.isArray(heartbeat.stale_families)) {
+    // Heartbeat succeeded — only pull stale families
+    if (heartbeat.stale_families.length === 0) {
+      if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: 0, currentFamily: null, pulled: 0, heartbeat: true });
+      if (onProgress) onProgress({ phase: 'applying' });
+      return { ...pushResult, pulled: 0, heartbeatUsed: true, staleFamilies: 0 };
+    }
+
+    if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: heartbeat.stale_families.length, currentFamily: null, pulled: 0, heartbeat: true });
+    const pullResult = await pullRecordsForFamilies(ownerNpub, viewerNpub, heartbeat.stale_families, {}, onProgress);
+
+    if (onProgress) onProgress({ phase: 'applying' });
+    return { ...pushResult, ...pullResult, heartbeatUsed: true, staleFamilies: heartbeat.stale_families.length };
+  }
+
+  // Fallback: heartbeat unavailable, pull all families
   if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: DEFAULT_FAMILIES.length, currentFamily: null, pulled: 0 });
   const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress);
 
   if (onProgress) onProgress({ phase: 'applying' });
-
-  return { ...pushResult, ...pullResult };
+  return { ...pushResult, ...pullResult, heartbeatUsed: false };
 }
 
 /**

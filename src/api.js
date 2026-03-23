@@ -385,6 +385,18 @@ export async function downloadStorageObjectBlob(objectId, options = {}) {
   return resp.blob();
 }
 
+// --- Records heartbeat ---
+
+export async function fetchHeartbeat({ owner_npub, viewer_npub, family_cursors }) {
+  const requestUrl = url('/api/v4/records/heartbeat');
+  const body = { owner_npub, viewer_npub, family_cursors };
+  const resp = await signedFetch('/api/v4/records/heartbeat', {
+    method: 'POST',
+    body,
+  });
+  return json(resp, { requestUrl, method: 'POST' });
+}
+
 // --- Records summary ---
 
 export async function fetchRecordsSummary(ownerNpub) {

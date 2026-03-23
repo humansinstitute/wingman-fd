@@ -152,7 +152,7 @@ function applyMixins(target, ...mixins) {
 export function initApp() {
   const storeObj = {
     FAST_SYNC_MS: 1000,
-    IDLE_SYNC_MS: 5000,
+    IDLE_SYNC_MS: 10000,
     MESSAGE_PREVIEW_MAX_LINES: 15,
     COMPOSER_MAX_LINES: 12,
     THREAD_REPLY_PAGE_SIZE: 6,
