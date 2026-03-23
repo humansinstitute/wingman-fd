@@ -742,6 +742,8 @@ export const workspaceManagerMixin = {
       if (previousWorkspace && previousWorkspace !== workspace.workspaceOwnerNpub) {
         await clearRuntimeData();
         evictStorageImageCache().catch(() => {});
+        this.revokeStorageImageObjectUrls();
+        this.chatProfiles = {};
         this.channels = [];
         this.messages = [];
         this.groups = [];

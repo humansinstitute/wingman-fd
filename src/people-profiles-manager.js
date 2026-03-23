@@ -23,6 +23,17 @@ export const peopleProfilesManagerMixin = {
     if (!npub || this.chatProfiles[npub]?.loading) return;
     if (this.chatProfiles[npub]?.name || this.chatProfiles[npub]?.picture) return;
 
+    // Cap chatProfiles at 200 entries — evict oldest when full
+    const MAX_CHAT_PROFILES = 200;
+    const keys = Object.keys(this.chatProfiles);
+    if (keys.length >= MAX_CHAT_PROFILES) {
+      const trimmed = {};
+      // Keep the most recent half
+      const keep = keys.slice(keys.length - Math.floor(MAX_CHAT_PROFILES / 2));
+      for (const k of keep) trimmed[k] = this.chatProfiles[k];
+      this.chatProfiles = trimmed;
+    }
+
     this.chatProfiles = {
       ...this.chatProfiles,
       [npub]: {

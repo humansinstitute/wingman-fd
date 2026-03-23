@@ -1219,6 +1219,9 @@ export function initApp() {
     },
 
     startExtensionSignerWatch() {
+      // Remove any previously registered listeners to avoid duplicates
+      this.stopExtensionSignerWatch();
+
       this.refreshExtensionSignerAvailability();
       if (typeof window === 'undefined' || typeof document === 'undefined') return;
       if (this.extensionSignerPollTimer) clearInterval(this.extensionSignerPollTimer);
@@ -1233,9 +1236,23 @@ export function initApp() {
       }, 15000);
 
       const refresh = () => this.refreshExtensionSignerAvailability();
+      this._extensionSignerRefresh = refresh;
       window.addEventListener('focus', refresh, { passive: true });
       window.addEventListener('pageshow', refresh, { passive: true });
       document.addEventListener('visibilitychange', refresh, { passive: true });
+    },
+
+    stopExtensionSignerWatch() {
+      if (this.extensionSignerPollTimer) {
+        clearInterval(this.extensionSignerPollTimer);
+        this.extensionSignerPollTimer = null;
+      }
+      if (this._extensionSignerRefresh) {
+        window.removeEventListener('focus', this._extensionSignerRefresh);
+        window.removeEventListener('pageshow', this._extensionSignerRefresh);
+        document.removeEventListener('visibilitychange', this._extensionSignerRefresh);
+        this._extensionSignerRefresh = null;
+      }
     },
 
     async refreshExtensionSignerAvailability() {
@@ -1335,6 +1352,7 @@ export function initApp() {
     async logout() {
       this.stopBackgroundSync();
       this.stopAllLiveQueries();
+      this.stopExtensionSignerWatch();
       this.clearDocCommentConnector();
       this.revokeStorageImageObjectUrls();
       await clearAutoLogin();
