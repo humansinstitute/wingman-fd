@@ -5457,6 +5457,29 @@ button:disabled {
   letter-spacing: 0.03em;
 }
 
+.task-field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.task-desc-toggle {
+  font-size: 0.78rem;
+  color: var(--accent, #3b82f6);
+  cursor: pointer;
+  text-decoration: none;
+}
+.task-desc-toggle:hover {
+  text-decoration: underline;
+}
+
+.task-desc-preview {
+  padding: 0.5rem;
+  min-height: 2rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
 .task-field select,
 .task-field input[type="date"],
 .task-field input[type="text"] {

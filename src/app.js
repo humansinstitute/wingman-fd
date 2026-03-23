@@ -290,6 +290,7 @@ export function initApp() {
     editingScheduleDraft: null,
     editingScheduleGroupQuery: '',
     showTaskDetail: false,
+    taskDescriptionEditing: false,
     _dragTaskId: null,
     _taskWasDragged: false,
     _dragDocBrowserItem: null,
@@ -2464,6 +2465,7 @@ export function initApp() {
       }
       this.taskAssigneeQuery = '';
       this.showTaskDetail = true;
+      this.taskDescriptionEditing = !this.editingTask?.description;
       this.newSubtaskTitle = '';
       this.newTaskCommentBody = '';
       this.loadTaskComments(taskId);

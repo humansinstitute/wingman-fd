@@ -876,8 +876,21 @@
 
                   <!-- Description -->
                   <div class="task-field task-field-wide">
-                    <label class="task-field-label">Description</label>
+                    <div class="task-field-label-row">
+                      <label class="task-field-label">Description</label>
+                      <a
+                        class="task-desc-toggle"
+                        x-show="$store.chat.taskDescriptionEditing && $store.chat.editingTask.description"
+                        @click.prevent="$store.chat.taskDescriptionEditing = false"
+                      >Preview</a>
+                      <a
+                        class="task-desc-toggle"
+                        x-show="!$store.chat.taskDescriptionEditing"
+                        @click.prevent="$store.chat.taskDescriptionEditing = true"
+                      >Edit</a>
+                    </div>
                     <textarea
+                      x-show="$store.chat.taskDescriptionEditing"
                       x-model="$store.chat.editingTask.description"
                       @change="$store.chat.saveEditingTask()"
                       @input="$store.chat.handleMentionInput($event.target)"
@@ -886,6 +899,11 @@
                       placeholder="Add a description..."
                       rows="4"
                     ></textarea>
+                    <div
+                      class="task-desc-preview chat-post-markdown"
+                      x-show="!$store.chat.taskDescriptionEditing"
+                      x-html="$store.chat.renderMarkdown($store.chat.editingTask.description)"
+                    ></div>
                   </div>
 
                   <!-- Subtasks -->
