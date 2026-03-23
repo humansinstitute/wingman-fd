@@ -1532,12 +1532,13 @@
                                   <textarea
                                     class="doc-block-editor"
                                     x-model="$store.chat.docBlockBuffer"
-                                    @input="$store.chat.updateDocBlockBuffer($event.target.value)"
+                                    @input="$store.chat.updateDocBlockBuffer($event.target.value); $store.chat.handleMentionInput($event.target)"
+                                    @keydown="$store.chat.handleMentionKeydown($event)"
                                     @paste="$store.chat.handleDocBlockPaste($event)"
-                                    @blur="$store.chat.commitDocBlockEdit()"
-                                    @keydown.escape.prevent="$store.chat.cancelDocBlockEdit()"
-                                    @keydown.meta.enter.prevent="$store.chat.commitDocBlockEdit()"
-                                    @keydown.ctrl.enter.prevent="$store.chat.commitDocBlockEdit()"
+                                    @blur="if (!$store.chat.mentionActive) $store.chat.commitDocBlockEdit()"
+                                    @keydown.escape.prevent="if ($store.chat.mentionActive) { $store.chat.closeMentionPopover() } else { $store.chat.cancelDocBlockEdit() }"
+                                    @keydown.meta.enter.prevent="if (!$store.chat.mentionActive) $store.chat.commitDocBlockEdit()"
+                                    @keydown.ctrl.enter.prevent="if (!$store.chat.mentionActive) $store.chat.commitDocBlockEdit()"
                                   ></textarea>
                                 </div>
                               </div>
