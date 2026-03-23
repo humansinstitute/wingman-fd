@@ -33,14 +33,7 @@ function showUpdateBanner(newBuildId) {
   updateBanner.addEventListener('click', (e) => {
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (action === 'reload') {
-      if (navigator.serviceWorker) {
-        navigator.serviceWorker.getRegistration().then((reg) => {
-          if (reg) reg.update().then(() => location.reload());
-          else location.reload();
-        }).catch(() => location.reload());
-      } else {
-        location.reload();
-      }
+      location.reload();
     } else if (action === 'dismiss') {
       dismissed = true;
       updateBanner.remove();
