@@ -1,0 +1,3 @@
+Deprecated compatibility file.
+
+Use `/llms.txt` instead.

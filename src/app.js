@@ -2346,9 +2346,8 @@ export function initApp() {
       if (!this.editingTask) return;
       this.editingTask.state = state;
       this.editingTask.assigned_to_npub = null;
-      const savePromise = this.saveEditingTask();
+      await this.saveEditingTask();
       this.closeTaskDetail();
-      await savePromise;
     },
 
     async saveEditingTask() {
@@ -2541,10 +2540,9 @@ export function initApp() {
       this.editingTask.assigned_to_npub = this.defaultAgentNpub;
       this.editingTask.state = 'ready';
       this.taskAssigneeQuery = '';
-      await this.rememberPeople([this.defaultAgentNpub], 'task-assignee');
-      const savePromise = this.saveEditingTask();
+      await this.saveEditingTask();
       this.closeTaskDetail();
-      await savePromise;
+      this.rememberPeople([this.defaultAgentNpub], 'task-assignee');
     },
 
     buildTaskUrl(taskId) {
