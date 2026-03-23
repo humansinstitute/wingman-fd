@@ -702,10 +702,12 @@ export const taskBoardStateMixin = {
   },
 
   get scheduleAssignableGroups() {
-    return this.taskBoards.map((board) => ({
-      groupId: board.id,
-      label: board.label,
-      subtitle: board.id === this.memberPrivateGroupRef ? 'Private group' : board.id,
+    return this.currentWorkspaceGroups.map((group) => ({
+      groupId: group.group_id || group.group_npub,
+      label: group.name || 'Group',
+      subtitle: group.group_kind === 'private'
+        ? 'Private group'
+        : `${(group.member_npubs || []).length} members`,
     }));
   },
 
