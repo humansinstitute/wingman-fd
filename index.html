@@ -933,6 +933,7 @@
                       x-model="$store.chat.newTaskCommentBody"
                       @input="$store.chat.handleMentionInput($event.target)"
                       @keydown="$store.chat.handleMentionKeydown($event)"
+                      @keydown.enter.exact.prevent="if (!$store.chat.mentionActive) $store.chat.addTaskComment($store.chat.editingTask.record_id)"
                       @paste="$store.chat.handleTaskCommentPaste($event)"
                       placeholder="Add a comment..."
                       rows="2"
