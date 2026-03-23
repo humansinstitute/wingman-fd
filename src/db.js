@@ -50,6 +50,9 @@ export function openWorkspaceDb(ownerNpub) {
   if (_currentWorkspaceOwnerNpub === ownerNpub && _currentWorkspaceDb) {
     return _currentWorkspaceDb;
   }
+  if (_currentWorkspaceDb) {
+    try { _currentWorkspaceDb.close(); } catch { /* already closed */ }
+  }
   _currentWorkspaceDb = createWorkspaceDb(ownerNpub);
   _currentWorkspaceOwnerNpub = ownerNpub;
   return _currentWorkspaceDb;
