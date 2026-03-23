@@ -68,7 +68,15 @@ export const triggersManagerMixin = {
     };
 
     this.workspaceTriggers = [...this.workspaceTriggers, trigger];
-    await this.saveHarnessSettings();
+
+    try {
+      await this.saveHarnessSettings();
+    } catch (err) {
+      // Roll back the optimistic local add
+      this.workspaceTriggers = this.workspaceTriggers.filter((t) => t.id !== trigger.id);
+      this.triggerError = `Failed to save trigger: ${err.message}`;
+      return;
+    }
 
     this.newTriggerType = 'manual';
     this.newTriggerName = '';

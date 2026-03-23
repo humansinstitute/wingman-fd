@@ -682,10 +682,20 @@ export const workspaceManagerMixin = {
     const groupIds = writeGroupRef ? [writeGroupRef] : [...(this.workspaceSettingsGroupIds || [])];
     const nextVersion = Math.max(1, Number(this.workspaceSettingsVersion || 0) + 1);
     const recordId = this.workspaceSettingsRecordId || workspaceSettingsRecordId(workspaceOwnerNpub);
+
+    // Preserve workspace profile fields so a harness/trigger save doesn't blank them
+    const existing = await getWorkspaceSettings(workspaceOwnerNpub);
+    const workspaceName = existing?.workspace_name ?? String(this.workspaceProfileNameInput || '').trim();
+    const workspaceDescription = existing?.workspace_description ?? String(this.workspaceProfileDescriptionInput || '').trim();
+    const workspaceAvatarUrl = (existing?.workspace_avatar_url ?? String(this.workspaceProfileAvatarInput || '').trim()) || null;
+
     const localRow = {
       workspace_owner_npub: workspaceOwnerNpub,
       record_id: recordId,
       owner_npub: workspaceOwnerNpub,
+      workspace_name: workspaceName,
+      workspace_description: workspaceDescription,
+      workspace_avatar_url: workspaceAvatarUrl,
       wingman_harness_url: normalizedUrl,
       triggers: toRaw(this.workspaceTriggers || []),
       group_ids: groupIds,
@@ -702,6 +712,9 @@ export const workspaceManagerMixin = {
       record_id: recordId,
       owner_npub: workspaceOwnerNpub,
       workspace_owner_npub: workspaceOwnerNpub,
+      workspace_name: workspaceName,
+      workspace_description: workspaceDescription,
+      workspace_avatar_url: workspaceAvatarUrl,
       wingman_harness_url: normalizedUrl,
       triggers: toRaw(this.workspaceTriggers || []),
       group_ids: groupIds,
