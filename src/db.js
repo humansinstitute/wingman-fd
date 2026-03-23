@@ -217,17 +217,38 @@ export async function upsertWorkspaceSettings(settings) {
 
 export async function getCachedStorageImage(objectId) {
   if (!objectId) return null;
-  return sharedDb.storage_image_cache.get(objectId);
+  const entry = await sharedDb.storage_image_cache.get(objectId);
+  if (entry) {
+    // Touch cached_at so it acts as a last-accessed timestamp for LRU eviction
+    sharedDb.storage_image_cache.update(objectId, { cached_at: Date.now() }).catch(() => {});
+  }
+  return entry;
 }
 
 export async function cacheStorageImage({ object_id, blob, content_type = '', cached_at = Date.now() }) {
   if (!object_id || !(blob instanceof Blob)) return null;
-  return sharedDb.storage_image_cache.put({
+  const result = await sharedDb.storage_image_cache.put({
     object_id,
     blob,
     content_type,
     cached_at,
   });
+  // Fire-and-forget eviction after caching a new entry
+  evictStorageImageCache().catch(() => {});
+  return result;
+}
+
+export async function evictStorageImageCache(maxEntries = 100) {
+  const count = await sharedDb.storage_image_cache.count();
+  if (count <= maxEntries) return 0;
+  const excess = count - maxEntries;
+  // sorted ascending by cached_at — oldest first
+  const oldest = await sharedDb.storage_image_cache
+    .orderBy('cached_at')
+    .limit(excess)
+    .primaryKeys();
+  await sharedDb.storage_image_cache.bulkDelete(oldest);
+  return oldest.length;
 }
 
 // ---------------------------------------------------------------------------

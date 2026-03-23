@@ -16,6 +16,7 @@ import {
   clearRuntimeData,
   addPendingWrite,
   cacheStorageImage,
+  evictStorageImageCache,
 } from './db.js';
 import {
   setBaseUrl,
@@ -740,6 +741,7 @@ export const workspaceManagerMixin = {
 
       if (previousWorkspace && previousWorkspace !== workspace.workspaceOwnerNpub) {
         await clearRuntimeData();
+        evictStorageImageCache().catch(() => {});
         this.channels = [];
         this.messages = [];
         this.groups = [];
