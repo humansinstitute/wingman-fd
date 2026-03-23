@@ -8,6 +8,9 @@ import { createGroupWriteAuthHeader } from './crypto/group-keys.js';
 
 let _baseUrl = '';
 
+const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
+const UPLOAD_FETCH_TIMEOUT_MS = 60_000;
+
 function bytesToBase64(bytes) {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -72,6 +75,7 @@ async function signedFetch(path, { method = 'GET', body } = {}) {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
   });
 }
 
@@ -87,6 +91,7 @@ async function signedFetchAbsolute(requestUrl, { method = 'GET', body } = {}) {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
   });
 }
 
@@ -303,6 +308,7 @@ export async function uploadStorageObject(prepared, bytes, contentType = 'applic
         'Content-Type': contentType,
       },
       body: bytes,
+      signal: AbortSignal.timeout(UPLOAD_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     directUploadFailure = error instanceof Error ? error : new Error(String(error));
