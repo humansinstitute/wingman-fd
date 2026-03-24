@@ -7177,6 +7177,38 @@ button:disabled {
   font-size: 0.82rem;
   flex-shrink: 0;
 }
+.doc-diff-pickers {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.doc-diff-picker-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--fg, #ccc);
+}
+.doc-diff-picker-select {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary, #1e1e1e);
+  color: var(--fg, #ccc);
+  max-width: 220px;
+  cursor: pointer;
+}
+.doc-diff-picker-select:focus {
+  outline: 2px solid var(--accent, #58a6ff);
+  outline-offset: -1px;
+}
+.doc-diff-arrow {
+  color: var(--muted);
+  font-size: 1rem;
+}
 .doc-diff-label {
   font-weight: 600;
 }
@@ -7225,6 +7257,8 @@ button:disabled {
 
 @media (max-width: 640px) {
   .doc-diff-hint { display: none; }
+  .doc-diff-pickers { gap: 0.3rem; }
+  .doc-diff-picker-select { max-width: 140px; }
 }
 
 @media (max-width: 640px) {

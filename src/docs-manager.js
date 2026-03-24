@@ -173,6 +173,8 @@ export const docsManagerMixin = {
     this.docDiffMode = false;
     this.docDiffHunks = [];
     this.docDiffCompareIndex = -1;
+    this.docDiffFromIndex = -1;
+    this.docDiffToIndex = -1;
     this.docCommentBackfillAttemptsByDocId = {};
     this.clearDocCommentConnector();
     this.loadDocEditorFromSelection();
@@ -1303,6 +1305,8 @@ export const docsManagerMixin = {
     this.docDiffMode = false;
     this.docDiffHunks = [];
     this.docDiffCompareIndex = -1;
+    this.docDiffFromIndex = -1;
+    this.docDiffToIndex = -1;
     this.syncRoute();
   },
 
@@ -1311,29 +1315,59 @@ export const docsManagerMixin = {
     this.docVersioningSelectedIndex = index;
     const ver = this.docVersionHistory[index];
     this.docVersioningPreviewHtml = renderMarkdownToHtml(ver.content || '');
-    if (this.docDiffMode) this.computeDocDiff();
+    if (this.docDiffMode) {
+      this.docDiffToIndex = index;
+      this.computeDocDiff();
+    }
   },
 
   toggleDocDiffMode() {
     this.docDiffMode = !this.docDiffMode;
-    if (this.docDiffMode) this.computeDocDiff();
+    if (this.docDiffMode) {
+      // Default: "to" = selected version (or newest), "from" = next older
+      const toIdx = this.docVersioningSelectedIndex >= 0 ? this.docVersioningSelectedIndex : 0;
+      const fromIdx = Math.min(toIdx + 1, this.docVersionHistory.length - 1);
+      this.docDiffToIndex = toIdx;
+      this.docDiffFromIndex = toIdx !== fromIdx ? fromIdx : -1;
+      this.computeDocDiff();
+    }
   },
 
   setDocDiffCompareIndex(index) {
     if (index < 0 || index >= this.docVersionHistory.length) return;
     this.docDiffCompareIndex = index;
+    this.docDiffFromIndex = index;
+    if (this.docDiffMode) this.computeDocDiff();
+  },
+
+  setDocDiffFromIndex(index) {
+    this.docDiffFromIndex = index;
+    if (this.docDiffMode) this.computeDocDiff();
+  },
+
+  setDocDiffToIndex(index) {
+    this.docDiffToIndex = index;
+    // Also update the selected version index and preview to match
+    if (index >= 0 && index < this.docVersionHistory.length) {
+      this.docVersioningSelectedIndex = index;
+      const ver = this.docVersionHistory[index];
+      this.docVersioningPreviewHtml = renderMarkdownToHtml(ver.content || '');
+    }
     if (this.docDiffMode) this.computeDocDiff();
   },
 
   computeDocDiff() {
-    const selected = this.docVersionHistory[this.docVersioningSelectedIndex];
+    const toIdx = this.docDiffToIndex >= 0
+      ? this.docDiffToIndex
+      : this.docVersioningSelectedIndex;
+    const selected = this.docVersionHistory[toIdx];
     if (!selected) { this.docDiffHunks = []; return; }
 
-    const compareIdx = this.docDiffCompareIndex >= 0
-      ? this.docDiffCompareIndex
-      : this.docVersioningSelectedIndex + 1;
+    const fromIdx = this.docDiffFromIndex >= 0
+      ? this.docDiffFromIndex
+      : (this.docDiffCompareIndex >= 0 ? this.docDiffCompareIndex : toIdx + 1);
 
-    const older = this.docVersionHistory[compareIdx];
+    const older = this.docVersionHistory[fromIdx];
     const diffText = (v) => `# ${v.title}\n\n${v.content}`;
 
     if (!older) {
