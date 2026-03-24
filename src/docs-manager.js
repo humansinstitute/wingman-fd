@@ -27,6 +27,7 @@ import { toRaw } from './utils/state-helpers.js';
 import { fetchRecordHistory } from './api.js';
 import { inboundDocument } from './translators/docs.js';
 import { renderMarkdownToHtml } from './markdown.js';
+import { diffLines } from 'diff';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -169,6 +170,9 @@ export const docsManagerMixin = {
     this.docVersioningSelectedIndex = -1;
     this.docVersioningPreviewHtml = '';
     this.docVersioningError = null;
+    this.docDiffMode = false;
+    this.docDiffHunks = [];
+    this.docDiffCompareIndex = -1;
     this.docCommentBackfillAttemptsByDocId = {};
     this.clearDocCommentConnector();
     this.loadDocEditorFromSelection();
@@ -1296,6 +1300,9 @@ export const docsManagerMixin = {
     this.docVersioningSelectedIndex = -1;
     this.docVersioningPreviewHtml = '';
     this.docVersioningError = null;
+    this.docDiffMode = false;
+    this.docDiffHunks = [];
+    this.docDiffCompareIndex = -1;
     this.syncRoute();
   },
 
@@ -1304,6 +1311,37 @@ export const docsManagerMixin = {
     this.docVersioningSelectedIndex = index;
     const ver = this.docVersionHistory[index];
     this.docVersioningPreviewHtml = renderMarkdownToHtml(ver.content || '');
+    if (this.docDiffMode) this.computeDocDiff();
+  },
+
+  toggleDocDiffMode() {
+    this.docDiffMode = !this.docDiffMode;
+    if (this.docDiffMode) this.computeDocDiff();
+  },
+
+  setDocDiffCompareIndex(index) {
+    if (index < 0 || index >= this.docVersionHistory.length) return;
+    this.docDiffCompareIndex = index;
+    if (this.docDiffMode) this.computeDocDiff();
+  },
+
+  computeDocDiff() {
+    const selected = this.docVersionHistory[this.docVersioningSelectedIndex];
+    if (!selected) { this.docDiffHunks = []; return; }
+
+    const compareIdx = this.docDiffCompareIndex >= 0
+      ? this.docDiffCompareIndex
+      : this.docVersioningSelectedIndex + 1;
+
+    const older = this.docVersionHistory[compareIdx];
+    const diffText = (v) => `# ${v.title}\n\n${v.content}`;
+
+    if (!older) {
+      this.docDiffHunks = [{ value: diffText(selected), added: true }];
+      return;
+    }
+
+    this.docDiffHunks = diffLines(diffText(older), diffText(selected));
   },
 
   async restoreDocVersion() {

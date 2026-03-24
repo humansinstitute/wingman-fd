@@ -1809,6 +1809,7 @@
               <div class="doc-versioning-header">
                 <h3>Version History</h3>
                 <div class="doc-versioning-header-actions">
+                  <button type="button" class="doc-versioning-action-btn" :class="{ 'doc-versioning-action-btn-active': $store.chat.docDiffMode }" :disabled="$store.chat.docVersioningSelectedIndex < 0" @click="$store.chat.toggleDocDiffMode()" title="Toggle diff view">Diff</button>
                   <button type="button" class="doc-versioning-action-btn" :disabled="$store.chat.docVersioningSelectedIndex < 0" @click="$store.chat.copyDocVersionSource()" title="Copy source markdown">Copy Source</button>
                   <button type="button" class="doc-versioning-action-btn doc-versioning-restore-btn" :disabled="$store.chat.docVersioningSelectedIndex < 0" @click="$store.chat.restoreDocVersion()">Restore</button>
                   <button class="modal-close" type="button" @click="$store.chat.closeDocVersioning()">&times;</button>
@@ -1828,8 +1829,12 @@
                   <template x-for="(ver, index) in $store.chat.docVersionHistory" :key="ver.version">
                     <button type="button"
                       class="doc-version-item"
-                      :class="{ 'doc-version-item-selected': $store.chat.docVersioningSelectedIndex === index }"
+                      :class="{
+                        'doc-version-item-selected': $store.chat.docVersioningSelectedIndex === index,
+                        'doc-version-item-compare': $store.chat.docDiffMode && $store.chat.docDiffCompareIndex === index
+                      }"
                       @click="$store.chat.selectDocVersion(index)"
+                      @click.shift="$store.chat.setDocDiffCompareIndex(index)"
                     >
                       <span class="doc-version-number" x-text="'v' + ver.version"></span>
                       <span class="doc-version-title" x-text="ver.title"></span>
@@ -1838,8 +1843,35 @@
                   </template>
                 </aside>
                 <div class="doc-versioning-preview">
-                  <template x-if="$store.chat.docVersioningSelectedIndex >= 0">
+                  <template x-if="$store.chat.docVersioningSelectedIndex >= 0 && !$store.chat.docDiffMode">
                     <div class="doc-versioning-preview-content" x-html="$store.chat.docVersioningPreviewHtml"></div>
+                  </template>
+                  <template x-if="$store.chat.docVersioningSelectedIndex >= 0 && $store.chat.docDiffMode">
+                    <div class="doc-diff-view">
+                      <div class="doc-diff-header">
+                        <span class="doc-diff-label" x-text="(() => {
+                          const s = $store.chat;
+                          const selVer = s.docVersionHistory[s.docVersioningSelectedIndex];
+                          const cmpIdx = s.docDiffCompareIndex >= 0 ? s.docDiffCompareIndex : s.docVersioningSelectedIndex + 1;
+                          const cmpVer = s.docVersionHistory[cmpIdx];
+                          return cmpVer ? `v${cmpVer.version} → v${selVer.version}` : `v${selVer.version} (initial)`;
+                        })()"></span>
+                        <span class="doc-diff-hint">Shift-click a version to compare against it</span>
+                      </div>
+                      <div class="doc-diff-body">
+                        <template x-for="(hunk, hi) in $store.chat.docDiffHunks" :key="hi">
+                          <div class="doc-diff-hunk"
+                            :class="{
+                              'doc-diff-line-added': hunk.added,
+                              'doc-diff-line-removed': hunk.removed,
+                              'doc-diff-line-context': !hunk.added && !hunk.removed
+                            }">
+                            <span class="doc-diff-gutter" x-text="hunk.added ? '+' : hunk.removed ? '−' : ' '"></span>
+                            <pre class="doc-diff-content" x-text="hunk.value"></pre>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
                   </template>
                   <template x-if="$store.chat.docVersioningSelectedIndex < 0 && !$store.chat.docVersioningLoading">
                     <div class="doc-versioning-status">Select a version to preview.</div>
