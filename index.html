@@ -291,6 +291,7 @@
               </svg>
             </span>
             <span class="sidebar-label">Chat</span>
+            <span class="unread-dot" x-show="$store.chat.unreadChat" x-cloak></span>
             <button type="button" class="sidebar-add-channel-btn" @click.stop="$store.chat.openNewChannelModal()" title="New channel">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 5v14M5 12h14"/>
@@ -301,10 +302,14 @@
             <div class="sidebar-channels">
               <template x-for="ch in $store.chat.channels" :key="ch.record_id">
                 <li class="sidebar-channel-item"
-                  :class="{ active: $store.chat.selectedChannelId === ch.record_id }"
+                  :class="{
+                    active: $store.chat.selectedChannelId === ch.record_id,
+                    'sidebar-channel-unread': $store.chat.isChannelUnread(ch.record_id)
+                  }"
                   @click="$store.chat.selectChannel(ch.record_id)">
                   <span class="channel-hash">#</span>
                   <span class="sidebar-label" x-text="$store.chat.getChannelLabel(ch)"></span>
+                  <span class="unread-dot unread-dot-channel" x-show="$store.chat.isChannelUnread(ch.record_id)" x-cloak></span>
                 </li>
               </template>
             </div>
@@ -317,6 +322,7 @@
               </svg>
             </span>
             <span class="sidebar-label">Tasks</span>
+            <span class="unread-dot" x-show="$store.chat.unreadTasks" x-cloak></span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'calendar' }" @click="$store.chat.navigateTo('calendar')">
             <span class="sidebar-icon" aria-hidden="true">
@@ -336,6 +342,7 @@
               </svg>
             </span>
             <span class="sidebar-label">Docs</span>
+            <span class="unread-dot" x-show="$store.chat.unreadDocs" x-cloak></span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'people' }" @click="$store.chat.navigateTo('people')">
             <span class="sidebar-icon" aria-hidden="true">

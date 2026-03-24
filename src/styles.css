@@ -998,6 +998,44 @@ button:disabled {
   color: var(--muted);
 }
 
+/* Unread indicator dots */
+.sidebar-nav li {
+  position: relative;
+}
+
+.unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.unread-dot-channel {
+  width: 6px;
+  height: 6px;
+}
+
+.sidebar-channel-unread .sidebar-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sidebar-channel-unread .channel-hash {
+  color: var(--text);
+}
+
+/* When sidebar is collapsed, show dot as badge on the icon */
+.sidebar-collapsed .unread-dot:not(.unread-dot-channel) {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  margin-left: 0;
+}
+
 .sidebar-workspace-footer {
   margin-top: auto;
   padding: 0.6rem;

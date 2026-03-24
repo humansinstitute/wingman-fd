@@ -319,6 +319,8 @@ export const channelsManagerMixin = {
     this.startSelectedChannelLiveQuery();
     if (options.syncRoute !== false) this.syncRoute();
     this.ensureBackgroundSync(true);
+    // Mark this channel (and the chat section) as read
+    this.markChannelRead(recordId);
   },
 
   // --- group modals ---

@@ -1,0 +1,182 @@
+/**
+ * Unread indicators mixin for the Alpine chat store.
+ *
+ * Tracks read cursors per nav section and per chat channel.
+ * Shows red dots on nav items when a section has unseen updates.
+ *
+ * Cursor key patterns:
+ *   chat:nav          - nav-level cursor for the Chat section
+ *   chat:channel:<id> - per-channel cursor
+ *   tasks:nav         - nav-level cursor for the Tasks section
+ *   docs:nav          - nav-level cursor for the Docs section
+ *
+ * record_id is deterministic: hex(sha256(viewer_npub + cursor_key))
+ */
+
+import {
+  upsertReadCursor,
+  getAllReadCursors,
+  getWorkspaceDb,
+} from './db.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async function sha256Hex(input) {
+  const data = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function cursorRecordId(viewerNpub, cursorKey) {
+  return sha256Hex(viewerNpub + cursorKey);
+}
+
+// ---------------------------------------------------------------------------
+// Mixin
+// ---------------------------------------------------------------------------
+
+export const unreadStoreMixin = {
+  // Reactive unread flags — these drive the red dots in the nav
+  _unreadChat: false,
+  _unreadTasks: false,
+  _unreadDocs: false,
+  // Per-channel unread map: { channelId: boolean }
+  _unreadChannels: {},
+
+  // Timer handle for periodic refresh
+  _unreadRefreshTimer: null,
+
+  get unreadChat() { return this._unreadChat; },
+  get unreadTasks() { return this._unreadTasks; },
+  get unreadDocs() { return this._unreadDocs; },
+
+  isChannelUnread(channelId) {
+    return this._unreadChannels[channelId] === true;
+  },
+
+  /**
+   * Boot unread tracking — call after workspace DB is open and session.npub is available.
+   */
+  async initUnreadTracking() {
+    await this.refreshUnreadFlags();
+    // Re-check every 30s so background syncs surface new dots
+    if (this._unreadRefreshTimer) clearInterval(this._unreadRefreshTimer);
+    this._unreadRefreshTimer = setInterval(() => this.refreshUnreadFlags(), 30_000);
+  },
+
+  teardownUnreadTracking() {
+    if (this._unreadRefreshTimer) {
+      clearInterval(this._unreadRefreshTimer);
+      this._unreadRefreshTimer = null;
+    }
+  },
+
+  /**
+   * Re-compute all unread flags by comparing cursors against live data.
+   */
+  async refreshUnreadFlags() {
+    const viewerNpub = this.session?.npub;
+    if (!viewerNpub) return;
+
+    try {
+      const db = getWorkspaceDb();
+
+      // Load all cursors for this viewer in one shot
+      const cursors = await getAllReadCursors(viewerNpub);
+      const cursorMap = {};
+      for (const c of cursors) {
+        cursorMap[c.cursor_key] = c.read_until;
+      }
+
+      // --- Chat nav ---
+      const chatReadUntil = cursorMap['chat:nav'] || '1970-01-01T00:00:00.000Z';
+      const allMessages = await db.chat_messages.where('updated_at').above(chatReadUntil).first();
+      this._unreadChat = allMessages != null && allMessages.record_state !== 'deleted';
+
+      // --- Tasks nav ---
+      const tasksReadUntil = cursorMap['tasks:nav'] || '1970-01-01T00:00:00.000Z';
+      const latestTask = await db.tasks.where('updated_at').above(tasksReadUntil).first();
+      this._unreadTasks = latestTask != null && latestTask.record_state !== 'deleted';
+
+      // --- Docs nav ---
+      const docsReadUntil = cursorMap['docs:nav'] || '1970-01-01T00:00:00.000Z';
+      const latestDoc = await db.documents.where('updated_at').above(docsReadUntil).first();
+      this._unreadDocs = latestDoc != null && latestDoc.record_state !== 'deleted';
+
+      // --- Per-channel unread ---
+      const channels = this.channels || [];
+      const newChannelMap = {};
+      for (const ch of channels) {
+        const key = `chat:channel:${ch.record_id}`;
+        const chReadUntil = cursorMap[key] || '1970-01-01T00:00:00.000Z';
+        const newerMsg = await db.chat_messages
+          .where('channel_id').equals(ch.record_id)
+          .and((m) => m.updated_at > chReadUntil && m.record_state !== 'deleted')
+          .first();
+        newChannelMap[ch.record_id] = newerMsg != null;
+      }
+      this._unreadChannels = newChannelMap;
+    } catch (e) {
+      // Swallow errors — unread flags are non-critical
+      console.warn('[unread] refresh failed:', e?.message || e);
+    }
+  },
+
+  /**
+   * Mark a nav section as read (updates cursor to now).
+   */
+  async markSectionRead(section) {
+    const viewerNpub = this.session?.npub;
+    if (!viewerNpub) return;
+
+    const keyMap = {
+      chat: 'chat:nav',
+      tasks: 'tasks:nav',
+      docs: 'docs:nav',
+    };
+    const cursorKey = keyMap[section];
+    if (!cursorKey) return;
+
+    const recordId = await cursorRecordId(viewerNpub, cursorKey);
+    const now = new Date().toISOString();
+    await upsertReadCursor({
+      record_id: recordId,
+      cursor_key: cursorKey,
+      viewer_npub: viewerNpub,
+      read_until: now,
+    });
+
+    // Immediately clear the flag
+    if (section === 'chat') this._unreadChat = false;
+    if (section === 'tasks') this._unreadTasks = false;
+    if (section === 'docs') this._unreadDocs = false;
+  },
+
+  /**
+   * Mark a specific chat channel as read.
+   */
+  async markChannelRead(channelId) {
+    const viewerNpub = this.session?.npub;
+    if (!viewerNpub || !channelId) return;
+
+    const cursorKey = `chat:channel:${channelId}`;
+    const recordId = await cursorRecordId(viewerNpub, cursorKey);
+    const now = new Date().toISOString();
+    await upsertReadCursor({
+      record_id: recordId,
+      cursor_key: cursorKey,
+      viewer_npub: viewerNpub,
+      read_until: now,
+    });
+
+    // Also update nav-level chat cursor
+    await this.markSectionRead('chat');
+
+    // Immediately clear the channel flag
+    this._unreadChannels = { ...this._unreadChannels, [channelId]: false };
+  },
+};

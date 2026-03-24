@@ -37,11 +37,30 @@ const WORKSPACE_STORES = {
   sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
   pending_writes:     '++row_id, record_id, record_family_hash, created_at',
   sync_state:         'key',
+  read_cursors:       '&record_id, cursor_key, viewer_npub, read_until',
 };
 
 function createWorkspaceDb(ownerNpub) {
   const db = new Dexie(`wingman-fd-ws-${ownerNpub}`);
-  db.version(1).stores(WORKSPACE_STORES);
+  // v1: original schema (without read_cursors)
+  db.version(1).stores({
+    workspace_settings: '&workspace_owner_npub, record_id, updated_at',
+    channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
+    groups:             'group_id, owner_npub, *member_npubs',
+    documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
+    tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
+    comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+    audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
+    scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+    sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
+    pending_writes:     '++row_id, record_id, record_family_hash, created_at',
+    sync_state:         'key',
+  });
+  // v2: add read_cursors for unread indicators
+  db.version(2).stores(WORKSPACE_STORES);
   return db;
 }
 
@@ -646,4 +665,27 @@ export async function clearRuntimeFamilies(familyIds = []) {
   await Promise.all(
     tables.map((tableName) => db[tableName]?.clear?.()).filter(Boolean)
   );
+}
+
+// ---------------------------------------------------------------------------
+// read_cursors — workspace DB (for unread indicators)
+// ---------------------------------------------------------------------------
+
+export async function getReadCursor(recordId) {
+  return wsDb().read_cursors.get(recordId);
+}
+
+export async function getReadCursorByKey(cursorKey, viewerNpub) {
+  return wsDb().read_cursors
+    .where('cursor_key').equals(cursorKey)
+    .and((row) => row.viewer_npub === viewerNpub)
+    .first();
+}
+
+export async function upsertReadCursor(cursor) {
+  return wsDb().read_cursors.put(sanitizeForStorage(cursor));
+}
+
+export async function getAllReadCursors(viewerNpub) {
+  return wsDb().read_cursors.where('viewer_npub').equals(viewerNpub).toArray();
 }

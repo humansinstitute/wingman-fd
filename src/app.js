@@ -18,6 +18,7 @@ import { chatMessageManagerMixin } from './chat-message-manager.js';
 import { syncManagerMixin } from './sync-manager.js';
 import { peopleProfilesManagerMixin } from './people-profiles-manager.js';
 import { connectSettingsManagerMixin } from './connect-settings-manager.js';
+import { unreadStoreMixin } from './unread-store.js';
 import {
   taskBoardStateMixin,
   UNSCOPED_TASK_BOARD_ID,
@@ -936,6 +937,7 @@ export function initApp() {
       this.stopSelectedChannelLiveQuery();
       this.stopTaskCommentsLiveQuery();
       this.stopDocCommentsLiveQuery();
+      this.teardownUnreadTracking();
     },
 
     stopSelectedChannelLiveQuery() {
@@ -1005,6 +1007,7 @@ export function initApp() {
       ];
 
       this.startSelectedChannelLiveQuery();
+      this.initUnreadTracking();
     },
 
     startSelectedChannelLiveQuery() {
@@ -1511,6 +1514,10 @@ export function initApp() {
       this.navSection = section;
       this.mobileNavOpen = false;
       this.showWorkspaceSwitcherMenu = false;
+      // Mark section as read when user navigates to it
+      if (section === 'chat' || section === 'tasks' || section === 'docs') {
+        this.markSectionRead(section);
+      }
       if (section === 'tasks' || section === 'calendar') {
         this.validateSelectedBoardId();
         this.normalizeTaskFilterTags();
@@ -3687,6 +3694,7 @@ export function initApp() {
     jobsManagerMixin,
     audioRecordingManagerMixin,
     storageImageManagerMixin,
+    unreadStoreMixin,
   );
 
   Alpine.store('chat', storeObj);

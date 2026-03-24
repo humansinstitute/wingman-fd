@@ -308,6 +308,10 @@ export const syncManagerMixin = {
         })),
       });
     }
+    // Refresh unread indicators after sync status settles
+    if (typeof this.refreshUnreadFlags === 'function') {
+      this.refreshUnreadFlags();
+    }
   },
 
   // checkForStaleness removed — heartbeat-first sync in runSync replaces it
