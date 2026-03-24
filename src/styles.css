@@ -4423,6 +4423,141 @@ button:disabled {
   max-width: 100%;
 }
 
+/* ═══ JOBS ═══ */
+
+.jobs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  max-width: 100%;
+}
+
+.jobs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.jobs-header h2 {
+  margin: 0 0 0.25rem;
+}
+
+.jobs-subtitle {
+  color: var(--color-text-dim);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.jobs-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 0.75rem;
+}
+
+.jobs-tab {
+  padding: 0.5rem 1.25rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.jobs-tab.active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.jobs-tab:hover {
+  color: var(--color-text);
+}
+
+.jobs-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.jobs-filter-select,
+.jobs-filter-input {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.jobs-filter-input {
+  min-width: 150px;
+}
+
+.jobs-goal-text {
+  font-size: 0.82rem;
+  color: var(--color-text-dim);
+  margin: 0.25rem 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 500px;
+}
+
+.jobs-runs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.jobs-runs-header-row {
+  display: grid;
+  grid-template-columns: 90px 120px 1fr 140px 70px 70px;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  background: var(--color-bg-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.jobs-run-row {
+  display: grid;
+  grid-template-columns: 90px 120px 1fr 140px 70px 70px;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.jobs-run-row:last-child {
+  border-bottom: none;
+}
+
+.jobs-run-col-goal {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jobs-session-link {
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: var(--color-accent);
+  margin-right: 0.4rem;
+}
+
 .calendar-section,
 .schedules-section {
   display: flex;

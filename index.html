@@ -359,6 +359,17 @@
             </span>
             <span class="sidebar-label">Scopes</span>
           </li>
+          <li x-cloak x-show="$store.chat.hasHarnessLink" :class="{ active: $store.chat.navSection === 'jobs' }" @click="$store.chat.navigateTo('jobs'); $store.chat.loadJobDefinitions();">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                <path d="M12 6V4a2 2 0 0 0-2-2h-0a2 2 0 0 0-2 2v2"></path>
+                <path d="M16 6V4a2 2 0 0 0-2-2"></path>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+              </svg>
+            </span>
+            <span class="sidebar-label">Jobs</span>
+          </li>
           <li
             x-cloak
             x-show="$store.chat.hasHarnessLink"
@@ -2406,6 +2417,233 @@
               <div class="scope-new-actions schedule-modal-actions">
                 <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeNewScheduleModal()">Cancel</button>
                 <button type="submit" class="scope-save-btn schedule-primary-btn">Create schedule</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Jobs page -->
+        <div x-show="$store.chat.navSection === 'jobs'" class="jobs-section">
+          <div class="jobs-header">
+            <div>
+              <h2>Jobs</h2>
+              <p class="jobs-subtitle">Job definitions and runs managed by the Wingman harness.</p>
+            </div>
+          </div>
+
+          <div class="jobs-tabs">
+            <button class="jobs-tab" :class="{ active: $store.chat.jobsTab === 'definitions' }" @click="$store.chat.jobsTab = 'definitions'">Definitions</button>
+            <button class="jobs-tab" :class="{ active: $store.chat.jobsTab === 'runs' }" @click="$store.chat.jobsTab = 'runs'">Runs</button>
+          </div>
+
+          <div class="trigger-banner trigger-error" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></div>
+          <div class="trigger-banner trigger-success" x-show="$store.chat.jobsSuccess" x-text="$store.chat.jobsSuccess"></div>
+
+          <!-- Definitions tab -->
+          <div x-show="$store.chat.jobsTab === 'definitions'">
+            <div class="jobs-toolbar">
+              <button type="button" class="schedule-primary-btn" @click="$store.chat.openNewJobModal()">+ New Job</button>
+              <button type="button" class="scope-action-btn" @click="$store.chat.loadJobDefinitions()">Refresh</button>
+            </div>
+
+            <p class="settings-field-help" x-show="$store.chat.jobsLoading">Loading job definitions...</p>
+            <p class="settings-field-help" x-show="!$store.chat.jobsLoading && $store.chat.jobDefinitions.length === 0">No job definitions found. Connect a Wingman harness with jobs configured.</p>
+
+            <div class="jobs-list" x-show="$store.chat.jobDefinitions.length > 0">
+              <template x-for="job in $store.chat.jobDefinitions" :key="job.id">
+                <div class="schedule-card" :class="{ 'trigger-disabled': !job.enabled }">
+                  <div class="schedule-card-body">
+                    <div class="schedule-card-main">
+                      <div class="schedule-card-title-row">
+                        <h3 x-text="job.name || job.id"></h3>
+                        <span class="badge" :class="job.enabled ? 'state-done' : 'state-new'" x-text="job.enabled ? 'Enabled' : 'Disabled'"></span>
+                      </div>
+                      <p class="schedule-card-meta">
+                        <span x-text="'ID: ' + job.id"></span>
+                        <span>&#8226;</span>
+                        <span x-text="'Interval: ' + (job.check_interval || 300) + 's'"></span>
+                        <template x-if="job.manager_dir">
+                          <span>
+                            &#8226; Dir: <span x-text="job.manager_dir"></span>
+                          </span>
+                        </template>
+                      </p>
+                      <p class="jobs-goal-text" x-show="job.manager_goal" x-text="job.manager_goal"></p>
+                    </div>
+                    <div class="schedule-card-actions">
+                      <button type="button" class="btn-confirm" @click="$store.chat.openDispatchModal(job.id)">Run</button>
+                      <button type="button" class="scope-action-btn" @click="$store.chat.toggleJobEnabled(job.id)" x-text="job.enabled ? 'Disable' : 'Enable'"></button>
+                      <button type="button" class="scope-action-btn" @click="$store.chat.openEditJobModal(job.id)">Edit</button>
+                      <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete job ' + job.id + '?')) $store.chat.deleteJobDefinition(job.id)">Delete</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Runs tab -->
+          <div x-show="$store.chat.jobsTab === 'runs'">
+            <div class="jobs-toolbar">
+              <select class="jobs-filter-select" x-model="$store.chat.jobRunsFilterStatus" @change="$store.chat.loadJobRuns()">
+                <option value="">All statuses</option>
+                <option value="running">Running</option>
+                <option value="starting">Starting</option>
+                <option value="complete">Complete</option>
+                <option value="failed">Failed</option>
+                <option value="stopped">Stopped</option>
+              </select>
+              <input type="text" class="jobs-filter-input" placeholder="Filter by job ID..." x-model="$store.chat.jobRunsFilterJobId" @change="$store.chat.loadJobRuns()" />
+              <button type="button" class="scope-action-btn" @click="$store.chat.loadJobRuns()">Refresh</button>
+            </div>
+
+            <p class="settings-field-help" x-show="$store.chat.jobRunsLoading">Loading job runs...</p>
+            <p class="settings-field-help" x-show="!$store.chat.jobRunsLoading && $store.chat.jobRuns.length === 0">No job runs found.</p>
+
+            <div class="jobs-runs-list" x-show="$store.chat.jobRuns.length > 0">
+              <div class="jobs-runs-header-row">
+                <span class="jobs-run-col-status">Status</span>
+                <span class="jobs-run-col-job">Job</span>
+                <span class="jobs-run-col-goal">Goal</span>
+                <span class="jobs-run-col-sessions">Sessions</span>
+                <span class="jobs-run-col-duration">Duration</span>
+                <span class="jobs-run-col-actions">Actions</span>
+              </div>
+              <template x-for="run in $store.chat.jobRuns" :key="run.id">
+                <div class="jobs-run-row">
+                  <span class="jobs-run-col-status">
+                    <span class="badge" :class="$store.chat.jobRunStatusClass(run.status)" x-text="run.status"></span>
+                  </span>
+                  <span class="jobs-run-col-job" x-text="(run.job_id || '').slice(0, 16)"></span>
+                  <span class="jobs-run-col-goal" x-text="run.goal || '-'" :title="run.goal || ''"></span>
+                  <span class="jobs-run-col-sessions">
+                    <template x-if="run.worker_session_id">
+                      <span class="jobs-session-link" :title="'Worker: ' + run.worker_session_id" x-text="'W:' + run.worker_session_id.slice(0,6)"></span>
+                    </template>
+                    <template x-if="run.manager_session_id">
+                      <span class="jobs-session-link" :title="'Manager: ' + run.manager_session_id" x-text="'M:' + run.manager_session_id.slice(0,6)"></span>
+                    </template>
+                    <template x-if="!run.worker_session_id && !run.manager_session_id">
+                      <span>-</span>
+                    </template>
+                  </span>
+                  <span class="jobs-run-col-duration" x-text="$store.chat.formatJobDuration(run)"></span>
+                  <span class="jobs-run-col-actions">
+                    <button
+                      type="button"
+                      class="scope-action-btn scope-delete-btn"
+                      x-show="run.status === 'running' || run.status === 'starting'"
+                      @click="$store.chat.stopJobRun(run.id)"
+                    >Stop</button>
+                  </span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- New Job modal -->
+        <div class="doc-modal-backdrop" x-show="$store.chat.showNewJobModal" x-cloak @click.self="$store.chat.closeNewJobModal()">
+          <div class="doc-modal-card schedule-modal">
+            <button class="modal-close" type="button" @click="$store.chat.closeNewJobModal()">&times;</button>
+            <h3>New Job Definition</h3>
+            <p class="jobs-subtitle">Define a job with worker and manager prompts.</p>
+            <p class="error-text" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></p>
+            <form class="schedule-create-form" @submit.prevent="$store.chat.createJobDefinition()">
+              <div class="schedule-grid">
+                <div class="scope-field">
+                  <label class="scope-field-label">Job ID</label>
+                  <input type="text" x-model="$store.chat.newJobId" placeholder="my-deploy-job" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Name</label>
+                  <input type="text" x-model="$store.chat.newJobName" placeholder="Deploy Pipeline" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Check Interval (s)</label>
+                  <input type="number" x-model="$store.chat.newJobCheckInterval" min="10" />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Manager Dir</label>
+                  <input type="text" x-model="$store.chat.newJobManagerDir" placeholder="/path/to/project" />
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Worker Prompt</label>
+                  <textarea x-model="$store.chat.newJobWorkerPrompt" rows="3" placeholder="Instructions for the worker agent..."></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Prompt</label>
+                  <textarea x-model="$store.chat.newJobManagerPrompt" rows="3" placeholder="Instructions for the manager agent..."></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Goal</label>
+                  <textarea x-model="$store.chat.newJobManagerGoal" rows="2" placeholder="High-level goal for the manager..."></textarea>
+                </div>
+              </div>
+              <div class="scope-new-actions schedule-modal-actions">
+                <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeNewJobModal()">Cancel</button>
+                <button type="submit" class="scope-save-btn schedule-primary-btn">Create Job</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Edit Job modal -->
+        <div class="doc-modal-backdrop" x-show="$store.chat.showEditJobModal" x-cloak @click.self="$store.chat.closeEditJobModal()">
+          <div class="doc-modal-card schedule-modal">
+            <button class="modal-close" type="button" @click="$store.chat.closeEditJobModal()">&times;</button>
+            <h3>Edit Job Definition</h3>
+            <p class="error-text" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></p>
+            <form class="schedule-create-form" @submit.prevent="$store.chat.saveEditJob()">
+              <div class="schedule-grid">
+                <div class="scope-field">
+                  <label class="scope-field-label">Name</label>
+                  <input type="text" x-model="$store.chat.editJobName" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Check Interval (s)</label>
+                  <input type="number" x-model="$store.chat.editJobCheckInterval" min="10" />
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Dir</label>
+                  <input type="text" x-model="$store.chat.editJobManagerDir" />
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Worker Prompt</label>
+                  <textarea x-model="$store.chat.editJobWorkerPrompt" rows="3"></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Prompt</label>
+                  <textarea x-model="$store.chat.editJobManagerPrompt" rows="3"></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Goal</label>
+                  <textarea x-model="$store.chat.editJobManagerGoal" rows="2"></textarea>
+                </div>
+              </div>
+              <div class="scope-new-actions schedule-modal-actions">
+                <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeEditJobModal()">Cancel</button>
+                <button type="submit" class="scope-save-btn schedule-primary-btn">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Dispatch Job modal -->
+        <div class="doc-modal-backdrop" x-show="$store.chat.showDispatchModal" x-cloak @click.self="$store.chat.closeDispatchModal()">
+          <div class="doc-modal-card">
+            <button class="modal-close" type="button" @click="$store.chat.closeDispatchModal()">&times;</button>
+            <h3>Dispatch Job Run</h3>
+            <p class="jobs-subtitle">Start a new run for job <strong x-text="$store.chat.dispatchJobId"></strong>.</p>
+            <p class="error-text" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></p>
+            <form @submit.prevent="$store.chat.dispatchJob($store.chat.dispatchJobId)">
+              <div class="scope-field" style="margin-bottom: 1rem;">
+                <label class="scope-field-label">Goal (optional)</label>
+                <input type="text" x-model="$store.chat.dispatchGoal" placeholder="What should this run accomplish?" />
+              </div>
+              <div class="scope-new-actions">
+                <button type="button" class="scope-cancel-btn" @click="$store.chat.closeDispatchModal()">Cancel</button>
+                <button type="submit" class="btn-confirm">Dispatch</button>
               </div>
             </form>
           </div>

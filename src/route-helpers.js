@@ -1,6 +1,6 @@
 export const KNOWN_PAGES = new Set([
   'notifications', 'status', 'tasks', 'calendar', 'schedules',
-  'chat', 'docs', 'people', 'scopes', 'settings',
+  'chat', 'docs', 'people', 'scopes', 'jobs', 'settings',
 ]);
 
 export function pageToSection(page) {

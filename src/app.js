@@ -12,6 +12,7 @@ import { channelsManagerMixin } from './channels-manager.js';
 import { audioRecordingManagerMixin } from './audio-recording-manager.js';
 import { storageImageManagerMixin } from './storage-image-manager.js';
 import { triggersManagerMixin } from './triggers-manager.js';
+import { jobsManagerMixin } from './jobs-manager.js';
 import { workspaceManagerMixin, guessDefaultBackendUrl } from './workspace-manager.js';
 import { chatMessageManagerMixin } from './chat-message-manager.js';
 import { syncManagerMixin } from './sync-manager.js';
@@ -431,6 +432,37 @@ export function initApp() {
     triggerFiring: {},
     triggerError: null,
     triggerSuccess: null,
+
+    // jobs
+    jobDefinitions: [],
+    jobRuns: [],
+    jobsLoading: false,
+    jobRunsLoading: false,
+    jobsError: null,
+    jobsSuccess: null,
+    _jobsTab: 'definitions',
+    showNewJobModal: false,
+    newJobId: '',
+    newJobName: '',
+    newJobWorkerPrompt: '',
+    newJobManagerPrompt: '',
+    newJobManagerGoal: '',
+    newJobManagerDir: '',
+    newJobCheckInterval: '300',
+    showEditJobModal: false,
+    editingJobId: null,
+    editJobName: '',
+    editJobWorkerPrompt: '',
+    editJobManagerPrompt: '',
+    editJobManagerGoal: '',
+    editJobManagerDir: '',
+    editJobCheckInterval: '300',
+    showDispatchModal: false,
+    dispatchJobId: null,
+    dispatchGoal: '',
+    jobRunsFilterJobId: '',
+    jobRunsFilterStatus: '',
+
     showWorkspaceBootstrapModal: false,
     newWorkspaceName: '',
     newWorkspaceDescription: '',
@@ -1397,6 +1429,10 @@ export function initApp() {
       this.documents = [];
       this.directories = [];
       this.addressBookPeople = [];
+      this.jobDefinitions = [];
+      this.jobRuns = [];
+      this.jobsError = null;
+      this.jobsSuccess = null;
       this.selectedChannelId = null;
       this.activeThreadId = null;
       this.selectedDocId = null;
@@ -3648,6 +3684,7 @@ export function initApp() {
     scopesManagerMixin,
     docsManagerMixin,
     triggersManagerMixin,
+    jobsManagerMixin,
     audioRecordingManagerMixin,
     storageImageManagerMixin,
   );
