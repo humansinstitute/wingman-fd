@@ -40,8 +40,17 @@ export const triggersManagerMixin = {
     this.triggerError = null;
     const name = this.newTriggerName.trim();
     const triggerId = this.newTriggerId.trim();
-    const botNpub = this.newTriggerBotNpub.trim();
     const triggerType = this.newTriggerType;
+
+    // Allow direct npub entry: if no bot was selected from suggestions,
+    // check if the query field contains a valid npub
+    let botNpub = this.newTriggerBotNpub.trim();
+    if (!botNpub) {
+      const query = this.newTriggerBotQuery.trim();
+      if (query.startsWith('npub1')) {
+        botNpub = query;
+      }
+    }
 
     if (!name || !triggerId || !botNpub) {
       this.triggerError = 'Name, Trigger ID, and Bot are all required.';
@@ -70,7 +79,7 @@ export const triggersManagerMixin = {
     this.workspaceTriggers = [...this.workspaceTriggers, trigger];
 
     try {
-      await this.saveHarnessSettings();
+      await this.saveHarnessSettings({ triggerOnly: true });
     } catch (err) {
       // Roll back the optimistic local add
       this.workspaceTriggers = this.workspaceTriggers.filter((t) => t.id !== trigger.id);
@@ -88,16 +97,29 @@ export const triggersManagerMixin = {
   },
 
   async removeTrigger(id) {
+    const previous = [...this.workspaceTriggers];
     this.workspaceTriggers = this.workspaceTriggers.filter((t) => t.id !== id);
-    await this.saveHarnessSettings();
+    try {
+      await this.saveHarnessSettings({ triggerOnly: true });
+    } catch (err) {
+      this.workspaceTriggers = previous;
+      this.triggerError = `Failed to remove trigger: ${err.message}`;
+    }
   },
 
   async toggleTrigger(id) {
     const trigger = this.workspaceTriggers.find((t) => t.id === id);
     if (!trigger) return;
+    const previousEnabled = trigger.enabled;
     trigger.enabled = !trigger.enabled;
     this.workspaceTriggers = [...this.workspaceTriggers];
-    await this.saveHarnessSettings();
+    try {
+      await this.saveHarnessSettings({ triggerOnly: true });
+    } catch (err) {
+      trigger.enabled = previousEnabled;
+      this.workspaceTriggers = [...this.workspaceTriggers];
+      this.triggerError = `Failed to toggle trigger: ${err.message}`;
+    }
   },
 
   async fireTrigger(id) {

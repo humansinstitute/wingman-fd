@@ -3093,7 +3093,8 @@
                   type="text"
                   x-show="!$store.chat.newTriggerBotNpub"
                   x-model="$store.chat.newTriggerBotQuery"
-                  placeholder="Type a name or npub"
+                  placeholder="Type a name or paste npub1..."
+                  @keydown.enter.prevent="if ($store.chat.newTriggerBotQuery.trim().startsWith('npub1')) $store.chat.selectTriggerBot($store.chat.newTriggerBotQuery.trim())"
                 />
                 <ul class="docs-share-suggestions" x-show="$store.chat.triggerBotSuggestions.length > 0 && !$store.chat.newTriggerBotNpub">
                   <template x-for="person in $store.chat.triggerBotSuggestions" :key="`trigger-bot-${person.npub}`">

@@ -657,24 +657,34 @@ export const workspaceManagerMixin = {
     }
   },
 
-  async saveHarnessSettings() {
-    this.wingmanHarnessError = null;
+  async saveHarnessSettings({ triggerOnly = false } = {}) {
+    if (!triggerOnly) this.wingmanHarnessError = null;
     if (!this.session?.npub) {
-      this.wingmanHarnessError = 'Sign in first';
+      const msg = 'Sign in first';
+      if (triggerOnly) throw new Error(msg);
+      this.wingmanHarnessError = msg;
       return;
     }
 
     const workspaceOwnerNpub = this.workspaceOwnerNpub;
     if (!workspaceOwnerNpub) {
-      this.wingmanHarnessError = 'Select a workspace first';
+      const msg = 'Select a workspace first';
+      if (triggerOnly) throw new Error(msg);
+      this.wingmanHarnessError = msg;
       return;
     }
 
-    const rawInput = String(this.wingmanHarnessInput || '').trim();
-    const normalizedUrl = rawInput ? normalizeHarnessUrl(rawInput) : '';
-    if (rawInput && !normalizedUrl) {
-      this.wingmanHarnessError = 'Enter a valid harness hostname or URL';
-      return;
+    let normalizedUrl;
+    if (triggerOnly) {
+      // When saving triggers, use the stored harness URL, not the input field
+      normalizedUrl = this.workspaceHarnessUrl || '';
+    } else {
+      const rawInput = String(this.wingmanHarnessInput || '').trim();
+      normalizedUrl = rawInput ? normalizeHarnessUrl(rawInput) : '';
+      if (rawInput && !normalizedUrl) {
+        this.wingmanHarnessError = 'Enter a valid harness hostname or URL';
+        return;
+      }
     }
 
     const now = new Date().toISOString();
