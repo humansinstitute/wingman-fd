@@ -779,6 +779,7 @@ export function initApp() {
     async init() {
       this.startExtensionSignerWatch();
       this.initRouteSync();
+      this.routeSyncPaused = true; // pause until applyRouteFromLocation restores the URL
       this.initDocCommentConnector();
       await migrateFromLegacyDb();
       this.startSharedLiveQueries();
@@ -863,6 +864,7 @@ export function initApp() {
         await this.refreshStatusRecentChanges();
         if (this.defaultAgentNpub) this.resolveChatProfile(this.defaultAgentNpub);
       }
+      this.routeSyncPaused = false; // unpause route sync after init (no-op if applyRouteFromLocation already unpaused)
     },
 
     createLiveSubscription(query, onNext) {
