@@ -3178,6 +3178,14 @@ export function initApp() {
       }
     },
 
+    handleComposerKeydown(event, sendAction) {
+      this.handleMentionKeydown(event);
+      if (event.key === 'Enter' && !event.shiftKey && !event.defaultPrevented) {
+        event.preventDefault();
+        sendAction();
+      }
+    },
+
     selectMention(result) {
       const el = this._mentionTargetEl;
       if (!el || this._mentionStartPos < 0) return;
