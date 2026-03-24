@@ -3,6 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Flight Deck" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -1860,14 +1867,30 @@
                   <template x-if="$store.chat.docVersioningSelectedIndex >= 0 && $store.chat.docDiffMode">
                     <div class="doc-diff-view">
                       <div class="doc-diff-header">
-                        <span class="doc-diff-label" x-text="(() => {
-                          const s = $store.chat;
-                          const selVer = s.docVersionHistory[s.docVersioningSelectedIndex];
-                          const cmpIdx = s.docDiffCompareIndex >= 0 ? s.docDiffCompareIndex : s.docVersioningSelectedIndex + 1;
-                          const cmpVer = s.docVersionHistory[cmpIdx];
-                          return cmpVer ? `v${cmpVer.version} → v${selVer.version}` : `v${selVer.version} (initial)`;
-                        })()"></span>
-                        <span class="doc-diff-hint">Shift-click a version to compare against it</span>
+                        <div class="doc-diff-pickers">
+                          <label class="doc-diff-picker-label">
+                            From
+                            <select class="doc-diff-picker-select"
+                              :value="$store.chat.docDiffFromIndex"
+                              @change="$store.chat.setDocDiffFromIndex(parseInt($event.target.value))">
+                              <option value="-1">(initial)</option>
+                              <template x-for="(ver, idx) in $store.chat.docVersionHistory" :key="'from-'+ver.version">
+                                <option :value="idx" x-text="'v' + ver.version + ' — ' + ver.title" :selected="idx === $store.chat.docDiffFromIndex"></option>
+                              </template>
+                            </select>
+                          </label>
+                          <span class="doc-diff-arrow">&rarr;</span>
+                          <label class="doc-diff-picker-label">
+                            To
+                            <select class="doc-diff-picker-select"
+                              :value="$store.chat.docDiffToIndex"
+                              @change="$store.chat.setDocDiffToIndex(parseInt($event.target.value))">
+                              <template x-for="(ver, idx) in $store.chat.docVersionHistory" :key="'to-'+ver.version">
+                                <option :value="idx" x-text="'v' + ver.version + ' — ' + ver.title" :selected="idx === $store.chat.docDiffToIndex"></option>
+                              </template>
+                            </select>
+                          </label>
+                        </div>
                       </div>
                       <div class="doc-diff-body">
                         <template x-for="(hunk, hi) in $store.chat.docDiffHunks" :key="hi">
