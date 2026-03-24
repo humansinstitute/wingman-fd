@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-CsIz2mIp.js"></script>
+  <script type="module" crossorigin src="/assets/index-Bw1xoqjV.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-4KlC9f6B.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -2151,6 +2151,8 @@
             <button type="button" class="schedule-primary-btn schedule-create-open-btn" @click="$store.chat.openNewScheduleModal()">+ New Schedule</button>
           </div>
 
+          <p class="error-text" x-show="$store.chat.error" x-text="$store.chat.error"></p>
+
           <div class="scope-empty" x-show="$store.chat.schedules.length === 0">
             <p>No schedules yet. Create one from the button above.</p>
           </div>
@@ -2295,6 +2297,7 @@
             <button class="modal-close" type="button" @click="$store.chat.closeNewScheduleModal()">&times;</button>
             <h3>New Schedule</h3>
             <p class="schedules-subtitle">Recurring windows that can trigger routine work and wake-time prompts.</p>
+            <p class="error-text" x-show="$store.chat.error" x-text="$store.chat.error"></p>
             <form class="schedule-create-form" @submit.prevent="$store.chat.addSchedule()">
               <div class="schedule-grid">
                 <div class="scope-field">

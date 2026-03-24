@@ -1961,7 +1961,14 @@ export function initApp() {
 
     async addSchedule() {
       const title = String(this.newScheduleTitle || '').trim();
-      if (!title || !this.session?.npub) return;
+      if (!title) {
+        this.error = 'Schedule title is required.';
+        return;
+      }
+      if (!this.session?.npub) {
+        this.error = 'Sign in first.';
+        return;
+      }
       this.error = null;
       const ownerNpub = this.workspaceOwnerNpub;
       const groupId = this.resolveGroupId(this.newScheduleAssignedGroupId || this.selectedBoardWriteGroup || this.groups[0]?.group_id || this.groups[0]?.group_npub);
@@ -1992,23 +1999,27 @@ export function initApp() {
         updated_at: now,
       };
 
-      await upsertSchedule(localRow);
-      this.schedules = [localRow, ...this.schedules];
-      this.resetNewScheduleForm();
+      try {
+        await upsertSchedule(localRow);
+        this.schedules = [localRow, ...this.schedules];
 
-      const envelope = await outboundSchedule({
-        ...localRow,
-        signature_npub: this.session.npub,
-        write_group_npub: groupId,
-      });
-      await addPendingWrite({
-        record_id: localRow.record_id,
-        record_family_hash: envelope.record_family_hash,
-        envelope,
-      });
-      await this.performSync({ silent: false });
-      await this.refreshSchedules();
-      this.showNewScheduleModal = false;
+        const envelope = await outboundSchedule({
+          ...localRow,
+          signature_npub: this.session.npub,
+          write_group_npub: groupId,
+        });
+        await addPendingWrite({
+          record_id: localRow.record_id,
+          record_family_hash: envelope.record_family_hash,
+          envelope,
+        });
+        await this.performSync({ silent: false });
+        await this.refreshSchedules();
+        this.resetNewScheduleForm();
+        this.showNewScheduleModal = false;
+      } catch (err) {
+        this.error = `Failed to create schedule: ${err.message}`;
+      }
     },
 
     async startEditSchedule(scheduleId) {
@@ -2054,24 +2065,28 @@ export function initApp() {
         this.error = 'Schedule is missing a writable group.';
         return;
       }
-      await upsertSchedule(updated);
-      this.schedules = this.schedules.map((item) => item.record_id === updated.record_id ? updated : item);
-      this.editingScheduleDraft = toRaw(updated);
+      try {
+        await upsertSchedule(updated);
+        this.schedules = this.schedules.map((item) => item.record_id === updated.record_id ? updated : item);
+        this.editingScheduleDraft = toRaw(updated);
 
-      const envelope = await outboundSchedule({
-        ...updated,
-        previous_version: current.version ?? 1,
-        signature_npub: this.session.npub,
-        write_group_npub: writeGroupId,
-      });
-      await addPendingWrite({
-        record_id: updated.record_id,
-        record_family_hash: envelope.record_family_hash,
-        envelope,
-      });
-      await this.performSync({ silent: false });
-      await this.refreshSchedules();
-      this.cancelEditSchedule();
+        const envelope = await outboundSchedule({
+          ...updated,
+          previous_version: current.version ?? 1,
+          signature_npub: this.session.npub,
+          write_group_npub: writeGroupId,
+        });
+        await addPendingWrite({
+          record_id: updated.record_id,
+          record_family_hash: envelope.record_family_hash,
+          envelope,
+        });
+        await this.performSync({ silent: false });
+        await this.refreshSchedules();
+        this.cancelEditSchedule();
+      } catch (err) {
+        this.error = `Failed to save schedule: ${err.message}`;
+      }
     },
 
     async toggleSchedule(scheduleId) {
@@ -2081,7 +2096,11 @@ export function initApp() {
         ...schedule,
         active: !schedule.active,
       });
-      await this.saveEditingSchedule();
+      try {
+        await this.saveEditingSchedule();
+      } catch (err) {
+        this.error = `Failed to toggle schedule: ${err.message}`;
+      }
       if (this.editingScheduleId !== scheduleId) this.cancelEditSchedule();
     },
 
@@ -2095,22 +2114,26 @@ export function initApp() {
         sync_status: 'pending',
         updated_at: new Date().toISOString(),
       });
-      await upsertSchedule(updated);
-      this.schedules = this.schedules.filter((item) => item.record_id !== scheduleId);
-      if (this.editingScheduleId === scheduleId) this.cancelEditSchedule();
+      try {
+        await upsertSchedule(updated);
+        this.schedules = this.schedules.filter((item) => item.record_id !== scheduleId);
+        if (this.editingScheduleId === scheduleId) this.cancelEditSchedule();
 
-      const envelope = await outboundSchedule({
-        ...updated,
-        previous_version: schedule.version ?? 1,
-        signature_npub: this.session.npub,
-        write_group_npub: updated.group_ids?.[0] || null,
-      });
-      await addPendingWrite({
-        record_id: updated.record_id,
-        record_family_hash: envelope.record_family_hash,
-        envelope,
-      });
-      await this.performSync({ silent: false });
+        const envelope = await outboundSchedule({
+          ...updated,
+          previous_version: schedule.version ?? 1,
+          signature_npub: this.session.npub,
+          write_group_npub: updated.group_ids?.[0] || null,
+        });
+        await addPendingWrite({
+          record_id: updated.record_id,
+          record_family_hash: envelope.record_family_hash,
+          envelope,
+        });
+        await this.performSync({ silent: false });
+      } catch (err) {
+        this.error = `Failed to delete schedule: ${err.message}`;
+      }
     },
 
     async addTask() {

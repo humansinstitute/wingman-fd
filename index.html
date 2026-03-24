@@ -2149,6 +2149,8 @@
             <button type="button" class="schedule-primary-btn schedule-create-open-btn" @click="$store.chat.openNewScheduleModal()">+ New Schedule</button>
           </div>
 
+          <p class="error-text" x-show="$store.chat.error" x-text="$store.chat.error"></p>
+
           <div class="scope-empty" x-show="$store.chat.schedules.length === 0">
             <p>No schedules yet. Create one from the button above.</p>
           </div>
@@ -2293,6 +2295,7 @@
             <button class="modal-close" type="button" @click="$store.chat.closeNewScheduleModal()">&times;</button>
             <h3>New Schedule</h3>
             <p class="schedules-subtitle">Recurring windows that can trigger routine work and wake-time prompts.</p>
+            <p class="error-text" x-show="$store.chat.error" x-text="$store.chat.error"></p>
             <form class="schedule-create-form" @submit.prevent="$store.chat.addSchedule()">
               <div class="schedule-grid">
                 <div class="scope-field">

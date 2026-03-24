@@ -738,6 +738,15 @@ export const workspaceManagerMixin = {
       record_family_hash: envelope.record_family_hash,
       envelope,
     });
+    // Perform immediate sync so the caller gets feedback on push failures.
+    // If sync fails, the pending write remains in Dexie for the next cycle.
+    try {
+      await this.performSync({ silent: true });
+    } catch (syncError) {
+      flightDeckLog('warn', 'settings', 'harness settings sync failed, will retry', {
+        error: syncError?.message || String(syncError),
+      });
+    }
     await this.refreshSyncStatus();
     this.ensureBackgroundSync(true);
   },
