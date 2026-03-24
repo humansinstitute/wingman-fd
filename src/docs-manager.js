@@ -1242,13 +1242,21 @@ export const docsManagerMixin = {
     this.syncRoute();
 
     try {
-      const ownerNpub = this.workspaceOwnerNpub || this.userNpub;
+      const ownerNpub = this.workspaceOwnerNpub || this.session?.npub;
+      const viewerNpub = this.session?.npub;
+      if (!ownerNpub) {
+        this.docVersioningError = 'No workspace owner configured.';
+        return;
+      }
       const result = await fetchRecordHistory({
         record_id: this.selectedDocId,
         owner_npub: ownerNpub,
-        viewer_npub: this.userNpub,
+        viewer_npub: viewerNpub,
       });
       const versions = Array.isArray(result.versions) ? result.versions : (Array.isArray(result) ? result : []);
+      if (versions.length === 0) {
+        console.warn('[versioning] Tower returned 0 versions for', this.selectedDocId, '— owner_npub:', ownerNpub);
+      }
       const decoded = [];
       for (const ver of versions) {
         try {
@@ -1259,7 +1267,8 @@ export const docsManagerMixin = {
             content: doc.content || '',
             updated_at: ver.updated_at || doc.updated_at || '',
           });
-        } catch {
+        } catch (decryptErr) {
+          console.warn('[versioning] decrypt failed for version', ver.version, decryptErr?.message || decryptErr);
           decoded.push({
             version: ver.version ?? 0,
             title: `Version ${ver.version ?? '?'} (encrypted)`,
@@ -1272,8 +1281,9 @@ export const docsManagerMixin = {
       this.docVersionHistory = decoded;
       if (decoded.length > 0) this.selectDocVersion(0);
     } catch (error) {
+      console.error('[versioning] failed to load history for', this.selectedDocId, error);
       this.docVersioningError = error?.status === 404
-        ? 'Version history not available for this document.'
+        ? 'Version history not available — Tower may need redeployment.'
         : `Failed to load version history: ${error?.message || error}`;
     } finally {
       this.docVersioningLoading = false;
