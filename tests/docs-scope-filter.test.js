@@ -157,14 +157,89 @@ describe('filterDocItemsByScope', () => {
       expect(result.documents[0].record_id).toBe('d1');
     });
 
-    it('filters directories by scope', () => {
+    it('filters directories by own scope', () => {
       const dirs = [
         makeDir({ record_id: 'dir1', scope_id: 'scope-product', scope_product_id: 'scope-product' }),
         makeDir({ record_id: 'dir2' }),
       ];
+      // dir2 has no scope and no scoped children — excluded
       const result = filterDocItemsByScope([], dirs, product.record_id, product, scopesMap);
       expect(result.directories).toHaveLength(1);
       expect(result.directories[0].record_id).toBe('dir1');
+    });
+  });
+
+  describe('ancestor directory containment', () => {
+    it('includes unscoped directory when it contains a scope-matched doc', () => {
+      const dirs = [
+        makeDir({ record_id: 'dir-parent' }), // no scope
+      ];
+      const docs = [
+        makeDoc({ record_id: 'd1', parent_directory_id: 'dir-parent', scope_id: 'scope-product', scope_product_id: 'scope-product' }),
+      ];
+      const result = filterDocItemsByScope(docs, dirs, product.record_id, product, scopesMap);
+      expect(result.documents).toHaveLength(1);
+      expect(result.directories).toHaveLength(1);
+      expect(result.directories[0].record_id).toBe('dir-parent');
+    });
+
+    it('includes ancestor chain when matched doc is deeply nested', () => {
+      const dirs = [
+        makeDir({ record_id: 'dir-root' }),
+        makeDir({ record_id: 'dir-child', parent_directory_id: 'dir-root' }),
+      ];
+      const docs = [
+        makeDoc({ record_id: 'd1', parent_directory_id: 'dir-child', scope_id: 'scope-project', scope_product_id: 'scope-product', scope_project_id: 'scope-project' }),
+      ];
+      const result = filterDocItemsByScope(docs, dirs, project.record_id, project, scopesMap);
+      expect(result.documents).toHaveLength(1);
+      expect(result.directories.map(d => d.record_id).sort()).toEqual(['dir-child', 'dir-root']);
+    });
+
+    it('excludes directories with no matching descendants', () => {
+      const dirs = [
+        makeDir({ record_id: 'dir-empty' }),
+        makeDir({ record_id: 'dir-with-match' }),
+      ];
+      const docs = [
+        makeDoc({ record_id: 'd1', parent_directory_id: 'dir-with-match', scope_id: 'scope-product', scope_product_id: 'scope-product' }),
+        makeDoc({ record_id: 'd2', parent_directory_id: 'dir-empty' }), // unscoped doc
+      ];
+      const result = filterDocItemsByScope(docs, dirs, product.record_id, product, scopesMap);
+      expect(result.directories).toHaveLength(1);
+      expect(result.directories[0].record_id).toBe('dir-with-match');
+    });
+
+    it('includes directory by own scope even without matching children', () => {
+      const dirs = [
+        makeDir({ record_id: 'dir1', scope_id: 'scope-product', scope_product_id: 'scope-product' }),
+      ];
+      const result = filterDocItemsByScope([], dirs, product.record_id, product, scopesMap);
+      expect(result.directories).toHaveLength(1);
+    });
+
+    it('includes unscoped directory containing a scope-matched subdirectory', () => {
+      const dirs = [
+        makeDir({ record_id: 'dir-root' }),
+        makeDir({ record_id: 'dir-scoped', parent_directory_id: 'dir-root', scope_id: 'scope-product', scope_product_id: 'scope-product' }),
+      ];
+      const result = filterDocItemsByScope([], dirs, product.record_id, product, scopesMap);
+      expect(result.directories.map(d => d.record_id).sort()).toEqual(['dir-root', 'dir-scoped']);
+    });
+
+    it('does not include ancestor dirs for unscoped board', () => {
+      const dirs = [
+        makeDir({ record_id: 'dir-root' }),
+      ];
+      const docs = [
+        makeDoc({ record_id: 'd1', parent_directory_id: 'dir-root' }), // unscoped
+        makeDoc({ record_id: 'd2', parent_directory_id: 'dir-root', scope_id: 'scope-product', scope_product_id: 'scope-product' }),
+      ];
+      const result = filterDocItemsByScope(docs, dirs, UNSCOPED_TASK_BOARD_ID, null, scopesMap);
+      // Unscoped board: dir-root itself is unscoped, so it should be included
+      expect(result.directories).toHaveLength(1);
+      expect(result.documents).toHaveLength(1);
+      expect(result.documents[0].record_id).toBe('d1');
     });
   });
 

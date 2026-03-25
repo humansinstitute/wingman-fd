@@ -5,8 +5,28 @@ const ALL_BOARD_ID = '__all__';
 const RECENT_BOARD_ID = '__recent__';
 
 /**
+ * Collect all ancestor directory IDs for a set of matched items by walking
+ * up the parent_directory_id chain using a directory lookup map.
+ */
+function collectAncestorDirIds(matchedItems, dirMap) {
+  const ancestors = new Set();
+  for (const item of matchedItems) {
+    let parentId = item.parent_directory_id;
+    while (parentId && !ancestors.has(parentId)) {
+      ancestors.add(parentId);
+      const parent = dirMap.get(parentId);
+      parentId = parent?.parent_directory_id ?? null;
+    }
+  }
+  return ancestors;
+}
+
+/**
  * Filter documents and directories by the selected board scope.
  * Returns { documents, directories } arrays with deleted items excluded.
+ *
+ * Directories are included when they match the scope themselves OR when
+ * they are ancestors of a matched document or directory.
  */
 export function filterDocItemsByScope(documents, directories, selectedBoardId, selectedBoardScope, scopesMap) {
   const liveDocs = documents.filter((d) => d.record_state !== 'deleted');
@@ -29,12 +49,22 @@ export function filterDocItemsByScope(documents, directories, selectedBoardId, s
     return { documents: liveDocs, directories: liveDirs };
   }
 
-  return {
-    documents: liveDocs.filter((doc) =>
-      matchesTaskBoardScope(doc, selectedBoardScope, scopesMap, { includeDescendants: true }),
-    ),
-    directories: liveDirs.filter((dir) =>
-      matchesTaskBoardScope(dir, selectedBoardScope, scopesMap, { includeDescendants: true }),
-    ),
-  };
+  const matchesScope = (item) =>
+    matchesTaskBoardScope(item, selectedBoardScope, scopesMap, { includeDescendants: true });
+
+  const matchedDocs = liveDocs.filter(matchesScope);
+  const directlyMatchedDirs = liveDirs.filter(matchesScope);
+
+  // Build a lookup for walking parent chains
+  const dirMap = new Map();
+  for (const dir of liveDirs) dirMap.set(dir.record_id, dir);
+
+  // Collect ancestors of matched docs AND matched directories
+  const ancestorIds = collectAncestorDirIds([...matchedDocs, ...directlyMatchedDirs], dirMap);
+
+  const filteredDirs = liveDirs.filter((dir) =>
+    matchesScope(dir) || ancestorIds.has(dir.record_id),
+  );
+
+  return { documents: matchedDocs, directories: filteredDirs };
 }
