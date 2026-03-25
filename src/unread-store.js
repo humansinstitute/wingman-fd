@@ -70,6 +70,16 @@ export function computeUnreadTaskMap(tasks, cursorMap) {
   return result;
 }
 
+/**
+ * Determine whether the tasks:nav cursor should be auto-seeded.
+ * Returns true when tasks exist in the DB but no cursor has been set yet
+ * (e.g. after cache clear + hard refresh).
+ */
+export function shouldSeedTasksNavCursor(tasks, cursorMap) {
+  if (cursorMap['tasks:nav']) return false;
+  return tasks.some((t) => t.record_state !== 'deleted');
+}
+
 // ---------------------------------------------------------------------------
 // Mixin
 // ---------------------------------------------------------------------------
@@ -164,6 +174,23 @@ export const unreadStoreMixin = {
 
       // --- Per-task unread ---
       const allTasks = await db.tasks.toArray();
+
+      // Auto-seed tasks:nav cursor after cache clear so future updates
+      // can trigger red borders.  Without this, computeUnreadTaskMap
+      // returns {} forever when no cursor exists.
+      if (shouldSeedTasksNavCursor(allTasks, cursorMap)) {
+        const now = new Date().toISOString();
+        const cursorKey = 'tasks:nav';
+        const recordId = await cursorRecordId(viewerNpub, cursorKey);
+        await upsertReadCursor({
+          record_id: recordId,
+          cursor_key: cursorKey,
+          viewer_npub: viewerNpub,
+          read_until: now,
+        });
+        cursorMap[cursorKey] = now;
+      }
+
       this._unreadTaskItems = computeUnreadTaskMap(allTasks, cursorMap);
     } catch (e) {
       // Swallow errors — unread flags are non-critical

@@ -1282,6 +1282,11 @@ export function initApp() {
         this.navSection = route.section;
         this.mobileNavOpen = false;
 
+        // Seed read cursor on initial route restoration — matches navigateTo behavior
+        if (route.section === 'chat' || route.section === 'tasks' || route.section === 'docs') {
+          this.markSectionRead(route.section);
+        }
+
         if (route.section === 'chat') {
           const channelId = route.params.channelid || this.selectedChannelId || this.channels[0]?.record_id || null;
           if (channelId) {
