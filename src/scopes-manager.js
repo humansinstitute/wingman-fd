@@ -197,6 +197,43 @@ export const scopesManagerMixin = {
     await this.performSync({ silent: true });
   },
 
+  async selectScopeForDirectory(scopeId) {
+    const dir = this.currentFolder;
+    if (!dir || !this.session?.npub) return;
+    const chain = resolveScopeChain(scopeId, this.scopesMap);
+    const updated = toRaw({
+      ...dir,
+      scope_id: scopeId,
+      scope_product_id: chain.scope_product_id,
+      scope_project_id: chain.scope_project_id,
+      scope_deliverable_id: chain.scope_deliverable_id,
+      version: (dir.version ?? 1) + 1,
+      sync_status: 'pending',
+      updated_at: new Date().toISOString(),
+    });
+    await this.queueDirectoryRecord(updated, dir);
+    this.closeScopePicker();
+    await this.performSync({ silent: true });
+  },
+
+  async clearDirectoryScope() {
+    const dir = this.currentFolder;
+    if (!dir || !this.session?.npub) return;
+    const updated = toRaw({
+      ...dir,
+      scope_id: null,
+      scope_product_id: null,
+      scope_project_id: null,
+      scope_deliverable_id: null,
+      version: (dir.version ?? 1) + 1,
+      sync_status: 'pending',
+      updated_at: new Date().toISOString(),
+    });
+    await this.queueDirectoryRecord(updated, dir);
+    this.closeScopePicker();
+    await this.performSync({ silent: true });
+  },
+
   async selectScopeForChannel(scopeId) {
     const ch = this.selectedChannel;
     if (!ch || !this.session?.npub) return;

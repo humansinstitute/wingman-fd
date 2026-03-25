@@ -1600,6 +1600,67 @@
               </div>
             </div>
 
+            <!-- Directory scope picker -->
+            <div class="doc-scope-row folder-scope-row" x-show="$store.chat.currentFolder && !$store.chat.docsEditorOpen" @click.outside="$store.chat.closeScopePicker()">
+              <span class="task-field-label">Scope</span>
+              <div class="scope-picker-wrapper">
+                <template x-if="$store.chat.currentFolder?.scope_id">
+                  <div class="scope-picker-selected">
+                    <span class="scope-level-badge" :class="{
+                      'scope-badge-product': $store.chat.scopesMap.get($store.chat.currentFolder.scope_id)?.level === 'product',
+                      'scope-badge-project': $store.chat.scopesMap.get($store.chat.currentFolder.scope_id)?.level === 'project',
+                      'scope-badge-deliverable': $store.chat.scopesMap.get($store.chat.currentFolder.scope_id)?.level === 'deliverable'
+                    }" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.currentFolder.scope_id)?.level)"></span>
+                    <span x-text="$store.chat.getScopeBreadcrumb($store.chat.currentFolder.scope_id)"></span>
+                    <button type="button" class="scope-clear-btn" @click="$store.chat.clearDirectoryScope()" title="Remove scope">x</button>
+                  </div>
+                </template>
+                <button type="button" class="scope-picker-toggle" @click="$store.chat.openScopePicker()"
+                  x-text="$store.chat.currentFolder?.scope_id ? 'Change' : 'Set scope...'"></button>
+                <div class="scope-picker-popover" x-show="$store.chat.showScopePicker" x-cloak>
+                  <input type="text" class="scope-picker-input" x-model="$store.chat.scopePickerQuery" placeholder="Search scopes..." @keydown.escape="$store.chat.closeScopePicker()" />
+                  <div class="scope-picker-results">
+                    <template x-if="$store.chat.scopePickerResults.product.length > 0">
+                      <div class="scope-picker-group">
+                        <div class="scope-picker-group-label">Product</div>
+                        <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
+                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDirectory(item.record_id)">
+                            <span class="scope-level-badge scope-badge-product">Product</span>
+                            <span x-text="item.title"></span>
+                          </button>
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="$store.chat.scopePickerResults.project.length > 0">
+                      <div class="scope-picker-group">
+                        <div class="scope-picker-group-label">Project</div>
+                        <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
+                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDirectory(item.record_id)">
+                            <span class="scope-level-badge scope-badge-project">Project</span>
+                            <span x-text="item.title"></span>
+                            <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                          </button>
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
+                      <div class="scope-picker-group">
+                        <div class="scope-picker-group-label">Deliverable</div>
+                        <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
+                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDirectory(item.record_id)">
+                            <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
+                            <span x-text="item.title"></span>
+                            <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                          </button>
+                        </template>
+                      </div>
+                    </template>
+                    <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">No scopes found.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <template x-if="!$store.chat.docsEditorOpen">
               <div class="docs-browser-shell">
                 <div class="folder-breadcrumbs">
