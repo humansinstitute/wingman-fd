@@ -61,12 +61,14 @@ import {
   getRecentChatMessagesSince,
   getRecentDocumentChangesSince,
   getRecentDirectoryChangesSince,
+  getRecentReportChangesSince,
   getRecentTaskChangesSince,
   getRecentScheduleChangesSince,
   getRecentCommentsSince,
   upsertChannel,
   getAudioNotesByOwner,
   getDocumentsByOwner,
+  getReportsByOwner,
   upsertDocument,
   getDocumentById,
   getDirectoriesByOwner,
@@ -108,6 +110,7 @@ import { outboundComment } from './translators/comments.js';
 import { recordFamilyHash as taskFamilyHash } from './translators/tasks.js';
 import {
   isTaskUnscoped,
+  matchesTaskBoardScope,
 } from './task-board-scopes.js';
 import {
   buildCascadedSubtaskUpdate,
@@ -152,6 +155,9 @@ function applyMixins(target, ...mixins) {
 }
 
 export function initApp() {
+  const initialRoute = typeof window === 'undefined'
+    ? { section: 'status' }
+    : parseRouteLocation();
   const storeObj = {
     FAST_SYNC_MS: 1000,
     IDLE_SYNC_MS: 10000,
@@ -166,7 +172,7 @@ export function initApp() {
     botNpub: '',
     session: null,
     settingsTab: 'workspace',
-    navSection: 'chat',
+    navSection: initialRoute.section,
     calendarViews: CALENDAR_VIEWS,
     calendarView: 'month',
     calendarAnchorDate: getTodayDateKey(),
@@ -240,6 +246,7 @@ export function initApp() {
     groups: [],
     documents: [],
     directories: [],
+    reports: [],
     addressBookPeople: [],
     activeThreadId: null,
     threadInput: '',
@@ -502,6 +509,32 @@ export function initApp() {
     get displayName() {
       const ownProfile = this.chatProfiles[this.session?.npub];
       return ownProfile?.name || this.session?.npub || 'Anonymous';
+    },
+
+    get greetingName() {
+      const ownProfile = this.chatProfiles[this.session?.npub];
+      return ownProfile?.name || getShortNpub(this.session?.npub) || 'there';
+    },
+
+    get flightDeckReports() {
+      const visible = this.reports.filter((report) => {
+        if (!report || report.record_state === 'deleted') return false;
+        const surface = String(report.surface || report.metadata?.surface || '').trim().toLowerCase();
+        if (surface && surface !== 'flightdeck') return false;
+        if (this.selectedBoardId === UNSCOPED_TASK_BOARD_ID) return isTaskUnscoped(report, this.scopesMap);
+        if (this.selectedBoardScope) {
+          return matchesTaskBoardScope(report, this.selectedBoardScope, this.scopesMap, {
+            includeDescendants: true,
+          });
+        }
+        return true;
+      });
+
+      return visible.sort((left, right) => {
+        const leftTs = Date.parse(left.generated_at || left.updated_at || 0) || 0;
+        const rightTs = Date.parse(right.generated_at || right.updated_at || 0) || 0;
+        return rightTs - leftTs;
+      });
     },
 
     get avatarUrl() {
@@ -885,6 +918,7 @@ export function initApp() {
         await this.refreshAudioNotes();
         await this.refreshDirectories();
         await this.refreshDocuments();
+        await this.refreshReports();
         await this.refreshScopes();
         await this.refreshTasks();
         await this.refreshSchedules();
@@ -991,6 +1025,10 @@ export function initApp() {
         this.createLiveSubscription(
           () => getDocumentsByOwner(ownerNpub),
           (documents) => this.applyDocuments(documents),
+        ),
+        this.createLiveSubscription(
+          () => getReportsByOwner(ownerNpub),
+          (reports) => this.applyReports(reports),
         ),
         this.createLiveSubscription(
           () => getTasksByOwner(ownerNpub),
@@ -1163,7 +1201,7 @@ export function initApp() {
       const slug = this.currentWorkspaceSlug;
       const page = (() => {
         switch (section) {
-          case 'status': return 'notifications';
+          case 'status': return 'flight-deck';
           case 'tasks': return 'tasks';
           case 'calendar': return 'calendar';
           case 'schedules': return 'schedules';
@@ -1172,7 +1210,7 @@ export function initApp() {
           case 'people': return 'people';
           case 'scopes': return 'scopes';
           case 'settings': return 'settings';
-          default: return 'chat';
+          default: return 'flight-deck';
         }
       })();
       return `/${slug}/${page}`;
@@ -1579,6 +1617,25 @@ export function initApp() {
       this.applyDocuments(await getDocumentsByOwner(ownerNpub));
     },
 
+    async applyReports(reports = []) {
+      const nextReports = Array.isArray(reports) ? reports : [];
+      if (!sameListBySignature(this.reports, nextReports, (report) => [
+        String(report?.record_id || ''),
+        String(report?.updated_at || ''),
+        String(report?.version ?? ''),
+        String(report?.record_state || ''),
+        String(report?.declaration_type || ''),
+      ].join('|'))) {
+        this.reports = nextReports;
+      }
+    },
+
+    async refreshReports() {
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub) return;
+      await this.applyReports(await getReportsByOwner(ownerNpub));
+    },
+
     patchDirectoryLocal(nextDirectory) {
       const index = this.directories.findIndex((item) => item.record_id === nextDirectory.record_id);
       if (index >= 0) {
@@ -1639,11 +1696,175 @@ export function initApp() {
       }
     },
 
+    getFlightDeckReportTypeLabel(report) {
+      switch (String(report?.declaration_type || '').trim().toLowerCase()) {
+        case 'metric':
+          return 'Metric';
+        case 'timeseries':
+          return 'Timeseries';
+        case 'table':
+          return 'Table';
+        case 'text':
+          return 'Text';
+        default:
+          return 'Report';
+      }
+    },
+
+    getFlightDeckReportCardClass(report) {
+      const type = String(report?.declaration_type || '').trim().toLowerCase();
+      return {
+        'flightdeck-report-card-metric': type === 'metric',
+        'flightdeck-report-card-timeseries': type === 'timeseries',
+        'flightdeck-report-card-table': type === 'table',
+        'flightdeck-report-card-text': type === 'text',
+        'flightdeck-report-card-wide': type === 'timeseries' || type === 'table',
+        'flightdeck-report-card-unsupported': !['metric', 'timeseries', 'table', 'text'].includes(type),
+      };
+    },
+
+    getReportScopeLabel(report) {
+      if (!report) return '';
+      if (isTaskUnscoped(report, this.scopesMap)) return 'Unscoped';
+      const scopeRef = report.scope_id
+        ?? report.scope_deliverable_id
+        ?? report.scope_project_id
+        ?? report.scope_product_id
+        ?? null;
+      if (!scopeRef) return '';
+      return this.getTaskBoardLabel(scopeRef);
+    },
+
+    getReportMetricPayload(report) {
+      if (report?.declaration_type !== 'metric') return null;
+      const payload = report.payload;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+      return payload;
+    },
+
+    getReportMetricLabel(report) {
+      return this.getReportMetricPayload(report)?.label || 'Metric';
+    },
+
+    formatReportMetricValue(report) {
+      const value = this.getReportMetricPayload(report)?.value;
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return new Intl.NumberFormat().format(value);
+      }
+      return String(value ?? '—');
+    },
+
+    getReportMetricUnit(report) {
+      return String(this.getReportMetricPayload(report)?.unit || '').trim();
+    },
+
+    getReportMetricTrend(report) {
+      const trend = this.getReportMetricPayload(report)?.trend;
+      if (!trend || typeof trend !== 'object' || Array.isArray(trend)) return null;
+      return {
+        direction: ['up', 'down', 'flat'].includes(trend.direction) ? trend.direction : 'flat',
+        value: trend.value,
+        label: String(trend.label || '').trim(),
+      };
+    },
+
+    formatReportMetricTrend(report) {
+      const trend = this.getReportMetricTrend(report);
+      if (!trend) return '';
+      if (typeof trend.value === 'number' && Number.isFinite(trend.value)) {
+        const prefix = trend.value > 0 ? '+' : '';
+        return `${prefix}${new Intl.NumberFormat().format(trend.value)}`;
+      }
+      return String(trend.value ?? '');
+    },
+
+    getReportTextBody(report) {
+      if (report?.declaration_type !== 'text') return '';
+      return String(report?.payload?.body || '').trim();
+    },
+
+    getReportTimeseriesSeries(report) {
+      if (report?.declaration_type !== 'timeseries') return [];
+      const series = Array.isArray(report?.payload?.series) ? report.payload.series : [];
+      return series
+        .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
+        .map((entry, index) => {
+          const points = Array.isArray(entry.points) ? entry.points : [];
+          const numericValues = points
+            .map((point) => (typeof point?.y === 'number' && Number.isFinite(point.y) ? point.y : null))
+            .filter((value) => value != null);
+          const maxValue = numericValues.length > 0 ? Math.max(...numericValues) : 0;
+          const bars = points.map((point, pointIndex) => {
+            const rawValue = typeof point?.y === 'number' && Number.isFinite(point.y) ? point.y : null;
+            const label = String(point?.x ?? pointIndex + 1);
+            const heightPct = rawValue == null || maxValue <= 0
+              ? 8
+              : Math.max(8, Math.round((rawValue / maxValue) * 100));
+            return {
+              key: `${entry.key || index}:${pointIndex}:${label}`,
+              label,
+              value: rawValue,
+              heightPct,
+              tooltip: rawValue == null ? `${label}: no value` : `${label}: ${new Intl.NumberFormat().format(rawValue)}`,
+            };
+          });
+          return {
+            key: String(entry.key || `series-${index}`),
+            label: String(entry.label || `Series ${index + 1}`),
+            bars,
+            firstLabel: bars[0]?.label || '',
+            lastLabel: bars[bars.length - 1]?.label || '',
+          };
+        });
+    },
+
+    getReportTableColumns(report) {
+      if (report?.declaration_type !== 'table') return [];
+      const columns = Array.isArray(report?.payload?.columns) ? report.payload.columns : [];
+      return columns
+        .filter((column) => column && typeof column === 'object' && !Array.isArray(column))
+        .map((column) => ({
+          key: String(column.key || ''),
+          label: String(column.label || column.key || ''),
+          align: ['left', 'center', 'right'].includes(column.align) ? column.align : 'left',
+        }))
+        .filter((column) => column.key);
+    },
+
+    getReportTableRows(report) {
+      if (report?.declaration_type !== 'table') return [];
+      return Array.isArray(report?.payload?.rows) ? report.payload.rows : [];
+    },
+
+    formatReportTableCell(value) {
+      if (value == null) return '';
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return new Intl.NumberFormat().format(value);
+      }
+      if (typeof value === 'boolean') {
+        return value ? 'Yes' : 'No';
+      }
+      return String(value);
+    },
+
+    formatReportAbsoluteTime(iso) {
+      const ts = Date.parse(iso || '');
+      if (!Number.isFinite(ts)) return '';
+      return new Date(ts).toLocaleString();
+    },
+
+    getReportRecentChangeSubtitle(report) {
+      const scopeLabel = this.getReportScopeLabel(report);
+      const typeLabel = this.getFlightDeckReportTypeLabel(report).toLowerCase();
+      return scopeLabel ? `${typeLabel} on ${scopeLabel}` : `${typeLabel} on Flight Deck`;
+    },
+
     async refreshStatusRecentChanges() {
       const sinceIso = new Date(Date.now() - this.getStatusRangeMs()).toISOString();
       const messages = await getRecentChatMessagesSince(sinceIso);
       const documents = await getRecentDocumentChangesSince(sinceIso);
       const directories = await getRecentDirectoryChangesSince(sinceIso);
+      const reports = await getRecentReportChangesSince(sinceIso);
       const tasks = await getRecentTaskChangesSince(sinceIso);
       const schedules = await getRecentScheduleChangesSince(sinceIso);
       const comments = await getRecentCommentsSince(sinceIso);
@@ -1699,6 +1920,20 @@ export function initApp() {
           updatedTs: Date.parse(document.updated_at) || 0,
           recordId: document.record_id,
           docType: 'document',
+        });
+      }
+
+      for (const report of reports) {
+        items.push({
+          id: `report:${report.record_id}:${report.version ?? 1}`,
+          section: 'status',
+          recordType: this.getFlightDeckReportTypeLabel(report),
+          title: report.title?.trim() || this.getReportMetricLabel(report) || 'Untitled report',
+          subtitle: this.getReportRecentChangeSubtitle(report),
+          updatedAt: report.updated_at,
+          updatedTs: Date.parse(report.updated_at) || 0,
+          recordId: report.record_id,
+          boardScopeId: report.scope_id ?? report.scope_deliverable_id ?? report.scope_project_id ?? report.scope_product_id ?? null,
         });
       }
 
@@ -1768,6 +2003,17 @@ export function initApp() {
 
     async openStatusChange(item) {
       if (!item) return;
+      if (item.section === 'status') {
+        this.navSection = 'status';
+        this.mobileNavOpen = false;
+        if (item.boardScopeId) {
+          this.selectedBoardId = item.boardScopeId;
+          this.persistSelectedBoardId(this.selectedBoardId);
+          this.validateSelectedBoardId();
+        }
+        this.syncRoute();
+        return;
+      }
       if (item.section === 'docs') {
         this.navSection = 'docs';
         this.mobileNavOpen = false;
@@ -2549,6 +2795,7 @@ export function initApp() {
       this.newTaskCommentBody = '';
       this.loadTaskComments(taskId);
       this.scheduleStorageImageHydration();
+      this.markTaskRead(taskId);
       this.syncRoute();
     },
 

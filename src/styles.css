@@ -1036,6 +1036,11 @@ button:disabled {
   margin-left: 0;
 }
 
+/* Per-task unread indicator — thin red left border on cards with unseen updates */
+.task-unread {
+  border-left: 2px solid var(--danger);
+}
+
 .sidebar-workspace-footer {
   margin-top: auto;
   padding: 0.6rem;
@@ -1331,15 +1336,385 @@ button:disabled {
 }
 
 .status-section {
-  max-width: 980px;
+  width: 100%;
+  max-width: none;
+  padding: 2.4rem 1.5rem 2rem 0;
+}
+
+.sidebar-focus-panel {
+  width: calc(100% - 1rem);
+  margin: 0.2rem 0.5rem 0.55rem;
+  padding: 0.52rem 0.55rem;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+.sidebar-focus-picker {
+  width: 100%;
+}
+
+.sidebar-focus-input {
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.84rem;
+  font-weight: 650;
+  line-height: 1.18;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: text;
+}
+
+.sidebar-focus-input::placeholder {
+  color: var(--text);
+  opacity: 1;
+}
+
+.sidebar-focus-input:focus {
+  outline: none;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.sidebar-focus-meta {
+  display: block;
+  margin-top: 0.08rem;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.sidebar-focus-results {
+  left: 0;
+  right: 0;
+}
+
+.sidebar-focus-empty {
+  padding: 0.4rem 0;
+}
+
+.sidebar-collapsed .sidebar-focus-panel {
+  display: none;
+}
+
+.flightdeck-hero {
+  width: 100%;
+  margin-bottom: 2.35rem;
+  padding: 1.9rem 0 2.6rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.flightdeck-hero h2 {
+  margin: 0 auto;
+  max-width: 30ch;
+  padding: 0 2rem;
+  font-size: clamp(1.45rem, 2.4vw, 2.25rem);
+  line-height: 1.12;
+  text-align: center;
+  text-wrap: balance;
+  color: #0f172a;
+}
+
+.flightdeck-hero-scope-row {
+  margin-top: 1.45rem;
+  margin-bottom: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.flightdeck-typeahead-wrapper,
+.status-changes-header select {
+  min-width: min(100%, 38rem);
+}
+
+.board-picker-typeahead-wrapper.flightdeck-typeahead-wrapper {
+  width: min(100%, 46rem);
+  max-width: 46rem;
+  flex: 0 1 46rem;
+  margin: 0 auto;
+}
+
+.flightdeck-scope-input,
+.status-changes-header select {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+  color: #334155;
+  box-shadow: 0 8px 24px rgba(148, 163, 184, 0.14);
+}
+
+.flightdeck-reports-section {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto 1.5rem;
+}
+
+.flightdeck-reports-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.flightdeck-reports-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #1e293b;
+}
+
+.flightdeck-reports-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.flightdeck-report-card {
+  grid-column: span 4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+  min-width: 0;
+  padding: 1rem 1.05rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 22px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.06);
+}
+
+.flightdeck-report-card-wide {
+  grid-column: span 6;
+}
+
+.flightdeck-report-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.flightdeck-report-header h3 {
+  margin: 0.12rem 0 0;
+  font-size: 1rem;
+  line-height: 1.2;
+  color: #0f172a;
+}
+
+.flightdeck-report-eyebrow {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #2563eb;
+}
+
+.flightdeck-report-relative-time {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.flightdeck-report-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.flightdeck-report-metric-label {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.flightdeck-report-metric-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.flightdeck-report-metric-value {
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  line-height: 0.95;
+  color: #0f172a;
+}
+
+.flightdeck-report-metric-unit {
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.flightdeck-report-trend {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: #475569;
+}
+
+.flightdeck-report-trend-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.18rem 0.5rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.flightdeck-report-trend-up {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.flightdeck-report-trend-down {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.flightdeck-report-trend-flat {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.flightdeck-report-timeseries {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.flightdeck-report-series {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.flightdeck-report-series-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: #475569;
+}
+
+.flightdeck-report-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.28rem;
+  height: 9rem;
+  padding: 0.8rem 0.15rem 0.15rem;
+  border-radius: 14px;
+  background: #eff6ff;
+}
+
+.flightdeck-report-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 999px 999px 0 0;
+  background: linear-gradient(180deg, #2563eb 0%, #60a5fa 100%);
+}
+
+.flightdeck-report-axis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.flightdeck-report-table-wrap {
+  overflow-x: auto;
+}
+
+.flightdeck-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.flightdeck-report-table th,
+.flightdeck-report-table td {
+  padding: 0.48rem 0.2rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  color: #334155;
+}
+
+.flightdeck-report-table th {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.flightdeck-report-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.flightdeck-report-table .align-left {
+  text-align: left;
+}
+
+.flightdeck-report-table .align-center {
+  text-align: center;
+}
+
+.flightdeck-report-table .align-right {
+  text-align: right;
+}
+
+.flightdeck-report-text-body {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: #475569;
+}
+
+.flightdeck-report-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.74rem;
+  color: #64748b;
+}
+
+.flightdeck-grid {
+  display: grid;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  grid-template-columns: minmax(0, 1.6fr) minmax(18rem, 0.95fr);
+  gap: 1rem;
 }
 
 .status-changes-section {
-  margin-bottom: 1.5rem;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-md);
-  padding: 0;
+  margin-bottom: 0;
+  min-width: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 22px;
+  padding: 1.1rem;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.06);
 }
 
 .status-changes-header {
@@ -1365,12 +1740,11 @@ button:disabled {
 }
 
 .status-changes-header select {
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  border-radius: 8px;
-  padding: 0.35rem 0.5rem;
-  font-size: 0.8rem;
-  color: #334155;
+  min-width: 0;
+  width: auto;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.82rem;
+  box-shadow: none;
 }
 
 .status-changes-empty {
@@ -1447,6 +1821,98 @@ button:disabled {
   gap: 0.1rem;
   font-size: 0.72rem;
   color: #64748b;
+}
+
+.flightdeck-side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.flightdeck-side-panel {
+  padding: 1.1rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 22px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.06);
+}
+
+.flightdeck-side-panel h3 {
+  margin: 0 0 0.55rem;
+  font-size: 0.98rem;
+  color: #0f172a;
+}
+
+.flightdeck-side-panel p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #475569;
+}
+
+@media (max-width: 960px) {
+  .flightdeck-reports-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .flightdeck-report-card,
+  .flightdeck-report-card-wide {
+    grid-column: span 6;
+  }
+
+  .flightdeck-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .status-section {
+    padding-right: 1rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .status-section {
+    padding: 1rem 1rem 1.5rem 0;
+  }
+
+  .flightdeck-hero h2 {
+    padding: 0 1rem;
+  }
+
+  .flightdeck-reports-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .flightdeck-report-card,
+  .flightdeck-report-card-wide {
+    grid-column: span 1;
+  }
+
+  .flightdeck-report-bars {
+    height: 7.5rem;
+  }
+
+  .status-changes-section,
+  .flightdeck-side-panel {
+    border-radius: 18px;
+  }
+
+  .status-changes-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .status-change-row {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "type"
+      "title"
+      "subtitle"
+      "time";
+  }
+
+  .status-change-time {
+    align-items: flex-start;
+  }
 }
 
 .chat-section {
@@ -4318,6 +4784,141 @@ button:disabled {
   min-width: 0;
 }
 
+/* ═══ JOBS ═══ */
+
+.jobs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  max-width: 100%;
+}
+
+.jobs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.jobs-header h2 {
+  margin: 0 0 0.25rem;
+}
+
+.jobs-subtitle {
+  color: var(--color-text-dim);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.jobs-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 0.75rem;
+}
+
+.jobs-tab {
+  padding: 0.5rem 1.25rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.jobs-tab.active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.jobs-tab:hover {
+  color: var(--color-text);
+}
+
+.jobs-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.jobs-filter-select,
+.jobs-filter-input {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.jobs-filter-input {
+  min-width: 150px;
+}
+
+.jobs-goal-text {
+  font-size: 0.82rem;
+  color: var(--color-text-dim);
+  margin: 0.25rem 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 500px;
+}
+
+.jobs-runs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.jobs-runs-header-row {
+  display: grid;
+  grid-template-columns: 90px 120px 1fr 140px 70px 70px;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  background: var(--color-bg-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.jobs-run-row {
+  display: grid;
+  grid-template-columns: 90px 120px 1fr 140px 70px 70px;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.jobs-run-row:last-child {
+  border-bottom: none;
+}
+
+.jobs-run-col-goal {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jobs-session-link {
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: var(--color-accent);
+  margin-right: 0.4rem;
+}
+
 @media (max-width: 768px) {
   body {
     padding: 0.5rem;
@@ -4466,141 +5067,6 @@ button:disabled {
 
 .tasks-section {
   max-width: 100%;
-}
-
-/* ═══ JOBS ═══ */
-
-.jobs-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.5rem;
-  max-width: 100%;
-}
-
-.jobs-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 0.5rem;
-}
-
-.jobs-header h2 {
-  margin: 0 0 0.25rem;
-}
-
-.jobs-subtitle {
-  color: var(--color-text-dim);
-  font-size: 0.85rem;
-  margin: 0;
-}
-
-.jobs-tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--color-border);
-  margin-bottom: 0.75rem;
-}
-
-.jobs-tab {
-  padding: 0.5rem 1.25rem;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--color-text-dim);
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-
-.jobs-tab.active {
-  color: var(--color-text);
-  border-bottom-color: var(--color-accent);
-}
-
-.jobs-tab:hover {
-  color: var(--color-text);
-}
-
-.jobs-toolbar {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.jobs-filter-select,
-.jobs-filter-input {
-  padding: 0.35rem 0.5rem;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-size: 0.85rem;
-}
-
-.jobs-filter-input {
-  min-width: 150px;
-}
-
-.jobs-goal-text {
-  font-size: 0.82rem;
-  color: var(--color-text-dim);
-  margin: 0.25rem 0 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 500px;
-}
-
-.jobs-runs-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.jobs-runs-header-row {
-  display: grid;
-  grid-template-columns: 90px 120px 1fr 140px 70px 70px;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--color-text-dim);
-  background: var(--color-bg-raised);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.jobs-run-row {
-  display: grid;
-  grid-template-columns: 90px 120px 1fr 140px 70px 70px;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.85rem;
-  align-items: center;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.jobs-run-row:last-child {
-  border-bottom: none;
-}
-
-.jobs-run-col-goal {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.jobs-session-link {
-  font-family: monospace;
-  font-size: 0.78rem;
-  color: var(--color-accent);
-  margin-right: 0.4rem;
 }
 
 .calendar-section,
@@ -5020,6 +5486,31 @@ button:disabled {
 .board-picker-typeahead-input:focus::placeholder {
   opacity: 0.4;
   font-weight: 400;
+}
+
+.sidebar-focus-picker .board-picker-typeahead-input {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.84rem;
+  font-weight: 650;
+  line-height: 1.18;
+}
+
+.sidebar-focus-picker .board-picker-typeahead-input::placeholder {
+  color: var(--text);
+  opacity: 1;
+  font-weight: 650;
+}
+
+.sidebar-focus-picker .board-picker-typeahead-input:focus,
+.sidebar-focus-picker .board-picker-typeahead-input:focus-visible {
+  outline: none;
+  border: none;
+  box-shadow: none;
+  background: transparent;
 }
 
 .board-picker-typeahead-results {

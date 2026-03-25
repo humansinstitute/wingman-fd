@@ -38,7 +38,7 @@
           class="brand-lockup brand-lockup-button"
           :class="{ 'brand-lockup-clickable': $store.chat.isLoggedIn }"
           @click="if ($store.chat.isLoggedIn) $store.chat.navigateTo('status')"
-          :aria-label="$store.chat.isLoggedIn ? 'Go to notifications' : 'Wingman'"
+          :aria-label="$store.chat.isLoggedIn ? 'Go to Flight Deck' : 'Wingman'"
         >
           <img class="brand-logo" src="/wingman-logo.png" alt="Wingman logo" />
           <div class="brand-copy">
@@ -274,6 +274,36 @@
     <div class="app-layout" x-show="$store.chat.isLoggedIn">
       <div class="mobile-sidebar-backdrop" x-show="$store.chat.mobileNavOpen" @click="$store.chat.mobileNavOpen = false"></div>
       <nav class="sidebar" :class="{ 'sidebar-collapsed': $store.chat.navCollapsed, 'sidebar-mobile-open': $store.chat.mobileNavOpen }">
+        <div class="sidebar-focus-panel" x-data="{ bpIdx: 0, open: false, query: '' }" @click.outside="open = false; query = ''" @mousedown.prevent="$refs.sidebarScopeInput.focus()">
+          <div class="board-picker-typeahead-wrapper sidebar-focus-picker">
+            <input
+              x-ref="sidebarScopeInput"
+              class="board-picker-typeahead-input sidebar-focus-input"
+              type="text"
+              x-model="query"
+              :placeholder="$store.chat.focusScopeTitle"
+              @focus="open = true; bpIdx = 0"
+              @keydown.escape="open = false; query = ''; $el.blur()"
+              @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filterFlightDeckScopeOptions(query).length - 1)"
+              @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
+              @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectBoard($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id); open = false; query = ''; $el.blur() }"
+              aria-label="Current scope"
+            />
+            <span class="sidebar-workspace-meta sidebar-focus-meta" x-text="$store.chat.focusScopeSidebarMeta"></span>
+            <ul class="board-picker-typeahead-results sidebar-focus-results" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length > 0" x-cloak>
+              <template x-for="(board, idx) in $store.chat.filterFlightDeckScopeOptions(query)" :key="board.id">
+                <li
+                  class="board-picker-typeahead-option"
+                  :class="{ 'board-picker-typeahead-active': $store.chat.selectedBoardId === board.id, 'board-picker-typeahead-highlight': idx === bpIdx }"
+                  @click="$store.chat.selectBoard(board.id); open = false; query = ''"
+                  @mouseenter="bpIdx = idx"
+                  x-text="board.label"
+                ></li>
+              </template>
+            </ul>
+            <div class="board-picker-typeahead-empty sidebar-focus-empty" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length === 0">No scopes match.</div>
+          </div>
+        </div>
         <ul class="sidebar-nav">
           <li :class="{ active: $store.chat.navSection === 'status' }" @click="$store.chat.navigateTo('status')">
             <span class="sidebar-icon" aria-hidden="true">
@@ -282,7 +312,7 @@
                 <path d="M10 17a2 2 0 0 0 4 0"></path>
               </svg>
             </span>
-            <span class="sidebar-label">Notifications</span>
+            <span class="sidebar-label">Flight Deck</span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'chat' }" @click="$store.chat.navigateTo('chat')" class="sidebar-chat-row">
             <span class="sidebar-icon" aria-hidden="true">
@@ -488,37 +518,177 @@
 
       <div class="main-content">
         <div x-show="$store.chat.navSection === 'status'" class="status-section">
-          <section class="status-changes-section">
-            <div class="status-changes-header">
-              <h3>Notifications</h3>
-              <div class="status-changes-controls">
-                <select x-model="$store.chat.statusTimeRange" @change="$store.chat.refreshStatusRecentChanges()" aria-label="Recent changes time range">
-                  <option value="1h">Last hour</option>
-                  <option value="2h">Last 2 hours</option>
-                  <option value="4h">Last 4 hours</option>
-                  <option value="24h">Last 24 hours</option>
-                </select>
+          <section class="flightdeck-hero" x-data="{ bpIdx: 0, open: false, query: '' }" @click.outside="open = false; query = ''">
+            <h2>Welcome <span x-text="$store.chat.greetingName"></span>, where will we focus today?</h2>
+            <div class="flightdeck-hero-scope-row">
+              <div class="board-picker-typeahead-wrapper flightdeck-typeahead-wrapper">
+                <input
+                  id="flightdeck-scope-select"
+                  class="board-picker-typeahead-input flightdeck-scope-input"
+                  type="text"
+                  x-model="query"
+                  :placeholder="$store.chat.selectedBoardScope?.title || 'Look ahead to a scope...'"
+                  @focus="open = true; bpIdx = 0"
+                  @keydown.escape="open = false; query = ''; $el.blur()"
+                  @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filterFlightDeckScopeOptions(query).length - 1)"
+                  @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
+                  @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectBoard($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id); open = false; query = ''; $el.blur() }"
+                  aria-label="Look ahead scope"
+                />
+                <ul class="board-picker-typeahead-results" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length > 0" x-cloak>
+                  <template x-for="(board, idx) in $store.chat.filterFlightDeckScopeOptions(query)" :key="board.id">
+                    <li
+                      class="board-picker-typeahead-option"
+                      :class="{ 'board-picker-typeahead-active': $store.chat.selectedBoardId === board.id, 'board-picker-typeahead-highlight': idx === bpIdx }"
+                      @click="$store.chat.selectBoard(board.id); open = false; query = ''"
+                      @mouseenter="bpIdx = idx"
+                      x-text="board.label"
+                    ></li>
+                  </template>
+                </ul>
+                <div class="board-picker-typeahead-empty" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length === 0">No scopes match.</div>
               </div>
             </div>
-            <p class="status-changes-empty" x-show="$store.chat.statusRecentChanges.length === 0">
-              No recent changes in this window.
-            </p>
-            <ul class="status-changes-list" x-show="$store.chat.statusRecentChanges.length > 0">
-              <template x-for="item in $store.chat.statusRecentChanges" :key="item.id">
-                <li>
-                  <button type="button" class="status-change-row" @click="$store.chat.openStatusChange(item)">
-                    <span class="status-change-type" x-text="item.recordType"></span>
-                    <span class="status-change-title" x-text="item.title"></span>
-                    <span class="status-change-subtitle" x-text="item.subtitle"></span>
-                    <span class="status-change-time">
-                      <span x-text="$store.chat.formatRelativeTime(item.updatedAt)"></span>
-                      <span x-text="new Date(item.updatedAt).toLocaleString()"></span>
-                    </span>
-                  </button>
-                </li>
-              </template>
-            </ul>
           </section>
+
+          <section class="flightdeck-reports-section" x-show="$store.chat.flightDeckReports.length > 0" x-cloak>
+            <div class="flightdeck-reports-header">
+              <h3>Reports</h3>
+            </div>
+            <div class="flightdeck-reports-grid">
+              <template x-for="report in $store.chat.flightDeckReports" :key="`${report.record_id}:${report.version || 1}`">
+                <article class="flightdeck-report-card" :class="$store.chat.getFlightDeckReportCardClass(report)">
+                  <div class="flightdeck-report-header">
+                    <div>
+                      <p class="flightdeck-report-eyebrow" x-text="$store.chat.getFlightDeckReportTypeLabel(report)"></p>
+                      <h3 x-text="report.title || 'Untitled report'"></h3>
+                    </div>
+                    <span class="flightdeck-report-relative-time" x-text="$store.chat.formatRelativeTime(report.generated_at || report.updated_at)"></span>
+                  </div>
+
+                  <template x-if="report.declaration_type === 'metric'">
+                    <div class="flightdeck-report-metric">
+                      <p class="flightdeck-report-metric-label" x-text="$store.chat.getReportMetricLabel(report)"></p>
+                      <div class="flightdeck-report-metric-value-row">
+                        <strong class="flightdeck-report-metric-value" x-text="$store.chat.formatReportMetricValue(report)"></strong>
+                        <span class="flightdeck-report-metric-unit" x-show="$store.chat.getReportMetricUnit(report)" x-text="$store.chat.getReportMetricUnit(report)"></span>
+                      </div>
+                      <div class="flightdeck-report-trend" x-show="$store.chat.getReportMetricTrend(report)">
+                        <span
+                          class="flightdeck-report-trend-chip"
+                          :class="`flightdeck-report-trend-${$store.chat.getReportMetricTrend(report)?.direction || 'flat'}`"
+                          x-text="$store.chat.formatReportMetricTrend(report)"
+                        ></span>
+                        <span x-text="$store.chat.getReportMetricTrend(report)?.label || ''"></span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template x-if="report.declaration_type === 'timeseries'">
+                    <div class="flightdeck-report-timeseries">
+                      <template x-for="series in $store.chat.getReportTimeseriesSeries(report)" :key="series.key">
+                        <section class="flightdeck-report-series">
+                          <div class="flightdeck-report-series-header">
+                            <strong x-text="series.label"></strong>
+                          </div>
+                          <div class="flightdeck-report-bars">
+                            <template x-for="bar in series.bars" :key="bar.key">
+                              <span class="flightdeck-report-bar" :style="`height:${bar.heightPct}%`" :title="bar.tooltip"></span>
+                            </template>
+                          </div>
+                          <div class="flightdeck-report-axis">
+                            <span x-text="series.firstLabel"></span>
+                            <span x-text="series.lastLabel"></span>
+                          </div>
+                        </section>
+                      </template>
+                    </div>
+                  </template>
+
+                  <template x-if="report.declaration_type === 'table'">
+                    <div class="flightdeck-report-table-wrap">
+                      <table class="flightdeck-report-table">
+                        <thead>
+                          <tr>
+                            <template x-for="column in $store.chat.getReportTableColumns(report)" :key="column.key">
+                              <th :class="`align-${column.align}`" x-text="column.label"></th>
+                            </template>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <template x-for="(row, rowIndex) in $store.chat.getReportTableRows(report)" :key="rowIndex">
+                            <tr>
+                              <template x-for="column in $store.chat.getReportTableColumns(report)" :key="`${rowIndex}:${column.key}`">
+                                <td :class="`align-${column.align}`" x-text="$store.chat.formatReportTableCell(row[column.key])"></td>
+                              </template>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                  </template>
+
+                  <template x-if="report.declaration_type === 'text'">
+                    <p class="flightdeck-report-text-body" x-text="$store.chat.getReportTextBody(report)"></p>
+                  </template>
+
+                  <template x-if="!['metric', 'timeseries', 'table', 'text'].includes(report.declaration_type)">
+                    <p class="flightdeck-report-text-body">Unsupported report payload.</p>
+                  </template>
+
+                  <div class="flightdeck-report-footer">
+                    <span x-show="$store.chat.getReportScopeLabel(report)" x-text="$store.chat.getReportScopeLabel(report)"></span>
+                    <span x-text="$store.chat.formatReportAbsoluteTime(report.generated_at || report.updated_at)"></span>
+                  </div>
+                </article>
+              </template>
+            </div>
+          </section>
+
+          <div class="flightdeck-grid">
+            <section class="status-changes-section">
+              <div class="status-changes-header">
+                <h3>Recent Work</h3>
+                <div class="status-changes-controls">
+                  <select x-model="$store.chat.statusTimeRange" @change="$store.chat.refreshStatusRecentChanges()" aria-label="Recent changes time range">
+                    <option value="1h">Last hour</option>
+                    <option value="2h">Last 2 hours</option>
+                    <option value="4h">Last 4 hours</option>
+                    <option value="24h">Last 24 hours</option>
+                  </select>
+                </div>
+              </div>
+              <p class="status-changes-empty" x-show="$store.chat.statusRecentChanges.length === 0">
+                No recent changes in this window.
+              </p>
+              <ul class="status-changes-list" x-show="$store.chat.statusRecentChanges.length > 0">
+                <template x-for="item in $store.chat.statusRecentChanges" :key="item.id">
+                  <li>
+                    <button type="button" class="status-change-row" @click="$store.chat.openStatusChange(item)">
+                      <span class="status-change-type" x-text="item.recordType"></span>
+                      <span class="status-change-title" x-text="item.title"></span>
+                      <span class="status-change-subtitle" x-text="item.subtitle"></span>
+                      <span class="status-change-time">
+                        <span x-text="$store.chat.formatRelativeTime(item.updatedAt)"></span>
+                        <span x-text="new Date(item.updatedAt).toLocaleString()"></span>
+                      </span>
+                    </button>
+                  </li>
+                </template>
+              </ul>
+            </section>
+
+            <aside class="flightdeck-side-column">
+              <section class="flightdeck-side-panel">
+                <h3>Approvals</h3>
+                <p>Approvals will gather the decisions that need a quick yes, no, or unblock from you. Use this space for sign-offs, delegated reviews, and any work waiting on your call.</p>
+              </section>
+              <section class="flightdeck-side-panel">
+                <h3>Coming Up</h3>
+                <p>Coming Up will hold the next deadlines, meetings, and handoffs tied to your current scope. Treat it as the short runway for what needs attention next.</p>
+              </section>
+            </aside>
+          </div>
         </div>
 
         <!-- ═══ TASKS SECTION ═══ -->
@@ -671,7 +841,7 @@
                   <template x-for="task in col.tasks" :key="task.record_id">
                     <div
                       class="kanban-card"
-                      :class="{ 'summary-card': col.state === 'summary', 'kanban-card-selected': $store.chat.isTaskSelected(task.record_id) }"
+                      :class="{ 'summary-card': col.state === 'summary', 'kanban-card-selected': $store.chat.isTaskSelected(task.record_id), 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
                       :draggable="col.state !== 'summary'"
                       @dragstart="col.state !== 'summary' && $store.chat.handleTaskDragStart($event, task.record_id)"
                       @dragend="$store.chat.handleTaskDragEnd($event)"
@@ -755,7 +925,7 @@
                   <template x-for="task in group.tasks" :key="task.record_id">
                     <div
                       class="task-list-row"
-                      :class="{ 'task-list-row-parent': group.state === 'summary' }"
+                      :class="{ 'task-list-row-parent': group.state === 'summary', 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
                       @click="$store.chat.handleTaskCardClick(task.record_id)"
                     >
                       <template x-if="group.state !== 'summary'">
@@ -783,7 +953,7 @@
                     <!-- Subtask indentation for summary/parent tasks -->
                     <template x-if="group.state === 'summary'">
                       <template x-for="sub in $store.chat.getSubtasks(task.record_id)" :key="sub.record_id">
-                        <div class="task-list-row task-list-row-subtask" @click="$store.chat.handleTaskCardClick(sub.record_id)">
+                        <div class="task-list-row task-list-row-subtask" :class="{ 'task-unread': $store.chat.isTaskUnread(sub.record_id) }" @click="$store.chat.handleTaskCardClick(sub.record_id)">
                           <label class="task-card-select" @click.stop>
                             <input type="checkbox" :checked="$store.chat.isTaskSelected(sub.record_id)" @change="$store.chat.toggleTaskSelection(sub.record_id)" />
                           </label>
@@ -2469,7 +2639,6 @@
           <div class="trigger-banner trigger-error" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></div>
           <div class="trigger-banner trigger-success" x-show="$store.chat.jobsSuccess" x-text="$store.chat.jobsSuccess"></div>
 
-          <!-- Definitions tab -->
           <div x-show="$store.chat.jobsTab === 'definitions'">
             <div class="jobs-toolbar">
               <button type="button" class="schedule-primary-btn" @click="$store.chat.openNewJobModal()">+ New Job</button>
@@ -2512,7 +2681,6 @@
             </div>
           </div>
 
-          <!-- Runs tab -->
           <div x-show="$store.chat.jobsTab === 'runs'">
             <div class="jobs-toolbar">
               <select class="jobs-filter-select" x-model="$store.chat.jobRunsFilterStatus" @change="$store.chat.loadJobRuns()">
@@ -2572,7 +2740,6 @@
           </div>
         </div>
 
-        <!-- New Job modal -->
         <div class="doc-modal-backdrop" x-show="$store.chat.showNewJobModal" x-cloak @click.self="$store.chat.closeNewJobModal()">
           <div class="doc-modal-card schedule-modal">
             <button class="modal-close" type="button" @click="$store.chat.closeNewJobModal()">&times;</button>
@@ -2618,7 +2785,6 @@
           </div>
         </div>
 
-        <!-- Edit Job modal -->
         <div class="doc-modal-backdrop" x-show="$store.chat.showEditJobModal" x-cloak @click.self="$store.chat.closeEditJobModal()">
           <div class="doc-modal-card schedule-modal">
             <button class="modal-close" type="button" @click="$store.chat.closeEditJobModal()">&times;</button>
@@ -2659,7 +2825,6 @@
           </div>
         </div>
 
-        <!-- Dispatch Job modal -->
         <div class="doc-modal-backdrop" x-show="$store.chat.showDispatchModal" x-cloak @click.self="$store.chat.closeDispatchModal()">
           <div class="doc-modal-card">
             <button class="modal-close" type="button" @click="$store.chat.closeDispatchModal()">&times;</button>

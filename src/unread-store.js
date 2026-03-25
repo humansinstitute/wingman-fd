@@ -36,6 +36,41 @@ async function cursorRecordId(viewerNpub, cursorKey) {
 }
 
 // ---------------------------------------------------------------------------
+// Pure helpers (testable without Alpine/Dexie)
+// ---------------------------------------------------------------------------
+
+/**
+ * Given a list of tasks and a cursor map, return an object mapping record_id → true
+ * for every task that has unread updates.
+ *
+ * A task is unread when its updated_at exceeds the more recent of:
+ *   - its per-task cursor  (tasks:item:<id>)
+ *   - the section cursor   (tasks:nav)
+ *
+ * If no tasks:nav cursor exists yet the user has never visited the section,
+ * so nothing can be unread (avoids a wall of red on first load).
+ */
+export function computeUnreadTaskMap(tasks, cursorMap) {
+  const navReadUntil = cursorMap['tasks:nav'] || null;
+  if (!navReadUntil) return {};
+
+  const result = {};
+  for (const task of tasks) {
+    if (task.record_state === 'deleted') continue;
+    const taskKey = `tasks:item:${task.record_id}`;
+    const taskReadUntil = cursorMap[taskKey] || null;
+    const effectiveReadUntil =
+      taskReadUntil && taskReadUntil > navReadUntil
+        ? taskReadUntil
+        : navReadUntil;
+    if (task.updated_at > effectiveReadUntil) {
+      result[task.record_id] = true;
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Mixin
 // ---------------------------------------------------------------------------
 
@@ -46,6 +81,8 @@ export const unreadStoreMixin = {
   _unreadDocs: false,
   // Per-channel unread map: { channelId: boolean }
   _unreadChannels: {},
+  // Per-task unread map: { taskRecordId: boolean }
+  _unreadTaskItems: {},
 
   // Timer handle for periodic refresh
   _unreadRefreshTimer: null,
@@ -56,6 +93,10 @@ export const unreadStoreMixin = {
 
   isChannelUnread(channelId) {
     return this._unreadChannels[channelId] === true;
+  },
+
+  isTaskUnread(taskId) {
+    return this._unreadTaskItems[taskId] === true;
   },
 
   /**
@@ -120,6 +161,10 @@ export const unreadStoreMixin = {
         newChannelMap[ch.record_id] = newerMsg != null;
       }
       this._unreadChannels = newChannelMap;
+
+      // --- Per-task unread ---
+      const allTasks = await db.tasks.toArray();
+      this._unreadTaskItems = computeUnreadTaskMap(allTasks, cursorMap);
     } catch (e) {
       // Swallow errors — unread flags are non-critical
       console.warn('[unread] refresh failed:', e?.message || e);
@@ -178,5 +223,29 @@ export const unreadStoreMixin = {
 
     // Immediately clear the channel flag
     this._unreadChannels = { ...this._unreadChannels, [channelId]: false };
+  },
+
+  /**
+   * Mark a specific task as read.
+   */
+  async markTaskRead(taskId) {
+    const viewerNpub = this.session?.npub;
+    if (!viewerNpub || !taskId) return;
+
+    const cursorKey = `tasks:item:${taskId}`;
+    const recordId = await cursorRecordId(viewerNpub, cursorKey);
+    const now = new Date().toISOString();
+    await upsertReadCursor({
+      record_id: recordId,
+      cursor_key: cursorKey,
+      viewer_npub: viewerNpub,
+      read_until: now,
+    });
+
+    // Also update nav-level tasks cursor
+    await this.markSectionRead('tasks');
+
+    // Immediately clear the task flag
+    this._unreadTaskItems = { ...this._unreadTaskItems, [taskId]: false };
   },
 };
