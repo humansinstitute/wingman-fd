@@ -71,6 +71,14 @@ export function computeUnreadTaskMap(tasks, cursorMap) {
 }
 
 /**
+ * Derive whether the tasks nav dot should show from the per-task unread map.
+ * Returns true if at least one task is unread.
+ */
+export function hasUnreadTasks(unreadTaskItems) {
+  return Object.values(unreadTaskItems).some((v) => v);
+}
+
+/**
  * Determine whether the tasks:nav cursor should be auto-seeded.
  * Returns true when tasks exist in the DB but no cursor has been set yet
  * (e.g. after cache clear + hard refresh).
@@ -148,10 +156,7 @@ export const unreadStoreMixin = {
       const allMessages = await db.chat_messages.where('updated_at').above(chatReadUntil).first();
       this._unreadChat = allMessages != null && allMessages.record_state !== 'deleted';
 
-      // --- Tasks nav ---
-      const tasksReadUntil = cursorMap['tasks:nav'] || '1970-01-01T00:00:00.000Z';
-      const latestTask = await db.tasks.where('updated_at').above(tasksReadUntil).first();
-      this._unreadTasks = latestTask != null && latestTask.record_state !== 'deleted';
+      // --- Tasks nav --- derived from per-task unread map (computed below)
 
       // --- Docs nav ---
       const docsReadUntil = cursorMap['docs:nav'] || '1970-01-01T00:00:00.000Z';
@@ -199,6 +204,7 @@ export const unreadStoreMixin = {
       }
 
       this._unreadTaskItems = computeUnreadTaskMap(allTasks, cursorMap);
+      this._unreadTasks = hasUnreadTasks(this._unreadTaskItems);
     } catch (e) {
       // Swallow errors — unread flags are non-critical
       console.warn('[unread] refresh failed:', e?.message || e);
@@ -276,10 +282,8 @@ export const unreadStoreMixin = {
       read_until: now,
     });
 
-    // Also update nav-level tasks cursor
-    await this.markSectionRead('tasks');
-
-    // Immediately clear the task flag
+    // Immediately clear the task flag and re-derive nav dot
     this._unreadTaskItems = { ...this._unreadTaskItems, [taskId]: false };
+    this._unreadTasks = hasUnreadTasks(this._unreadTaskItems);
   },
 };

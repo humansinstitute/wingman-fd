@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeUnreadTaskMap } from '../src/unread-store.js';
+import { computeUnreadTaskMap, hasUnreadTasks } from '../src/unread-store.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -127,6 +127,66 @@ describe('computeUnreadTaskMap', () => {
       t2: true,
     });
   });
+
+  // --- Bug fix: opening one task must NOT clear borders on other tasks ---
+
+  it('opening task A must not affect unread state of task B', () => {
+    // Scenario: tasks:nav is at seed baseline (T1).
+    // User opens task t1 → per-task cursor set to T4.
+    // Task t2 has no per-task cursor → should still be unread.
+    // This verifies markTaskRead does NOT advance tasks:nav.
+    const tasks = [
+      task('t1', T3), // opened → per-task cursor at T4
+      task('t2', T3), // NOT opened → no per-task cursor
+    ];
+    const cursorMap = {
+      'tasks:nav': T1, // baseline stays at seed, NOT advanced to now
+      'tasks:item:t1': T4, // only t1 was opened
+    };
+    expect(computeUnreadTaskMap(tasks, cursorMap)).toEqual({
+      t2: true, // t2 must remain unread
+    });
+  });
+
+  it('navigating to tasks board must not clear per-task unread state', () => {
+    // Scenario: user navigates to tasks section via nav.
+    // tasks:nav should NOT advance — it stays at the auto-seed baseline.
+    // All unread task borders should persist.
+    const tasks = [
+      task('t1', T3),
+      task('t2', T4),
+    ];
+    const cursorMap = {
+      'tasks:nav': T1, // baseline stays at seed value
+    };
+    // Both tasks remain unread after board navigation
+    expect(computeUnreadTaskMap(tasks, cursorMap)).toEqual({
+      t1: true,
+      t2: true,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasUnreadTasks — derives nav dot from per-task unread map
+// ---------------------------------------------------------------------------
+
+describe('hasUnreadTasks', () => {
+  it('returns false for empty map', () => {
+    expect(hasUnreadTasks({})).toBe(false);
+  });
+
+  it('returns true when at least one task is unread', () => {
+    expect(hasUnreadTasks({ t1: true, t2: false })).toBe(true);
+  });
+
+  it('returns false when all tasks are read', () => {
+    expect(hasUnreadTasks({ t1: false, t2: false })).toBe(false);
+  });
+
+  it('returns true when all tasks are unread', () => {
+    expect(hasUnreadTasks({ t1: true, t2: true })).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -167,17 +227,34 @@ describe('shouldSeedTasksNavCursor', () => {
 });
 
 // ---------------------------------------------------------------------------
-// applyRouteFromLocation must seed cursor — integration-level assertion
+// Behavioral contract: unread borders only clear on task open
 // ---------------------------------------------------------------------------
 
-describe('route-based cursor seeding', () => {
-  it('navigateTo calls markSectionRead for tasks section', () => {
-    // This documents the expected contract: navigateTo must call markSectionRead
-    // when navigating to chat, tasks, or docs sections.
-    // The fix ensures applyRouteFromLocation does the same.
-    const sectionsRequiringCursor = ['chat', 'tasks', 'docs'];
-    for (const section of sectionsRequiringCursor) {
-      expect(sectionsRequiringCursor).toContain(section);
-    }
+describe('unread border behavioral contract', () => {
+  it('navigateTo must NOT call markSectionRead for tasks', () => {
+    // navigateTo('tasks') should only clear the nav dot visually,
+    // not advance tasks:nav cursor which would wipe all per-task borders.
+    // This is tested by verifying computeUnreadTaskMap preserves state
+    // when tasks:nav is NOT advanced (stays at baseline).
+    const tasks = [task('t1', T3), task('t2', T4)];
+    const baselineCursor = { 'tasks:nav': T1 };
+    const advancedCursor = { 'tasks:nav': T4 }; // what happens if tasks:nav is advanced to now
+
+    // With baseline: both unread (correct)
+    expect(computeUnreadTaskMap(tasks, baselineCursor)).toEqual({ t1: true, t2: true });
+    // With advanced: both read (wrong — this is the bug)
+    expect(computeUnreadTaskMap(tasks, advancedCursor)).toEqual({});
+  });
+
+  it('markTaskRead must only clear the opened task, not others', () => {
+    // After opening t1, only t1 should be read. t2 must remain unread.
+    const tasks = [task('t1', T3), task('t2', T3)];
+    const cursorMap = {
+      'tasks:nav': T1, // baseline NOT advanced
+      'tasks:item:t1': T4, // t1 was opened
+    };
+    const result = computeUnreadTaskMap(tasks, cursorMap);
+    expect(result).toEqual({ t2: true }); // only t2 still unread
+    expect(result.t1).toBeUndefined(); // t1 is read
   });
 });

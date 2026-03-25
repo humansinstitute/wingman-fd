@@ -1560,8 +1560,11 @@ export function initApp() {
       this.navSection = section;
       this.mobileNavOpen = false;
       this.showWorkspaceSwitcherMenu = false;
-      // Mark section as read when user navigates to it
-      if (section === 'chat' || section === 'tasks' || section === 'docs') {
+      // Mark section as read when user navigates to it.
+      // Tasks section is excluded: per-task borders must persist until
+      // the user opens each task individually. The tasks nav dot is
+      // derived from per-task unread state instead.
+      if (section === 'chat' || section === 'docs') {
         this.markSectionRead(section);
       }
       if (section === 'tasks' || section === 'calendar') {

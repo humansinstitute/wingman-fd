@@ -5793,11 +5793,12 @@ button:disabled {
   box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.16), 0 3px 8px rgba(0,0,0,0.08);
 }
 
-/* Per-task unread indicator — red left border on cards with unseen updates.
-   Must appear after .kanban-card to win the cascade (same specificity). */
+/* Per-task unread indicator — red border around cards with unseen updates.
+   Uses outline to avoid affecting card layout / padding. */
 .kanban-card.task-unread,
 .task-list-row.task-unread {
-  border-left: 3px solid var(--danger);
+  outline: 2px solid var(--danger);
+  outline-offset: -1px;
 }
 
 .kanban-card-header {
