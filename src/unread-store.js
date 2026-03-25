@@ -175,20 +175,27 @@ export const unreadStoreMixin = {
       // --- Per-task unread ---
       const allTasks = await db.tasks.toArray();
 
-      // Auto-seed tasks:nav cursor after cache clear so future updates
-      // can trigger red borders.  Without this, computeUnreadTaskMap
-      // returns {} forever when no cursor exists.
+      // Auto-seed tasks:nav cursor after cache clear so per-task
+      // red borders can render.  Seed to the OLDEST active task's
+      // updated_at so all tasks appear unread until the user opens them.
+      // Seeding to `now` would mark everything as read immediately.
       if (shouldSeedTasksNavCursor(allTasks, cursorMap)) {
-        const now = new Date().toISOString();
+        const activeTasks = allTasks.filter((t) => t.record_state !== 'deleted');
+        const oldest = activeTasks.reduce(
+          (min, t) => (t.updated_at < min ? t.updated_at : min),
+          activeTasks[0]?.updated_at || new Date().toISOString(),
+        );
+        // Seed one millisecond before the oldest task so it's included
+        const seedTime = new Date(new Date(oldest).getTime() - 1).toISOString();
         const cursorKey = 'tasks:nav';
         const recordId = await cursorRecordId(viewerNpub, cursorKey);
         await upsertReadCursor({
           record_id: recordId,
           cursor_key: cursorKey,
           viewer_npub: viewerNpub,
-          read_until: now,
+          read_until: seedTime,
         });
-        cursorMap[cursorKey] = now;
+        cursorMap[cursorKey] = seedTime;
       }
 
       this._unreadTaskItems = computeUnreadTaskMap(allTasks, cursorMap);

@@ -1,0 +1,27 @@
+{
+  "name": "Wingman Flight Deck",
+  "short_name": "Flight Deck",
+  "description": "Solvitur Ambulando | Be Free",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#1a1a2e",
+  "background_color": "#1a1a2e",
+  "icons": [
+    {
+      "src": "/wingman-logo-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/wingman-logo-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/wingman-logo-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
