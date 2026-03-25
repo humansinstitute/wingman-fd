@@ -2,10 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Flight Deck" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-DEfVBhdT.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-sxeSbtra.css">
+  <script type="module" crossorigin src="/assets/index-Cc40mwfz.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-D3yxo3sg.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <main class="app-shell">
@@ -33,7 +40,7 @@
           class="brand-lockup brand-lockup-button"
           :class="{ 'brand-lockup-clickable': $store.chat.isLoggedIn }"
           @click="if ($store.chat.isLoggedIn) $store.chat.navigateTo('status')"
-          :aria-label="$store.chat.isLoggedIn ? 'Go to notifications' : 'Wingman'"
+          :aria-label="$store.chat.isLoggedIn ? 'Go to Flight Deck' : 'Wingman'"
         >
           <img class="brand-logo" src="/wingman-logo.png" alt="Wingman logo" />
           <div class="brand-copy">
@@ -269,6 +276,36 @@
     <div class="app-layout" x-show="$store.chat.isLoggedIn">
       <div class="mobile-sidebar-backdrop" x-show="$store.chat.mobileNavOpen" @click="$store.chat.mobileNavOpen = false"></div>
       <nav class="sidebar" :class="{ 'sidebar-collapsed': $store.chat.navCollapsed, 'sidebar-mobile-open': $store.chat.mobileNavOpen }">
+        <div class="sidebar-focus-panel" x-data="{ bpIdx: 0, open: false, query: '' }" @click.outside="open = false; query = ''" @mousedown.prevent="$refs.sidebarScopeInput.focus()">
+          <div class="board-picker-typeahead-wrapper sidebar-focus-picker">
+            <input
+              x-ref="sidebarScopeInput"
+              class="board-picker-typeahead-input sidebar-focus-input"
+              type="text"
+              x-model="query"
+              :placeholder="$store.chat.focusScopeTitle"
+              @focus="open = true; bpIdx = 0"
+              @keydown.escape="open = false; query = ''; $el.blur()"
+              @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filterFlightDeckScopeOptions(query).length - 1)"
+              @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
+              @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectBoard($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id); open = false; query = ''; $el.blur() }"
+              aria-label="Current scope"
+            />
+            <span class="sidebar-workspace-meta sidebar-focus-meta" x-text="$store.chat.focusScopeSidebarMeta"></span>
+            <ul class="board-picker-typeahead-results sidebar-focus-results" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length > 0" x-cloak>
+              <template x-for="(board, idx) in $store.chat.filterFlightDeckScopeOptions(query)" :key="board.id">
+                <li
+                  class="board-picker-typeahead-option"
+                  :class="{ 'board-picker-typeahead-active': $store.chat.selectedBoardId === board.id, 'board-picker-typeahead-highlight': idx === bpIdx }"
+                  @click="$store.chat.selectBoard(board.id); open = false; query = ''"
+                  @mouseenter="bpIdx = idx"
+                  x-text="board.label"
+                ></li>
+              </template>
+            </ul>
+            <div class="board-picker-typeahead-empty sidebar-focus-empty" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length === 0">No scopes match.</div>
+          </div>
+        </div>
         <ul class="sidebar-nav">
           <li :class="{ active: $store.chat.navSection === 'status' }" @click="$store.chat.navigateTo('status')">
             <span class="sidebar-icon" aria-hidden="true">
@@ -277,7 +314,7 @@
                 <path d="M10 17a2 2 0 0 0 4 0"></path>
               </svg>
             </span>
-            <span class="sidebar-label">Notifications</span>
+            <span class="sidebar-label">Flight Deck</span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'chat' }" @click="$store.chat.navigateTo('chat')" class="sidebar-chat-row">
             <span class="sidebar-icon" aria-hidden="true">
@@ -286,6 +323,7 @@
               </svg>
             </span>
             <span class="sidebar-label">Chat</span>
+            <span class="unread-dot" x-show="$store.chat.unreadChat" x-cloak></span>
             <button type="button" class="sidebar-add-channel-btn" @click.stop="$store.chat.openNewChannelModal()" title="New channel">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 5v14M5 12h14"/>
@@ -296,10 +334,14 @@
             <div class="sidebar-channels">
               <template x-for="ch in $store.chat.channels" :key="ch.record_id">
                 <li class="sidebar-channel-item"
-                  :class="{ active: $store.chat.selectedChannelId === ch.record_id }"
+                  :class="{
+                    active: $store.chat.selectedChannelId === ch.record_id,
+                    'sidebar-channel-unread': $store.chat.isChannelUnread(ch.record_id)
+                  }"
                   @click="$store.chat.selectChannel(ch.record_id)">
                   <span class="channel-hash">#</span>
                   <span class="sidebar-label" x-text="$store.chat.getChannelLabel(ch)"></span>
+                  <span class="unread-dot unread-dot-channel" x-show="$store.chat.isChannelUnread(ch.record_id)" x-cloak></span>
                 </li>
               </template>
             </div>
@@ -312,6 +354,7 @@
               </svg>
             </span>
             <span class="sidebar-label">Tasks</span>
+            <span class="unread-dot" x-show="$store.chat.unreadTasks" x-cloak></span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'calendar' }" @click="$store.chat.navigateTo('calendar')">
             <span class="sidebar-icon" aria-hidden="true">
@@ -331,6 +374,7 @@
               </svg>
             </span>
             <span class="sidebar-label">Docs</span>
+            <span class="unread-dot" x-show="$store.chat.unreadDocs" x-cloak></span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'people' }" @click="$store.chat.navigateTo('people')">
             <span class="sidebar-icon" aria-hidden="true">
@@ -360,6 +404,17 @@
               </svg>
             </span>
             <span class="sidebar-label">Scopes</span>
+          </li>
+          <li x-cloak x-show="$store.chat.hasHarnessLink" :class="{ active: $store.chat.navSection === 'jobs' }" @click="$store.chat.navigateTo('jobs'); $store.chat.loadJobDefinitions();">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                <path d="M12 6V4a2 2 0 0 0-2-2h-0a2 2 0 0 0-2 2v2"></path>
+                <path d="M16 6V4a2 2 0 0 0-2-2"></path>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+              </svg>
+            </span>
+            <span class="sidebar-label">Jobs</span>
           </li>
           <li
             x-cloak
@@ -465,37 +520,177 @@
 
       <div class="main-content">
         <div x-show="$store.chat.navSection === 'status'" class="status-section">
-          <section class="status-changes-section">
-            <div class="status-changes-header">
-              <h3>Notifications</h3>
-              <div class="status-changes-controls">
-                <select x-model="$store.chat.statusTimeRange" @change="$store.chat.refreshStatusRecentChanges()" aria-label="Recent changes time range">
-                  <option value="1h">Last hour</option>
-                  <option value="2h">Last 2 hours</option>
-                  <option value="4h">Last 4 hours</option>
-                  <option value="24h">Last 24 hours</option>
-                </select>
+          <section class="flightdeck-hero" x-data="{ bpIdx: 0, open: false, query: '' }" @click.outside="open = false; query = ''">
+            <h2>Welcome <span x-text="$store.chat.greetingName"></span>, where will we focus today?</h2>
+            <div class="flightdeck-hero-scope-row">
+              <div class="board-picker-typeahead-wrapper flightdeck-typeahead-wrapper">
+                <input
+                  id="flightdeck-scope-select"
+                  class="board-picker-typeahead-input flightdeck-scope-input"
+                  type="text"
+                  x-model="query"
+                  :placeholder="$store.chat.selectedBoardScope?.title || 'Look ahead to a scope...'"
+                  @focus="open = true; bpIdx = 0"
+                  @keydown.escape="open = false; query = ''; $el.blur()"
+                  @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filterFlightDeckScopeOptions(query).length - 1)"
+                  @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
+                  @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectBoard($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id); open = false; query = ''; $el.blur() }"
+                  aria-label="Look ahead scope"
+                />
+                <ul class="board-picker-typeahead-results" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length > 0" x-cloak>
+                  <template x-for="(board, idx) in $store.chat.filterFlightDeckScopeOptions(query)" :key="board.id">
+                    <li
+                      class="board-picker-typeahead-option"
+                      :class="{ 'board-picker-typeahead-active': $store.chat.selectedBoardId === board.id, 'board-picker-typeahead-highlight': idx === bpIdx }"
+                      @click="$store.chat.selectBoard(board.id); open = false; query = ''"
+                      @mouseenter="bpIdx = idx"
+                      x-text="board.label"
+                    ></li>
+                  </template>
+                </ul>
+                <div class="board-picker-typeahead-empty" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length === 0">No scopes match.</div>
               </div>
             </div>
-            <p class="status-changes-empty" x-show="$store.chat.statusRecentChanges.length === 0">
-              No recent changes in this window.
-            </p>
-            <ul class="status-changes-list" x-show="$store.chat.statusRecentChanges.length > 0">
-              <template x-for="item in $store.chat.statusRecentChanges" :key="item.id">
-                <li>
-                  <button type="button" class="status-change-row" @click="$store.chat.openStatusChange(item)">
-                    <span class="status-change-type" x-text="item.recordType"></span>
-                    <span class="status-change-title" x-text="item.title"></span>
-                    <span class="status-change-subtitle" x-text="item.subtitle"></span>
-                    <span class="status-change-time">
-                      <span x-text="$store.chat.formatRelativeTime(item.updatedAt)"></span>
-                      <span x-text="new Date(item.updatedAt).toLocaleString()"></span>
-                    </span>
-                  </button>
-                </li>
-              </template>
-            </ul>
           </section>
+
+          <section class="flightdeck-reports-section" x-show="$store.chat.flightDeckReports.length > 0" x-cloak>
+            <div class="flightdeck-reports-header">
+              <h3>Reports</h3>
+            </div>
+            <div class="flightdeck-reports-grid">
+              <template x-for="report in $store.chat.flightDeckReports" :key="`${report.record_id}:${report.version || 1}`">
+                <article class="flightdeck-report-card" :class="$store.chat.getFlightDeckReportCardClass(report)">
+                  <div class="flightdeck-report-header">
+                    <div>
+                      <p class="flightdeck-report-eyebrow" x-text="$store.chat.getFlightDeckReportTypeLabel(report)"></p>
+                      <h3 x-text="report.title || 'Untitled report'"></h3>
+                    </div>
+                    <span class="flightdeck-report-relative-time" x-text="$store.chat.formatRelativeTime(report.generated_at || report.updated_at)"></span>
+                  </div>
+
+                  <template x-if="report.declaration_type === 'metric'">
+                    <div class="flightdeck-report-metric">
+                      <p class="flightdeck-report-metric-label" x-text="$store.chat.getReportMetricLabel(report)"></p>
+                      <div class="flightdeck-report-metric-value-row">
+                        <strong class="flightdeck-report-metric-value" x-text="$store.chat.formatReportMetricValue(report)"></strong>
+                        <span class="flightdeck-report-metric-unit" x-show="$store.chat.getReportMetricUnit(report)" x-text="$store.chat.getReportMetricUnit(report)"></span>
+                      </div>
+                      <div class="flightdeck-report-trend" x-show="$store.chat.getReportMetricTrend(report)">
+                        <span
+                          class="flightdeck-report-trend-chip"
+                          :class="`flightdeck-report-trend-${$store.chat.getReportMetricTrend(report)?.direction || 'flat'}`"
+                          x-text="$store.chat.formatReportMetricTrend(report)"
+                        ></span>
+                        <span x-text="$store.chat.getReportMetricTrend(report)?.label || ''"></span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template x-if="report.declaration_type === 'timeseries'">
+                    <div class="flightdeck-report-timeseries">
+                      <template x-for="series in $store.chat.getReportTimeseriesSeries(report)" :key="series.key">
+                        <section class="flightdeck-report-series">
+                          <div class="flightdeck-report-series-header">
+                            <strong x-text="series.label"></strong>
+                          </div>
+                          <div class="flightdeck-report-bars">
+                            <template x-for="bar in series.bars" :key="bar.key">
+                              <span class="flightdeck-report-bar" :style="`height:${bar.heightPct}%`" :title="bar.tooltip"></span>
+                            </template>
+                          </div>
+                          <div class="flightdeck-report-axis">
+                            <span x-text="series.firstLabel"></span>
+                            <span x-text="series.lastLabel"></span>
+                          </div>
+                        </section>
+                      </template>
+                    </div>
+                  </template>
+
+                  <template x-if="report.declaration_type === 'table'">
+                    <div class="flightdeck-report-table-wrap">
+                      <table class="flightdeck-report-table">
+                        <thead>
+                          <tr>
+                            <template x-for="column in $store.chat.getReportTableColumns(report)" :key="column.key">
+                              <th :class="`align-${column.align}`" x-text="column.label"></th>
+                            </template>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <template x-for="(row, rowIndex) in $store.chat.getReportTableRows(report)" :key="rowIndex">
+                            <tr>
+                              <template x-for="column in $store.chat.getReportTableColumns(report)" :key="`${rowIndex}:${column.key}`">
+                                <td :class="`align-${column.align}`" x-text="$store.chat.formatReportTableCell(row[column.key])"></td>
+                              </template>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                  </template>
+
+                  <template x-if="report.declaration_type === 'text'">
+                    <p class="flightdeck-report-text-body" x-text="$store.chat.getReportTextBody(report)"></p>
+                  </template>
+
+                  <template x-if="!['metric', 'timeseries', 'table', 'text'].includes(report.declaration_type)">
+                    <p class="flightdeck-report-text-body">Unsupported report payload.</p>
+                  </template>
+
+                  <div class="flightdeck-report-footer">
+                    <span x-show="$store.chat.getReportScopeLabel(report)" x-text="$store.chat.getReportScopeLabel(report)"></span>
+                    <span x-text="$store.chat.formatReportAbsoluteTime(report.generated_at || report.updated_at)"></span>
+                  </div>
+                </article>
+              </template>
+            </div>
+          </section>
+
+          <div class="flightdeck-grid">
+            <section class="status-changes-section">
+              <div class="status-changes-header">
+                <h3>Recent Work</h3>
+                <div class="status-changes-controls">
+                  <select x-model="$store.chat.statusTimeRange" @change="$store.chat.refreshStatusRecentChanges()" aria-label="Recent changes time range">
+                    <option value="1h">Last hour</option>
+                    <option value="2h">Last 2 hours</option>
+                    <option value="4h">Last 4 hours</option>
+                    <option value="24h">Last 24 hours</option>
+                  </select>
+                </div>
+              </div>
+              <p class="status-changes-empty" x-show="$store.chat.statusRecentChanges.length === 0">
+                No recent changes in this window.
+              </p>
+              <ul class="status-changes-list" x-show="$store.chat.statusRecentChanges.length > 0">
+                <template x-for="item in $store.chat.statusRecentChanges" :key="item.id">
+                  <li>
+                    <button type="button" class="status-change-row" @click="$store.chat.openStatusChange(item)">
+                      <span class="status-change-type" x-text="item.recordType"></span>
+                      <span class="status-change-title" x-text="item.title"></span>
+                      <span class="status-change-subtitle" x-text="item.subtitle"></span>
+                      <span class="status-change-time">
+                        <span x-text="$store.chat.formatRelativeTime(item.updatedAt)"></span>
+                        <span x-text="new Date(item.updatedAt).toLocaleString()"></span>
+                      </span>
+                    </button>
+                  </li>
+                </template>
+              </ul>
+            </section>
+
+            <aside class="flightdeck-side-column">
+              <section class="flightdeck-side-panel">
+                <h3>Approvals</h3>
+                <p>Approvals will gather the decisions that need a quick yes, no, or unblock from you. Use this space for sign-offs, delegated reviews, and any work waiting on your call.</p>
+              </section>
+              <section class="flightdeck-side-panel">
+                <h3>Coming Up</h3>
+                <p>Coming Up will hold the next deadlines, meetings, and handoffs tied to your current scope. Treat it as the short runway for what needs attention next.</p>
+              </section>
+            </aside>
+          </div>
         </div>
 
         <!-- ═══ TASKS SECTION ═══ -->
@@ -648,7 +843,7 @@
                   <template x-for="task in col.tasks" :key="task.record_id">
                     <div
                       class="kanban-card"
-                      :class="{ 'summary-card': col.state === 'summary', 'kanban-card-selected': $store.chat.isTaskSelected(task.record_id) }"
+                      :class="{ 'summary-card': col.state === 'summary', 'kanban-card-selected': $store.chat.isTaskSelected(task.record_id), 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
                       :draggable="col.state !== 'summary'"
                       @dragstart="col.state !== 'summary' && $store.chat.handleTaskDragStart($event, task.record_id)"
                       @dragend="$store.chat.handleTaskDragEnd($event)"
@@ -732,7 +927,7 @@
                   <template x-for="task in group.tasks" :key="task.record_id">
                     <div
                       class="task-list-row"
-                      :class="{ 'task-list-row-parent': group.state === 'summary' }"
+                      :class="{ 'task-list-row-parent': group.state === 'summary', 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
                       @click="$store.chat.handleTaskCardClick(task.record_id)"
                     >
                       <template x-if="group.state !== 'summary'">
@@ -760,7 +955,7 @@
                     <!-- Subtask indentation for summary/parent tasks -->
                     <template x-if="group.state === 'summary'">
                       <template x-for="sub in $store.chat.getSubtasks(task.record_id)" :key="sub.record_id">
-                        <div class="task-list-row task-list-row-subtask" @click="$store.chat.handleTaskCardClick(sub.record_id)">
+                        <div class="task-list-row task-list-row-subtask" :class="{ 'task-unread': $store.chat.isTaskUnread(sub.record_id) }" @click="$store.chat.handleTaskCardClick(sub.record_id)">
                           <label class="task-card-select" @click.stop>
                             <input type="checkbox" :checked="$store.chat.isTaskSelected(sub.record_id)" @change="$store.chat.toggleTaskSelection(sub.record_id)" />
                           </label>
@@ -1851,14 +2046,30 @@
                   <template x-if="$store.chat.docVersioningSelectedIndex >= 0 && $store.chat.docDiffMode">
                     <div class="doc-diff-view">
                       <div class="doc-diff-header">
-                        <span class="doc-diff-label" x-text="(() => {
-                          const s = $store.chat;
-                          const selVer = s.docVersionHistory[s.docVersioningSelectedIndex];
-                          const cmpIdx = s.docDiffCompareIndex >= 0 ? s.docDiffCompareIndex : s.docVersioningSelectedIndex + 1;
-                          const cmpVer = s.docVersionHistory[cmpIdx];
-                          return cmpVer ? `v${cmpVer.version} → v${selVer.version}` : `v${selVer.version} (initial)`;
-                        })()"></span>
-                        <span class="doc-diff-hint">Shift-click a version to compare against it</span>
+                        <div class="doc-diff-pickers">
+                          <label class="doc-diff-picker-label">
+                            From
+                            <select class="doc-diff-picker-select"
+                              :value="$store.chat.docDiffFromIndex"
+                              @change="$store.chat.setDocDiffFromIndex(parseInt($event.target.value))">
+                              <option value="-1">(initial)</option>
+                              <template x-for="(ver, idx) in $store.chat.docVersionHistory" :key="'from-'+ver.version">
+                                <option :value="idx" x-text="'v' + ver.version + ' — ' + ver.title" :selected="idx === $store.chat.docDiffFromIndex"></option>
+                              </template>
+                            </select>
+                          </label>
+                          <span class="doc-diff-arrow">&rarr;</span>
+                          <label class="doc-diff-picker-label">
+                            To
+                            <select class="doc-diff-picker-select"
+                              :value="$store.chat.docDiffToIndex"
+                              @change="$store.chat.setDocDiffToIndex(parseInt($event.target.value))">
+                              <template x-for="(ver, idx) in $store.chat.docVersionHistory" :key="'to-'+ver.version">
+                                <option :value="idx" x-text="'v' + ver.version + ' — ' + ver.title" :selected="idx === $store.chat.docDiffToIndex"></option>
+                              </template>
+                            </select>
+                          </label>
+                        </div>
                       </div>
                       <div class="doc-diff-body">
                         <template x-for="(hunk, hi) in $store.chat.docDiffHunks" :key="hi">
@@ -2408,6 +2619,228 @@
               <div class="scope-new-actions schedule-modal-actions">
                 <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeNewScheduleModal()">Cancel</button>
                 <button type="submit" class="scope-save-btn schedule-primary-btn">Create schedule</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Jobs page -->
+        <div x-show="$store.chat.navSection === 'jobs'" class="jobs-section">
+          <div class="jobs-header">
+            <div>
+              <h2>Jobs</h2>
+              <p class="jobs-subtitle">Job definitions and runs managed by the Wingman harness.</p>
+            </div>
+          </div>
+
+          <div class="jobs-tabs">
+            <button class="jobs-tab" :class="{ active: $store.chat.jobsTab === 'definitions' }" @click="$store.chat.jobsTab = 'definitions'">Definitions</button>
+            <button class="jobs-tab" :class="{ active: $store.chat.jobsTab === 'runs' }" @click="$store.chat.jobsTab = 'runs'">Runs</button>
+          </div>
+
+          <div class="trigger-banner trigger-error" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></div>
+          <div class="trigger-banner trigger-success" x-show="$store.chat.jobsSuccess" x-text="$store.chat.jobsSuccess"></div>
+
+          <div x-show="$store.chat.jobsTab === 'definitions'">
+            <div class="jobs-toolbar">
+              <button type="button" class="schedule-primary-btn" @click="$store.chat.openNewJobModal()">+ New Job</button>
+              <button type="button" class="scope-action-btn" @click="$store.chat.loadJobDefinitions()">Refresh</button>
+            </div>
+
+            <p class="settings-field-help" x-show="$store.chat.jobsLoading">Loading job definitions...</p>
+            <p class="settings-field-help" x-show="!$store.chat.jobsLoading && $store.chat.jobDefinitions.length === 0">No job definitions found. Connect a Wingman harness with jobs configured.</p>
+
+            <div class="jobs-list" x-show="$store.chat.jobDefinitions.length > 0">
+              <template x-for="job in $store.chat.jobDefinitions" :key="job.id">
+                <div class="schedule-card" :class="{ 'trigger-disabled': !job.enabled }">
+                  <div class="schedule-card-body">
+                    <div class="schedule-card-main">
+                      <div class="schedule-card-title-row">
+                        <h3 x-text="job.name || job.id"></h3>
+                        <span class="badge" :class="job.enabled ? 'state-done' : 'state-new'" x-text="job.enabled ? 'Enabled' : 'Disabled'"></span>
+                      </div>
+                      <p class="schedule-card-meta">
+                        <span x-text="'ID: ' + job.id"></span>
+                        <span>&#8226;</span>
+                        <span x-text="'Interval: ' + (job.check_interval || 300) + 's'"></span>
+                        <template x-if="job.manager_dir">
+                          <span>
+                            &#8226; Dir: <span x-text="job.manager_dir"></span>
+                          </span>
+                        </template>
+                      </p>
+                      <p class="jobs-goal-text" x-show="job.manager_goal" x-text="job.manager_goal"></p>
+                    </div>
+                    <div class="schedule-card-actions">
+                      <button type="button" class="btn-confirm" @click="$store.chat.openDispatchModal(job.id)">Run</button>
+                      <button type="button" class="scope-action-btn" @click="$store.chat.toggleJobEnabled(job.id)" x-text="job.enabled ? 'Disable' : 'Enable'"></button>
+                      <button type="button" class="scope-action-btn" @click="$store.chat.openEditJobModal(job.id)">Edit</button>
+                      <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete job ' + job.id + '?')) $store.chat.deleteJobDefinition(job.id)">Delete</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div x-show="$store.chat.jobsTab === 'runs'">
+            <div class="jobs-toolbar">
+              <select class="jobs-filter-select" x-model="$store.chat.jobRunsFilterStatus" @change="$store.chat.loadJobRuns()">
+                <option value="">All statuses</option>
+                <option value="running">Running</option>
+                <option value="starting">Starting</option>
+                <option value="complete">Complete</option>
+                <option value="failed">Failed</option>
+                <option value="stopped">Stopped</option>
+              </select>
+              <input type="text" class="jobs-filter-input" placeholder="Filter by job ID..." x-model="$store.chat.jobRunsFilterJobId" @change="$store.chat.loadJobRuns()" />
+              <button type="button" class="scope-action-btn" @click="$store.chat.loadJobRuns()">Refresh</button>
+            </div>
+
+            <p class="settings-field-help" x-show="$store.chat.jobRunsLoading">Loading job runs...</p>
+            <p class="settings-field-help" x-show="!$store.chat.jobRunsLoading && $store.chat.jobRuns.length === 0">No job runs found.</p>
+
+            <div class="jobs-runs-list" x-show="$store.chat.jobRuns.length > 0">
+              <div class="jobs-runs-header-row">
+                <span class="jobs-run-col-status">Status</span>
+                <span class="jobs-run-col-job">Job</span>
+                <span class="jobs-run-col-goal">Goal</span>
+                <span class="jobs-run-col-sessions">Sessions</span>
+                <span class="jobs-run-col-duration">Duration</span>
+                <span class="jobs-run-col-actions">Actions</span>
+              </div>
+              <template x-for="run in $store.chat.jobRuns" :key="run.id">
+                <div class="jobs-run-row">
+                  <span class="jobs-run-col-status">
+                    <span class="badge" :class="$store.chat.jobRunStatusClass(run.status)" x-text="run.status"></span>
+                  </span>
+                  <span class="jobs-run-col-job" x-text="(run.job_id || '').slice(0, 16)"></span>
+                  <span class="jobs-run-col-goal" x-text="run.goal || '-'" :title="run.goal || ''"></span>
+                  <span class="jobs-run-col-sessions">
+                    <template x-if="run.worker_session_id">
+                      <span class="jobs-session-link" :title="'Worker: ' + run.worker_session_id" x-text="'W:' + run.worker_session_id.slice(0,6)"></span>
+                    </template>
+                    <template x-if="run.manager_session_id">
+                      <span class="jobs-session-link" :title="'Manager: ' + run.manager_session_id" x-text="'M:' + run.manager_session_id.slice(0,6)"></span>
+                    </template>
+                    <template x-if="!run.worker_session_id && !run.manager_session_id">
+                      <span>-</span>
+                    </template>
+                  </span>
+                  <span class="jobs-run-col-duration" x-text="$store.chat.formatJobDuration(run)"></span>
+                  <span class="jobs-run-col-actions">
+                    <button
+                      type="button"
+                      class="scope-action-btn scope-delete-btn"
+                      x-show="run.status === 'running' || run.status === 'starting'"
+                      @click="$store.chat.stopJobRun(run.id)"
+                    >Stop</button>
+                  </span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.showNewJobModal" x-cloak @click.self="$store.chat.closeNewJobModal()">
+          <div class="doc-modal-card schedule-modal">
+            <button class="modal-close" type="button" @click="$store.chat.closeNewJobModal()">&times;</button>
+            <h3>New Job Definition</h3>
+            <p class="jobs-subtitle">Define a job with worker and manager prompts.</p>
+            <p class="error-text" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></p>
+            <form class="schedule-create-form" @submit.prevent="$store.chat.createJobDefinition()">
+              <div class="schedule-grid">
+                <div class="scope-field">
+                  <label class="scope-field-label">Job ID</label>
+                  <input type="text" x-model="$store.chat.newJobId" placeholder="my-deploy-job" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Name</label>
+                  <input type="text" x-model="$store.chat.newJobName" placeholder="Deploy Pipeline" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Check Interval (s)</label>
+                  <input type="number" x-model="$store.chat.newJobCheckInterval" min="10" />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Manager Dir</label>
+                  <input type="text" x-model="$store.chat.newJobManagerDir" placeholder="/path/to/project" />
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Worker Prompt</label>
+                  <textarea x-model="$store.chat.newJobWorkerPrompt" rows="3" placeholder="Instructions for the worker agent..."></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Prompt</label>
+                  <textarea x-model="$store.chat.newJobManagerPrompt" rows="3" placeholder="Instructions for the manager agent..."></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Goal</label>
+                  <textarea x-model="$store.chat.newJobManagerGoal" rows="2" placeholder="High-level goal for the manager..."></textarea>
+                </div>
+              </div>
+              <div class="scope-new-actions schedule-modal-actions">
+                <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeNewJobModal()">Cancel</button>
+                <button type="submit" class="scope-save-btn schedule-primary-btn">Create Job</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.showEditJobModal" x-cloak @click.self="$store.chat.closeEditJobModal()">
+          <div class="doc-modal-card schedule-modal">
+            <button class="modal-close" type="button" @click="$store.chat.closeEditJobModal()">&times;</button>
+            <h3>Edit Job Definition</h3>
+            <p class="error-text" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></p>
+            <form class="schedule-create-form" @submit.prevent="$store.chat.saveEditJob()">
+              <div class="schedule-grid">
+                <div class="scope-field">
+                  <label class="scope-field-label">Name</label>
+                  <input type="text" x-model="$store.chat.editJobName" required />
+                </div>
+                <div class="scope-field">
+                  <label class="scope-field-label">Check Interval (s)</label>
+                  <input type="number" x-model="$store.chat.editJobCheckInterval" min="10" />
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Dir</label>
+                  <input type="text" x-model="$store.chat.editJobManagerDir" />
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Worker Prompt</label>
+                  <textarea x-model="$store.chat.editJobWorkerPrompt" rows="3"></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Prompt</label>
+                  <textarea x-model="$store.chat.editJobManagerPrompt" rows="3"></textarea>
+                </div>
+                <div class="scope-field schedule-field-wide">
+                  <label class="scope-field-label">Manager Goal</label>
+                  <textarea x-model="$store.chat.editJobManagerGoal" rows="2"></textarea>
+                </div>
+              </div>
+              <div class="scope-new-actions schedule-modal-actions">
+                <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeEditJobModal()">Cancel</button>
+                <button type="submit" class="scope-save-btn schedule-primary-btn">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.showDispatchModal" x-cloak @click.self="$store.chat.closeDispatchModal()">
+          <div class="doc-modal-card">
+            <button class="modal-close" type="button" @click="$store.chat.closeDispatchModal()">&times;</button>
+            <h3>Dispatch Job Run</h3>
+            <p class="jobs-subtitle">Start a new run for job <strong x-text="$store.chat.dispatchJobId"></strong>.</p>
+            <p class="error-text" x-show="$store.chat.jobsError" x-text="$store.chat.jobsError"></p>
+            <form @submit.prevent="$store.chat.dispatchJob($store.chat.dispatchJobId)">
+              <div class="scope-field" style="margin-bottom: 1rem;">
+                <label class="scope-field-label">Goal (optional)</label>
+                <input type="text" x-model="$store.chat.dispatchGoal" placeholder="What should this run accomplish?" />
+              </div>
+              <div class="scope-new-actions">
+                <button type="button" class="scope-cancel-btn" @click="$store.chat.closeDispatchModal()">Cancel</button>
+                <button type="submit" class="btn-confirm">Dispatch</button>
               </div>
             </form>
           </div>

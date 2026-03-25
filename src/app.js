@@ -28,6 +28,7 @@ import { renderMarkdownToHtml } from './markdown.js';
 import { resolveChannelLabel } from './channel-labels.js';
 import { buildFlightDeckDocumentTitle } from './page-title.js';
 import { getRunningBuildId } from './version-check.js';
+import { filterDocItemsByScope } from './docs-scope-filter.js';
 import {
   CALENDAR_VIEWS,
   buildTaskCalendar,
@@ -670,25 +671,32 @@ export function initApp() {
       });
     },
 
+    get scopeFilteredDocs() {
+      return filterDocItemsByScope(
+        this.documents, this.directories,
+        this.selectedBoardId, this.selectedBoardScope, this.scopesMap,
+      );
+    },
+
     get currentFolderContents() {
       const folderId = this.currentFolderId ?? null;
-      const directories = this.directories
-        .filter((item) => item.record_state !== 'deleted' && (item.parent_directory_id ?? null) === folderId)
+      const { documents, directories } = this.scopeFilteredDocs;
+      const dirs = directories
+        .filter((item) => (item.parent_directory_id ?? null) === folderId)
         .map((item) => ({ type: 'directory', item }))
         .sort((a, b) => String(a.item.title || '').localeCompare(String(b.item.title || '')));
-      const documents = this.documents
-        .filter((item) => item.record_state !== 'deleted' && (item.parent_directory_id ?? null) === folderId)
+      const docs = documents
+        .filter((item) => (item.parent_directory_id ?? null) === folderId)
         .map((item) => ({ type: 'document', item }))
         .sort((a, b) => String(a.item.title || '').localeCompare(String(b.item.title || '')));
-      return [...directories, ...documents];
+      return [...dirs, ...docs];
     },
 
     get filteredDocBrowserItems() {
       const query = String(this.docFilter || '').trim().toLowerCase();
       if (!query) return this.currentFolderContents;
 
-      const activeDirectories = this.directories.filter((item) => item.record_state !== 'deleted');
-      const activeDocuments = this.documents.filter((item) => item.record_state !== 'deleted');
+      const { documents: activeDocuments, directories: activeDirectories } = this.scopeFilteredDocs;
       const childDirsByParent = new Map();
       const childDocsByParent = new Map();
 
