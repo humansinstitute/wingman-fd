@@ -1695,6 +1695,232 @@ button:disabled {
   color: #64748b;
 }
 
+.reports-section {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.reports-workspace {
+  display: grid;
+  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  gap: 1rem;
+  width: 100%;
+  min-height: calc(100vh - 11rem);
+}
+
+.reports-list-pane,
+.reports-detail-pane {
+  min-height: 0;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 24px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.06);
+}
+
+.reports-list-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.reports-list-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 1.15rem 1.15rem 0.9rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.reports-pane-eyebrow {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #2563eb;
+}
+
+.reports-list-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  line-height: 1.15;
+  color: #0f172a;
+}
+
+.reports-list-header p {
+  margin: 0.35rem 0 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.reports-list-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.2rem;
+  padding: 0.38rem 0.65rem;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.95rem;
+  overflow-y: auto;
+}
+
+.reports-list-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.reports-list-row:hover,
+.reports-list-row:focus-visible,
+.reports-list-row-active {
+  border-color: rgba(37, 99, 235, 0.36);
+  box-shadow: 0 16px 28px rgba(37, 99, 235, 0.12);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.reports-list-row-main {
+  min-width: 0;
+}
+
+.reports-list-row-type {
+  margin: 0 0 0.24rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #2563eb;
+}
+
+.reports-list-row h3 {
+  margin: 0;
+  font-size: 0.96rem;
+  line-height: 1.25;
+  color: #0f172a;
+}
+
+.reports-list-row-subtitle {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.reports-list-row-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.6rem;
+  flex-shrink: 0;
+  font-size: 0.74rem;
+  color: #64748b;
+}
+
+.reports-list-open-btn,
+.reports-detail-open-btn {
+  border: none;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.reports-list-open-btn {
+  padding: 0.42rem 0.72rem;
+}
+
+.reports-detail-pane {
+  padding: 1rem;
+  overflow: auto;
+}
+
+.reports-detail-card {
+  min-height: 100%;
+  cursor: zoom-in;
+}
+
+.reports-detail-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.reports-detail-open-btn {
+  padding: 0.58rem 0.9rem;
+  white-space: nowrap;
+}
+
+.reports-empty-panel,
+.reports-empty-detail {
+  display: grid;
+  place-items: center;
+  min-height: 14rem;
+  padding: 1.25rem;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.92rem;
+}
+
+.report-fullscreen-modal {
+  width: min(96vw, 1220px);
+  height: min(92vh, 920px);
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.report-fullscreen-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.25rem 1rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.report-fullscreen-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  line-height: 1.15;
+}
+
+.report-fullscreen-body {
+  flex: 1;
+  min-height: 0;
+  padding: 1.2rem;
+  overflow: auto;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+}
+
+.report-fullscreen-card {
+  max-width: none;
+  min-height: 100%;
+}
+
 .flightdeck-grid {
   display: grid;
   width: 100%;
@@ -1861,6 +2087,10 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .reports-workspace {
+    grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
+  }
+
   .status-section {
     padding-right: 1rem;
   }
@@ -1884,8 +2114,27 @@ button:disabled {
     grid-column: span 1;
   }
 
+  .reports-workspace {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .reports-list-pane {
+    max-height: 24rem;
+  }
+
+  .reports-detail-pane {
+    min-height: 28rem;
+  }
+
   .flightdeck-report-bars {
     height: 7.5rem;
+  }
+
+  .report-fullscreen-modal {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
   }
 
   .status-changes-section,
@@ -3818,6 +4067,85 @@ button:disabled {
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
 }
 
+.record-status-modal {
+  width: min(92vw, 560px);
+  padding: 1rem;
+}
+
+.record-status-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.record-status-header h3 {
+  margin: 0;
+}
+
+.record-status-header p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.record-status-body {
+  margin-top: 1rem;
+}
+
+.record-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.record-status-metric {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted, #f8fafc);
+  padding: 0.8rem 0.9rem;
+}
+
+.record-status-label {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.record-status-metric strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.record-status-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 640px) {
+  .record-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .record-status-actions {
+    flex-direction: column-reverse;
+  }
+
+  .record-status-actions .btn-cancel,
+  .record-status-actions .btn-confirm {
+    width: 100%;
+  }
+}
+
 .new-doc-modal {
   max-width: 400px;
   width: min(92vw, 400px);
@@ -4166,6 +4494,12 @@ button:disabled {
 
 .repair-family-row input {
   margin: 0;
+}
+
+.repair-task-probe {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
 }
 
 .settings-success {
@@ -6097,6 +6431,10 @@ button:disabled {
   gap: 0.5rem;
 }
 
+.task-actions-menu .doc-actions-popover {
+  right: 0;
+}
+
 .task-back-btn {
   display: flex;
   align-items: center;
@@ -6384,6 +6722,40 @@ button:disabled {
   font-size: 0.85rem;
   padding: 0.2rem 0;
   text-decoration: underline;
+}
+
+.task-references-section {
+  margin-top: 0.5rem;
+}
+
+.task-references-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.task-reference-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.task-reference-chip:hover {
+  background: var(--border);
+}
+
+.task-reference-type {
+  text-transform: capitalize;
+  color: var(--text-muted, #888);
+  font-size: 0.7rem;
 }
 
 /* ── Comments section (right panel) ── */

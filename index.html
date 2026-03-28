@@ -374,6 +374,17 @@
             <span class="sidebar-label">Docs</span>
             <span class="unread-dot" x-show="$store.chat.unreadDocs" x-cloak></span>
           </li>
+          <li :class="{ active: $store.chat.navSection === 'reports' }" @click="$store.chat.navigateTo('reports')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M4 19h16"></path>
+                <path d="M7 16V9"></path>
+                <path d="M12 16V5"></path>
+                <path d="M17 16v-4"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Reports</span>
+          </li>
           <li :class="{ active: $store.chat.navSection === 'people' }" @click="$store.chat.navigateTo('people')">
             <span class="sidebar-icon" aria-hidden="true">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -557,7 +568,7 @@
             </div>
             <div class="flightdeck-reports-grid">
               <template x-for="report in $store.chat.flightDeckReports" :key="`${report.record_id}:${report.version || 1}`">
-                <article class="flightdeck-report-card" :class="$store.chat.getFlightDeckReportCardClass(report)">
+                <article class="flightdeck-report-card" :class="$store.chat.getFlightDeckReportCardClass(report)" @click="$store.chat.openReportModal(report)" style="cursor:pointer">
                   <div class="flightdeck-report-header">
                     <div>
                       <p class="flightdeck-report-eyebrow" x-text="$store.chat.getFlightDeckReportTypeLabel(report)"></p>
@@ -688,6 +699,156 @@
                 <p>Coming Up will hold the next deadlines, meetings, and handoffs tied to your current scope. Treat it as the short runway for what needs attention next.</p>
               </section>
             </aside>
+          </div>
+        </div>
+
+        <div x-show="$store.chat.navSection === 'reports'" class="reports-section">
+          <div class="reports-workspace">
+            <aside class="reports-list-pane">
+              <div class="reports-list-header">
+                <div>
+                  <p class="reports-pane-eyebrow">Scope reports</p>
+                  <h2 x-text="$store.chat.selectedBoardScope ? $store.chat.selectedBoardLabel : 'All Flight Deck reports'"></h2>
+                  <p x-text="$store.chat.selectedBoardScope ? 'Reports scoped to the current focus and its descendants.' : 'All reports visible on Flight Deck.'"></p>
+                </div>
+                <span class="reports-list-count" x-text="$store.chat.scopedReports.length"></span>
+              </div>
+
+              <div class="reports-empty-panel" x-show="$store.chat.scopedReports.length === 0">
+                No reports for this scope yet.
+              </div>
+
+              <div class="reports-list" x-show="$store.chat.scopedReports.length > 0">
+                <template x-for="report in $store.chat.scopedReports" :key="`${report.record_id}:${report.version || 1}`">
+                  <article
+                    class="reports-list-row"
+                    :class="{ 'reports-list-row-active': $store.chat.selectedReport?.record_id === report.record_id }"
+                    tabindex="0"
+                    role="button"
+                    @click="$store.chat.selectReport(report.record_id)"
+                    @keydown.enter.prevent="$store.chat.selectReport(report.record_id)"
+                  >
+                    <div class="reports-list-row-main">
+                      <p class="reports-list-row-type" x-text="$store.chat.getFlightDeckReportTypeLabel(report)"></p>
+                      <h3 x-text="report.title || 'Untitled report'"></h3>
+                      <p class="reports-list-row-subtitle" x-text="$store.chat.getReportRecentChangeSubtitle(report)"></p>
+                    </div>
+                    <div class="reports-list-row-meta">
+                      <span x-text="$store.chat.formatRelativeTime(report.generated_at || report.updated_at)"></span>
+                      <button
+                        type="button"
+                        class="reports-list-open-btn"
+                        @click.stop="$store.chat.selectReport(report.record_id, { syncRoute: false }); $store.chat.openReportModal(report)"
+                      >
+                        Open
+                      </button>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </aside>
+
+            <section class="reports-detail-pane">
+              <template x-if="$store.chat.selectedReport">
+                <article
+                  class="flightdeck-report-card reports-detail-card"
+                  :class="$store.chat.getFlightDeckReportCardClass($store.chat.selectedReport)"
+                  @click="$store.chat.openReportModal($store.chat.selectedReport)"
+                >
+                  <div class="reports-detail-toolbar">
+                    <div class="flightdeck-report-header">
+                      <div>
+                        <p class="flightdeck-report-eyebrow" x-text="$store.chat.getFlightDeckReportTypeLabel($store.chat.selectedReport)"></p>
+                        <h3 x-text="$store.chat.selectedReport.title || 'Untitled report'"></h3>
+                      </div>
+                      <span class="flightdeck-report-relative-time" x-text="$store.chat.formatRelativeTime($store.chat.selectedReport.generated_at || $store.chat.selectedReport.updated_at)"></span>
+                    </div>
+                    <button type="button" class="reports-detail-open-btn" @click.stop="$store.chat.openReportModal($store.chat.selectedReport)">
+                      Open fullscreen
+                    </button>
+                  </div>
+
+                  <template x-if="$store.chat.selectedReport.declaration_type === 'metric'">
+                    <div class="flightdeck-report-metric">
+                      <p class="flightdeck-report-metric-label" x-text="$store.chat.getReportMetricLabel($store.chat.selectedReport)"></p>
+                      <div class="flightdeck-report-metric-value-row">
+                        <strong class="flightdeck-report-metric-value" x-text="$store.chat.formatReportMetricValue($store.chat.selectedReport)"></strong>
+                        <span class="flightdeck-report-metric-unit" x-show="$store.chat.getReportMetricUnit($store.chat.selectedReport)" x-text="$store.chat.getReportMetricUnit($store.chat.selectedReport)"></span>
+                      </div>
+                      <div class="flightdeck-report-trend" x-show="$store.chat.getReportMetricTrend($store.chat.selectedReport)">
+                        <span
+                          class="flightdeck-report-trend-chip"
+                          :class="`flightdeck-report-trend-${$store.chat.getReportMetricTrend($store.chat.selectedReport)?.direction || 'flat'}`"
+                          x-text="$store.chat.formatReportMetricTrend($store.chat.selectedReport)"
+                        ></span>
+                        <span x-text="$store.chat.getReportMetricTrend($store.chat.selectedReport)?.label || ''"></span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template x-if="$store.chat.selectedReport.declaration_type === 'timeseries'">
+                    <div class="flightdeck-report-timeseries">
+                      <template x-for="series in $store.chat.getReportTimeseriesSeries($store.chat.selectedReport)" :key="series.key">
+                        <section class="flightdeck-report-series">
+                          <div class="flightdeck-report-series-header">
+                            <strong x-text="series.label"></strong>
+                          </div>
+                          <div class="flightdeck-report-bars">
+                            <template x-for="bar in series.bars" :key="bar.key">
+                              <span class="flightdeck-report-bar" :style="`height:${bar.heightPct}%`" :title="bar.tooltip"></span>
+                            </template>
+                          </div>
+                          <div class="flightdeck-report-axis">
+                            <span x-text="series.firstLabel"></span>
+                            <span x-text="series.lastLabel"></span>
+                          </div>
+                        </section>
+                      </template>
+                    </div>
+                  </template>
+
+                  <template x-if="$store.chat.selectedReport.declaration_type === 'table'">
+                    <div class="flightdeck-report-table-wrap">
+                      <table class="flightdeck-report-table">
+                        <thead>
+                          <tr>
+                            <template x-for="column in $store.chat.getReportTableColumns($store.chat.selectedReport)" :key="column.key">
+                              <th :class="`align-${column.align}`" x-text="column.label"></th>
+                            </template>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <template x-for="(row, rowIndex) in $store.chat.getReportTableRows($store.chat.selectedReport)" :key="rowIndex">
+                            <tr>
+                              <template x-for="column in $store.chat.getReportTableColumns($store.chat.selectedReport)" :key="`${rowIndex}:${column.key}`">
+                                <td :class="`align-${column.align}`" x-text="$store.chat.formatReportTableCell(row[column.key])"></td>
+                              </template>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                  </template>
+
+                  <template x-if="$store.chat.selectedReport.declaration_type === 'text'">
+                    <p class="flightdeck-report-text-body" x-text="$store.chat.getReportTextBody($store.chat.selectedReport)"></p>
+                  </template>
+
+                  <template x-if="!['metric', 'timeseries', 'table', 'text'].includes($store.chat.selectedReport.declaration_type)">
+                    <p class="flightdeck-report-text-body">Unsupported report payload.</p>
+                  </template>
+
+                  <div class="flightdeck-report-footer">
+                    <span x-show="$store.chat.getReportScopeLabel($store.chat.selectedReport)" x-text="$store.chat.getReportScopeLabel($store.chat.selectedReport)"></span>
+                    <span x-text="$store.chat.formatReportAbsoluteTime($store.chat.selectedReport.generated_at || $store.chat.selectedReport.updated_at)"></span>
+                  </div>
+                </article>
+              </template>
+
+              <div class="reports-empty-detail" x-show="!$store.chat.selectedReport">
+                Select a report to inspect it.
+              </div>
+            </section>
           </div>
         </div>
 
@@ -1001,7 +1162,22 @@
                     @click="$store.chat.copyTaskLink($store.chat.editingTask.record_id)"
                     x-text="$store.chat.copiedTaskLinkId === $store.chat.editingTask.record_id ? 'Copied link' : 'Copy link'"
                   ></button>
-                  <button type="button" class="task-delete-btn" @click="if(confirm('Delete this task?')) $store.chat.deleteTask($store.chat.editingTask.record_id)">Delete</button>
+                  <div class="doc-actions-menu task-actions-menu" x-data="{ open: false }" @click.outside="open = false">
+                    <button type="button" class="doc-actions-toggle" title="More actions" aria-label="More actions" @click="open = !open">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="12" cy="5" r="1.8"></circle>
+                        <circle cx="12" cy="12" r="1.8"></circle>
+                        <circle cx="12" cy="19" r="1.8"></circle>
+                      </svg>
+                    </button>
+                    <div class="doc-actions-popover" x-show="open" x-cloak x-transition>
+                      <button
+                        type="button"
+                        @click="$store.chat.openRecordStatusModal({ familyId: 'task', recordId: $store.chat.editingTask.record_id, label: $store.chat.editingTask.title || 'Task' }); open = false"
+                      >Check status</button>
+                      <button type="button" class="doc-actions-delete" @click="if(confirm('Delete this task?')) $store.chat.deleteTask($store.chat.editingTask.record_id); open = false">Delete task</button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1226,6 +1402,22 @@
                         @click="$store.chat.openTaskDetail($store.chat.editingTask.parent_task_id)"
                         x-text="($store.chat.tasks.find(t => t.record_id === $store.chat.editingTask.parent_task_id) || {}).title || 'Unknown'">
                       </button>
+                    </div>
+                  </template>
+
+                  <!-- References -->
+                  <template x-if="($store.chat.editingTask.references || []).length > 0">
+                    <div class="task-references-section">
+                      <label class="task-field-label">References</label>
+                      <div class="task-references-list">
+                        <template x-for="ref in $store.chat.editingTask.references" :key="`ref-${ref.type}-${ref.id}`">
+                          <button type="button" class="task-reference-chip"
+                            @click="$store.chat.navigateReference(ref)">
+                            <span class="task-reference-type" x-text="ref.type"></span>
+                            <span x-text="$store.chat.resolveReferenceLabel(ref)"></span>
+                          </button>
+                        </template>
+                      </div>
                     </div>
                   </template>
                 </div>
@@ -1595,6 +1787,10 @@
                   </svg>
                 </button>
                 <div class="doc-actions-popover" x-show="open" x-cloak x-transition>
+                  <button
+                    type="button"
+                    @click="$store.chat.openRecordStatusModal({ familyId: 'directory', recordId: $store.chat.currentFolder.record_id, label: $store.chat.currentFolder.title || 'Folder' }); open = false"
+                  >Check status</button>
                   <button type="button" class="doc-actions-delete" @click="$store.chat.deleteCurrentDirectory(); open = false">Delete folder</button>
                 </div>
               </div>
@@ -1780,6 +1976,10 @@
                         </svg>
                       </button>
                       <div class="doc-actions-popover" x-show="open" x-cloak x-transition>
+                        <button
+                          type="button"
+                          @click="$store.chat.openRecordStatusModal({ familyId: 'document', recordId: $store.chat.selectedDocId, label: $store.chat.docEditorTitle || 'Document' }); open = false"
+                        >Check status</button>
                         <button type="button" @click="$store.chat.toggleDocCommentsVisible(); open = false">
                           <span x-text="$store.chat.docCommentsVisible ? 'Hide comments' : 'Show comments'"></span>
                         </button>
@@ -2149,6 +2349,53 @@
                     <div class="doc-versioning-status">Select a version to preview.</div>
                   </template>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="doc-modal-backdrop" x-show="$store.chat.recordStatusModalOpen" x-cloak @click.self="$store.chat.closeRecordStatusModal()">
+            <div class="doc-modal-card record-status-modal">
+              <div class="record-status-header">
+                <div>
+                  <h3>Record Status</h3>
+                  <p x-text="$store.chat.recordStatusTargetLabel || $store.chat.recordStatusTargetId || 'Record'"></p>
+                </div>
+                <button class="modal-close" type="button" @click="$store.chat.closeRecordStatusModal()">&times;</button>
+              </div>
+
+              <div class="record-status-body">
+                <div class="record-status-grid">
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Family</span>
+                    <strong x-text="$store.chat.getRecordStatusFamilyLabel($store.chat.recordStatusFamilyId)"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Tower versions</span>
+                    <strong x-text="$store.chat.recordStatusTowerVersionCount"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Local copy</span>
+                    <strong x-text="$store.chat.recordStatusLocalPresent ? 'Present' : 'Missing'"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Last Tower update</span>
+                    <strong x-text="$store.chat.recordStatusTowerUpdatedAt ? $store.chat.formatRelativeTime($store.chat.recordStatusTowerUpdatedAt) : 'Unknown'"></strong>
+                  </div>
+                </div>
+
+                <p class="error-text" x-show="$store.chat.recordStatusError" x-text="$store.chat.recordStatusError"></p>
+                <p class="settings-success" x-show="$store.chat.recordStatusNotice" x-text="$store.chat.recordStatusNotice"></p>
+              </div>
+
+              <div class="record-status-actions">
+                <button type="button" class="btn-cancel" @click="$store.chat.checkRecordStatusOnTower()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy">
+                  <span x-show="!$store.chat.recordStatusBusy">Check again</span>
+                  <span x-show="$store.chat.recordStatusBusy">Checking...</span>
+                </button>
+                <button type="button" class="btn-confirm" @click="$store.chat.forceSyncRecordStatusTarget()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy">
+                  <span x-show="!$store.chat.recordStatusSyncBusy">Force sync</span>
+                  <span x-show="$store.chat.recordStatusSyncBusy">Syncing...</span>
+                </button>
               </div>
             </div>
           </div>
@@ -3710,6 +3957,27 @@
                 <span x-show="$store.chat.repairBusy">Restoring...</span>
               </button>
             </div>
+            <div class="repair-task-probe">
+              <label class="settings-field-label" for="repair-task-id">Probe Single Task On Tower</label>
+              <input
+                id="repair-task-id"
+                type="text"
+                x-model="$store.chat.repairTaskIdInput"
+                placeholder="26bf9412-1de7-49be-a167-976fa9e53ffc"
+              />
+              <p class="settings-field-help">Checks whether a specific task exists on Tower for the current workspace. If found but missing locally, Flight Deck force-rebuilds the `Tasks` family.</p>
+              <div class="settings-actions">
+                <button
+                  type="button"
+                  class="btn-cancel"
+                  @click="$store.chat.probeTaskOnTowerAndRepair()"
+                  :disabled="$store.chat.repairBusy || $store.chat.repairTaskProbeBusy"
+                >
+                  <span x-show="!$store.chat.repairTaskProbeBusy">Check Task On Tower</span>
+                  <span x-show="$store.chat.repairTaskProbeBusy">Checking...</span>
+                </button>
+              </div>
+            </div>
           </section>
           </div>
 
@@ -3997,6 +4265,106 @@
             <div class="new-doc-modal-actions">
               <button type="button" class="btn-cancel" @click="$store.chat.closeChannelSettings()">Close</button>
               <button type="button" class="btn-delete-doc" @click="$store.chat.deleteSelectedChannel()">Delete channel</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.reportModalReport" x-cloak @click.self="$store.chat.closeReportModal()">
+          <div class="doc-modal-card report-fullscreen-modal">
+            <div class="report-fullscreen-header">
+              <div>
+                <p class="reports-pane-eyebrow" x-text="$store.chat.reportModalReport ? $store.chat.getFlightDeckReportTypeLabel($store.chat.reportModalReport) : 'Report'"></p>
+                <h3 x-text="$store.chat.reportModalReport?.title || 'Untitled report'"></h3>
+              </div>
+              <button class="modal-close" type="button" @click="$store.chat.closeReportModal()">&times;</button>
+            </div>
+            <div class="report-fullscreen-body">
+              <template x-if="$store.chat.reportModalReport">
+                <article class="flightdeck-report-card report-fullscreen-card" :class="$store.chat.getFlightDeckReportCardClass($store.chat.reportModalReport)">
+                  <div class="flightdeck-report-header">
+                    <div>
+                      <p class="flightdeck-report-eyebrow" x-text="$store.chat.getFlightDeckReportTypeLabel($store.chat.reportModalReport)"></p>
+                      <h3 x-text="$store.chat.reportModalReport.title || 'Untitled report'"></h3>
+                    </div>
+                    <span class="flightdeck-report-relative-time" x-text="$store.chat.formatRelativeTime($store.chat.reportModalReport.generated_at || $store.chat.reportModalReport.updated_at)"></span>
+                  </div>
+
+                  <template x-if="$store.chat.reportModalReport.declaration_type === 'metric'">
+                    <div class="flightdeck-report-metric">
+                      <p class="flightdeck-report-metric-label" x-text="$store.chat.getReportMetricLabel($store.chat.reportModalReport)"></p>
+                      <div class="flightdeck-report-metric-value-row">
+                        <strong class="flightdeck-report-metric-value" x-text="$store.chat.formatReportMetricValue($store.chat.reportModalReport)"></strong>
+                        <span class="flightdeck-report-metric-unit" x-show="$store.chat.getReportMetricUnit($store.chat.reportModalReport)" x-text="$store.chat.getReportMetricUnit($store.chat.reportModalReport)"></span>
+                      </div>
+                      <div class="flightdeck-report-trend" x-show="$store.chat.getReportMetricTrend($store.chat.reportModalReport)">
+                        <span
+                          class="flightdeck-report-trend-chip"
+                          :class="`flightdeck-report-trend-${$store.chat.getReportMetricTrend($store.chat.reportModalReport)?.direction || 'flat'}`"
+                          x-text="$store.chat.formatReportMetricTrend($store.chat.reportModalReport)"
+                        ></span>
+                        <span x-text="$store.chat.getReportMetricTrend($store.chat.reportModalReport)?.label || ''"></span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template x-if="$store.chat.reportModalReport.declaration_type === 'timeseries'">
+                    <div class="flightdeck-report-timeseries">
+                      <template x-for="series in $store.chat.getReportTimeseriesSeries($store.chat.reportModalReport)" :key="series.key">
+                        <section class="flightdeck-report-series">
+                          <div class="flightdeck-report-series-header">
+                            <strong x-text="series.label"></strong>
+                          </div>
+                          <div class="flightdeck-report-bars">
+                            <template x-for="bar in series.bars" :key="bar.key">
+                              <span class="flightdeck-report-bar" :style="`height:${bar.heightPct}%`" :title="bar.tooltip"></span>
+                            </template>
+                          </div>
+                          <div class="flightdeck-report-axis">
+                            <span x-text="series.firstLabel"></span>
+                            <span x-text="series.lastLabel"></span>
+                          </div>
+                        </section>
+                      </template>
+                    </div>
+                  </template>
+
+                  <template x-if="$store.chat.reportModalReport.declaration_type === 'table'">
+                    <div class="flightdeck-report-table-wrap">
+                      <table class="flightdeck-report-table">
+                        <thead>
+                          <tr>
+                            <template x-for="column in $store.chat.getReportTableColumns($store.chat.reportModalReport)" :key="column.key">
+                              <th :class="`align-${column.align}`" x-text="column.label"></th>
+                            </template>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <template x-for="(row, rowIndex) in $store.chat.getReportTableRows($store.chat.reportModalReport)" :key="rowIndex">
+                            <tr>
+                              <template x-for="column in $store.chat.getReportTableColumns($store.chat.reportModalReport)" :key="`${rowIndex}:${column.key}`">
+                                <td :class="`align-${column.align}`" x-text="$store.chat.formatReportTableCell(row[column.key])"></td>
+                              </template>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                  </template>
+
+                  <template x-if="$store.chat.reportModalReport.declaration_type === 'text'">
+                    <p class="flightdeck-report-text-body" x-text="$store.chat.getReportTextBody($store.chat.reportModalReport)"></p>
+                  </template>
+
+                  <template x-if="!['metric', 'timeseries', 'table', 'text'].includes($store.chat.reportModalReport.declaration_type)">
+                    <p class="flightdeck-report-text-body">Unsupported report payload.</p>
+                  </template>
+
+                  <div class="flightdeck-report-footer">
+                    <span x-show="$store.chat.getReportScopeLabel($store.chat.reportModalReport)" x-text="$store.chat.getReportScopeLabel($store.chat.reportModalReport)"></span>
+                    <span x-text="$store.chat.formatReportAbsoluteTime($store.chat.reportModalReport.generated_at || $store.chat.reportModalReport.updated_at)"></span>
+                  </div>
+                </article>
+              </template>
             </div>
           </div>
         </div>

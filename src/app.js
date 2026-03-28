@@ -108,7 +108,7 @@ import {
 } from './translators/tasks.js';
 import { outboundSchedule } from './translators/schedules.js';
 import { outboundComment } from './translators/comments.js';
-import { recordFamilyHash as taskFamilyHash } from './translators/tasks.js';
+import { recordFamilyHash as taskFamilyHash, parseReferencesFromDescription } from './translators/tasks.js';
 import {
   isTaskUnscoped,
   matchesTaskBoardScope,
@@ -261,6 +261,8 @@ export function initApp() {
     chatProfiles: {},
     statusTimeRange: '1h',
     statusRecentChanges: [],
+    reportModalReport: null,
+    selectedReportId: null,
     selectedDocType: null,
     selectedDocId: null,
     selectedDocCommentId: null,
@@ -425,6 +427,19 @@ export function initApp() {
     repairBusy: false,
     repairError: null,
     repairNotice: '',
+    repairTaskIdInput: '',
+    repairTaskProbeBusy: false,
+    recordStatusModalOpen: false,
+    recordStatusFamilyId: '',
+    recordStatusTargetId: '',
+    recordStatusTargetLabel: '',
+    recordStatusBusy: false,
+    recordStatusSyncBusy: false,
+    recordStatusError: null,
+    recordStatusNotice: '',
+    recordStatusTowerVersionCount: 0,
+    recordStatusTowerUpdatedAt: '',
+    recordStatusLocalPresent: false,
     syncQuarantine: [],
     syncQuarantineBusy: false,
     syncQuarantineError: null,
@@ -517,7 +532,7 @@ export function initApp() {
       return ownProfile?.name || getShortNpub(this.session?.npub) || 'there';
     },
 
-    get flightDeckReports() {
+    get scopedReports() {
       const visible = this.reports.filter((report) => {
         if (!report || report.record_state === 'deleted') return false;
         const surface = String(report.surface || report.metadata?.surface || '').trim().toLowerCase();
@@ -536,6 +551,15 @@ export function initApp() {
         const rightTs = Date.parse(right.generated_at || right.updated_at || 0) || 0;
         return rightTs - leftTs;
       });
+    },
+
+    get flightDeckReports() {
+      return this.scopedReports;
+    },
+
+    get selectedReport() {
+      if (!this.scopedReports.length) return null;
+      return this.scopedReports.find((report) => report.record_id === this.selectedReportId) || this.scopedReports[0];
     },
 
     get avatarUrl() {
@@ -1215,6 +1239,7 @@ export function initApp() {
           case 'schedules': return 'schedules';
           case 'chat': return 'chat';
           case 'docs': return 'docs';
+          case 'reports': return 'reports';
           case 'people': return 'people';
           case 'scopes': return 'scopes';
           case 'settings': return 'settings';
@@ -1240,6 +1265,9 @@ export function initApp() {
         }
         if (this.docVersioningOpen) url.searchParams.set('versioning', '1');
         if (this.selectedDocCommentId) url.searchParams.set('commentid', this.selectedDocCommentId);
+      } else if (this.navSection === 'reports') {
+        if (this.selectedBoardId) url.searchParams.set('scopeid', this.selectedBoardId);
+        if (this.selectedReport?.record_id) url.searchParams.set('reportid', this.selectedReport.record_id);
       } else if (this.navSection === 'tasks' || this.navSection === 'calendar') {
         if (this.selectedBoardId) url.searchParams.set('scopeid', this.selectedBoardId);
         if (this.showBoardDescendantTasks) url.searchParams.set('descendants', '1');
@@ -1305,6 +1333,14 @@ export function initApp() {
             this.currentFolderId = null;
             this.loadDocEditorFromSelection();
           }
+        } else if (route.section === 'reports') {
+          this.selectedBoardId = route.params.scopeid
+            || route.params.groupid
+            || this.readStoredTaskBoardId()
+            || this.preferredTaskBoardId;
+          this.validateSelectedBoardId();
+          this.persistSelectedBoardId(this.selectedBoardId);
+          this.selectedReportId = route.params.reportid || this.selectedReport?.record_id || null;
         } else if (route.section === 'tasks' || route.section === 'calendar') {
           this.selectedBoardId = route.params.scopeid
             || route.params.groupid
@@ -1567,7 +1603,7 @@ export function initApp() {
       if (section === 'chat' || section === 'docs') {
         this.markSectionRead(section);
       }
-      if (section === 'tasks' || section === 'calendar') {
+      if (section === 'tasks' || section === 'calendar' || section === 'reports') {
         this.validateSelectedBoardId();
         this.normalizeTaskFilterTags();
       }
@@ -1587,6 +1623,9 @@ export function initApp() {
       }
       if (section === 'status') {
         this.refreshStatusRecentChanges();
+      }
+      if (section === 'reports' && !this.selectedReportId) {
+        this.selectedReportId = this.selectedReport?.record_id || null;
       }
       if (options.syncRoute !== false) this.syncRoute();
       this.ensureBackgroundSync(true);
@@ -1638,6 +1677,9 @@ export function initApp() {
         String(report?.declaration_type || ''),
       ].join('|'))) {
         this.reports = nextReports;
+      }
+      if (this.selectedReportId && !this.reports.some((report) => report?.record_id === this.selectedReportId)) {
+        this.selectedReportId = null;
       }
     },
 
@@ -1870,6 +1912,35 @@ export function initApp() {
       return scopeLabel ? `${typeLabel} on ${scopeLabel}` : `${typeLabel} on Flight Deck`;
     },
 
+    selectReport(recordId, options = {}) {
+      if (!recordId) return;
+      const report = this.scopedReports.find((item) => item.record_id === recordId)
+        || this.reports.find((item) => item.record_id === recordId);
+      if (!report) return;
+      this.selectedReportId = report.record_id;
+      if (options.openModal === true) {
+        this.openReportModal(report);
+        return;
+      }
+      if (options.syncRoute !== false && this.navSection === 'reports') this.syncRoute();
+    },
+
+    openReportModal(report) {
+      if (!report) return;
+      this.selectedReportId = report.record_id;
+      this.reportModalReport = report;
+    },
+
+    openReportModalById(recordId) {
+      if (!recordId) return;
+      const report = this.reports.find((r) => r.record_id === recordId);
+      if (report) this.openReportModal(report);
+    },
+
+    closeReportModal() {
+      this.reportModalReport = null;
+    },
+
     async refreshStatusRecentChanges() {
       const sinceIso = new Date(Date.now() - this.getStatusRangeMs()).toISOString();
       const messages = await getRecentChatMessagesSince(sinceIso);
@@ -2023,6 +2094,7 @@ export function initApp() {
           this.validateSelectedBoardId();
         }
         this.syncRoute();
+        if (item.recordId) this.openReportModalById(item.recordId);
         return;
       }
       if (item.section === 'docs') {
@@ -2702,6 +2774,7 @@ export function initApp() {
         scope_product_id: this.editingTask.scope_product_id ?? null,
         scope_project_id: this.editingTask.scope_project_id ?? null,
         scope_deliverable_id: this.editingTask.scope_deliverable_id ?? null,
+        references: parseReferencesFromDescription(this.editingTask.description),
         version: nextVersion,
         sync_status: 'pending',
         updated_at: new Date().toISOString(),

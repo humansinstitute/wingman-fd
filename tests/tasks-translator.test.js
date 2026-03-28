@@ -14,6 +14,7 @@ import {
   stateColor,
   formatStateLabel,
   parseTags,
+  parseReferencesFromDescription,
 } from '../src/translators/tasks.js';
 import { APP_NPUB } from '../src/app-identity.js';
 
@@ -294,5 +295,102 @@ describe('task helpers', () => {
     it('trims and lowercases', () => {
       expect(parseTags(' Frontend , UI ')).toEqual(['frontend', 'ui']);
     });
+  });
+
+  describe('parseReferencesFromDescription', () => {
+    it('extracts task references from description text', () => {
+      const desc = 'See @[Build board](mention:task:task-1) for context';
+      expect(parseReferencesFromDescription(desc)).toEqual([
+        { type: 'task', id: 'task-1' },
+      ]);
+    });
+
+    it('extracts doc references', () => {
+      const desc = 'Refer to @[Spec doc](mention:doc:doc-abc)';
+      expect(parseReferencesFromDescription(desc)).toEqual([
+        { type: 'doc', id: 'doc-abc' },
+      ]);
+    });
+
+    it('extracts scope references', () => {
+      const desc = 'Scope: @[Product X](mention:scope:scope-1)';
+      expect(parseReferencesFromDescription(desc)).toEqual([
+        { type: 'scope', id: 'scope-1' },
+      ]);
+    });
+
+    it('extracts multiple references and deduplicates', () => {
+      const desc = '@[Task A](mention:task:t1) and @[Doc B](mention:doc:d1) and @[Task A](mention:task:t1)';
+      expect(parseReferencesFromDescription(desc)).toEqual([
+        { type: 'task', id: 't1' },
+        { type: 'doc', id: 'd1' },
+      ]);
+    });
+
+    it('skips person mentions', () => {
+      const desc = '@[Alice](mention:person:npub1abc) assigned this';
+      expect(parseReferencesFromDescription(desc)).toEqual([]);
+    });
+
+    it('returns empty array for null/empty description', () => {
+      expect(parseReferencesFromDescription(null)).toEqual([]);
+      expect(parseReferencesFromDescription('')).toEqual([]);
+    });
+
+    it('returns empty array when no mention tokens present', () => {
+      expect(parseReferencesFromDescription('Just a plain description')).toEqual([]);
+    });
+  });
+});
+
+describe('task translator — references round-trip', () => {
+  it('inbound preserves references array from payload', async () => {
+    const refs = [
+      { type: 'task', id: 'task-99' },
+      { type: 'doc', id: 'doc-42' },
+    ];
+    const record = {
+      record_id: 'task-refs',
+      owner_npub: 'npub_owner',
+      version: 1,
+      updated_at: '2026-03-28T00:00:00Z',
+      owner_payload: {
+        ciphertext: JSON.stringify({
+          data: {
+            title: 'Task with refs',
+            references: refs,
+          },
+        }),
+      },
+      group_payloads: [],
+    };
+    const row = await inboundTask(record);
+    expect(row.references).toEqual(refs);
+  });
+
+  it('inbound defaults references to empty array when missing', async () => {
+    const record = {
+      record_id: 'task-no-refs',
+      owner_npub: 'npub_owner',
+      version: 1,
+      owner_payload: {
+        ciphertext: JSON.stringify({ data: { title: 'No refs' } }),
+      },
+      group_payloads: [],
+    };
+    const row = await inboundTask(record);
+    expect(row.references).toEqual([]);
+  });
+
+  it('outbound includes references in the envelope payload', async () => {
+    const refs = [{ type: 'task', id: 't-1' }, { type: 'scope', id: 's-1' }];
+    const envelope = await outboundTask({
+      record_id: 'task-out-refs',
+      owner_npub: 'npub_owner',
+      title: 'Outbound refs',
+      references: refs,
+    });
+    const payload = JSON.parse(envelope.owner_payload.ciphertext);
+    expect(payload.data.references).toEqual(refs);
   });
 });

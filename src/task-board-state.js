@@ -295,6 +295,28 @@ export const taskBoardStateMixin = {
     return formatStateLabel(state);
   },
 
+  resolveReferenceLabel(ref) {
+    if (!ref || !ref.type || !ref.id) return ref?.id || 'Unknown';
+    if (ref.type === 'task') {
+      const task = this.tasks.find(t => t.record_id === ref.id);
+      return task?.title || ref.id.slice(0, 8);
+    }
+    if (ref.type === 'doc') {
+      const doc = this.documents.find(d => d.record_id === ref.id);
+      return doc?.title || ref.id.slice(0, 8);
+    }
+    if (ref.type === 'scope') {
+      const scope = this.scopesMap?.get(ref.id);
+      return scope?.title || ref.id.slice(0, 8);
+    }
+    return ref.id.slice(0, 8);
+  },
+
+  navigateReference(ref) {
+    if (!ref || !ref.type || !ref.id) return;
+    this.handleMentionNavigate(ref.type, ref.id);
+  },
+
   // --- board computation ---
 
   get taskBoards() {

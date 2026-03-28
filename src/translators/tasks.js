@@ -189,3 +189,23 @@ export function parseTags(tagsString) {
   if (!tagsString) return [];
   return tagsString.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
 }
+
+const MENTION_TOKEN_RE = /@\[.*?\]\(mention:(\w+):([^)]+)\)/g;
+
+export function parseReferencesFromDescription(description) {
+  if (!description) return [];
+  const seen = new Set();
+  const refs = [];
+  let match;
+  const re = new RegExp(MENTION_TOKEN_RE.source, 'g');
+  while ((match = re.exec(description)) !== null) {
+    const type = match[1];
+    const id = match[2];
+    if (type === 'person') continue;
+    const key = `${type}:${id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    refs.push({ type, id });
+  }
+  return refs;
+}
