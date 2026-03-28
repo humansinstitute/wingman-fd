@@ -3,6 +3,7 @@ import {
   resolveGroupId,
   getScopeAncestorPath,
   formatTaskBoardScopeDisplay,
+  formatFocusedScopeMeta,
   getTaskBoardOptionLabel,
   getTaskBoardSearchText,
   normalizeTaskRowGroupRefs,
@@ -12,7 +13,10 @@ import {
   computeBoardColumns,
   computeBoardScopedTasks,
   computeFilteredTasks,
+  taskBoardStateMixin,
   UNSCOPED_TASK_BOARD_ID,
+  ALL_TASK_BOARD_ID,
+  RECENT_TASK_BOARD_ID,
   TASK_BOARD_STORAGE_KEY,
   TASK_BOARD_STORAGE_KEY_SUFFIX,
   WEEKDAY_OPTIONS,
@@ -155,6 +159,22 @@ describe('formatTaskBoardScopeDisplay', () => {
   it('handles scope with empty title', () => {
     const scope = { ...product, title: '' };
     expect(formatTaskBoardScopeDisplay(scope, scopesMap)).toBe('Untitled scope (Product)');
+  });
+});
+
+describe('formatFocusedScopeMeta', () => {
+  const scopesMap = buildScopesMap();
+
+  it('returns empty string for null scope', () => {
+    expect(formatFocusedScopeMeta(null, scopesMap)).toBe('');
+  });
+
+  it('returns level only for a root scope', () => {
+    expect(formatFocusedScopeMeta(product, scopesMap)).toBe('Product');
+  });
+
+  it('returns level and trimmed ancestor path for nested scope', () => {
+    expect(formatFocusedScopeMeta(deliverable, scopesMap)).toBe('Deliverable · Product X > Project Y');
   });
 });
 
@@ -407,5 +427,96 @@ describe('computeBoardColumns', () => {
     const done = [{ record_id: 'd1', state: 'done' }];
     const cols = computeBoardColumns([], done, []);
     expect(cols.find((c) => c.state === 'done').tasks).toBe(done);
+  });
+});
+
+// --- flightDeckScopeOptions (mixin) ---
+describe('flightDeckScopeOptions includes virtual boards', () => {
+  function buildMockStore(scopes = [product, project, deliverable], tasks = []) {
+    const scopesMap = buildScopesMap(scopes);
+    const store = {
+      scopes,
+      tasks,
+      scopesMap,
+      boardPickerQuery: '',
+      getScopeAncestorPath(id) { return getScopeAncestorPath(id, scopesMap); },
+      formatTaskBoardScopeDisplay(scope) { return formatTaskBoardScopeDisplay(scope, scopesMap); },
+      getTaskBoardSearchText(id) { return getTaskBoardSearchText(id, scopesMap); },
+    };
+    // Bind mixin getters as regular properties via Object.defineProperties
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(taskBoardStateMixin))) {
+      if (descriptor.get) {
+        Object.defineProperty(store, key, { get: descriptor.get.bind(store), configurable: true });
+      }
+    }
+    return store;
+  }
+
+  it('includes All and Recent in flightDeckScopeOptions', () => {
+    const store = buildMockStore();
+    const options = store.flightDeckScopeOptions;
+    const ids = options.map((o) => o.id);
+    expect(ids).toContain(ALL_TASK_BOARD_ID);
+    expect(ids).toContain(RECENT_TASK_BOARD_ID);
+  });
+
+  it('excludes Unscoped from flightDeckScopeOptions', () => {
+    const unscopedTask = { record_id: 't1', record_state: 'active', scope_id: null };
+    const store = buildMockStore([product], [unscopedTask]);
+    const options = store.flightDeckScopeOptions;
+    const ids = options.map((o) => o.id);
+    expect(ids).not.toContain(UNSCOPED_TASK_BOARD_ID);
+  });
+
+  it('places All and Recent before scope boards', () => {
+    const store = buildMockStore();
+    const options = store.flightDeckScopeOptions;
+    const allIdx = options.findIndex((o) => o.id === ALL_TASK_BOARD_ID);
+    const recentIdx = options.findIndex((o) => o.id === RECENT_TASK_BOARD_ID);
+    const firstScopeIdx = options.findIndex((o) => o.id !== ALL_TASK_BOARD_ID && o.id !== RECENT_TASK_BOARD_ID);
+    expect(allIdx).toBeLessThan(firstScopeIdx);
+    expect(recentIdx).toBeLessThan(firstScopeIdx);
+  });
+
+  it('includes All and Recent in filteredFlightDeckScopeOptions with no query', () => {
+    const store = buildMockStore();
+    const options = store.filteredFlightDeckScopeOptions;
+    const ids = options.map((o) => o.id);
+    expect(ids).toContain(ALL_TASK_BOARD_ID);
+    expect(ids).toContain(RECENT_TASK_BOARD_ID);
+  });
+
+  it('filters All/Recent by search query', () => {
+    const store = buildMockStore();
+    store.boardPickerQuery = 'recent';
+    const options = store.filteredFlightDeckScopeOptions;
+    const ids = options.map((o) => o.id);
+    expect(ids).toContain(RECENT_TASK_BOARD_ID);
+    // All should not match 'recent'
+    expect(ids).not.toContain(ALL_TASK_BOARD_ID);
+  });
+
+  it('filterFlightDeckScopeOptions method includes virtual boards', () => {
+    const store = buildMockStore();
+    const options = store.flightDeckScopeOptions;
+    // Use the method form via the mixin
+    const filtered = taskBoardStateMixin.filterFlightDeckScopeOptions.call(
+      { ...store, flightDeckScopeOptions: options, getTaskBoardSearchText: store.getTaskBoardSearchText },
+      ''
+    );
+    const ids = filtered.map((o) => o.id);
+    expect(ids).toContain(ALL_TASK_BOARD_ID);
+    expect(ids).toContain(RECENT_TASK_BOARD_ID);
+  });
+
+  it('filterFlightDeckScopeOptions method filters by query', () => {
+    const store = buildMockStore();
+    const options = store.flightDeckScopeOptions;
+    const filtered = taskBoardStateMixin.filterFlightDeckScopeOptions.call(
+      { ...store, flightDeckScopeOptions: options, getTaskBoardSearchText: store.getTaskBoardSearchText },
+      'all'
+    );
+    const ids = filtered.map((o) => o.id);
+    expect(ids).toContain(ALL_TASK_BOARD_ID);
   });
 });

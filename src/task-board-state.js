@@ -80,6 +80,13 @@ export function formatTaskBoardScopeDisplay(scope, scopesMap) {
   return ancestorPath ? `${title} (${level}): ${ancestorPath}` : `${title} (${level})`;
 }
 
+export function formatFocusedScopeMeta(scope, scopesMap) {
+  if (!scope?.record_id) return '';
+  const level = levelLabel(scope.level) || 'Scope';
+  const ancestorPath = getScopeAncestorPath(scope.record_id, scopesMap).replace(/\s*>\s*$/, '');
+  return ancestorPath ? `${level} · ${ancestorPath}` : level;
+}
+
 export function getTaskBoardOptionLabel(scopeId, scopesMap) {
   if (scopeId === ALL_TASK_BOARD_ID) return 'All';
   if (scopeId === RECENT_TASK_BOARD_ID) return 'Recent';
@@ -345,6 +352,48 @@ export const taskBoardStateMixin = {
     if (this.selectedBoardIsUnscoped) return 'Unscoped';
     if (!this.selectedBoardScope) return 'Scope board';
     return this.formatTaskBoardScopeDisplay(this.selectedBoardScope);
+  },
+
+  get flightDeckScopeOptions() {
+    return this.taskBoards.filter((board) =>
+      board.level !== 'system' || board.id === ALL_TASK_BOARD_ID || board.id === RECENT_TASK_BOARD_ID
+    );
+  },
+
+  get filteredFlightDeckScopeOptions() {
+    const query = String(this.boardPickerQuery || '').trim().toLowerCase();
+    if (!query) return this.flightDeckScopeOptions;
+    return this.flightDeckScopeOptions.filter((board) => this.getTaskBoardSearchText(board.id).includes(query));
+  },
+
+  filterFlightDeckScopeOptions(query = '') {
+    const needle = String(query || '').trim().toLowerCase();
+    if (!needle) return this.flightDeckScopeOptions;
+    return this.flightDeckScopeOptions.filter((board) => this.getTaskBoardSearchText(board.id).includes(needle));
+  },
+
+  get focusScopeTitle() {
+    if (this.selectedBoardScope) {
+      return String(this.selectedBoardScope.title || '').trim() || 'Untitled scope';
+    }
+    if (this.selectedBoardId === ALL_TASK_BOARD_ID) return 'All work';
+    if (this.selectedBoardId === RECENT_TASK_BOARD_ID) return 'Recent work';
+    if (this.selectedBoardIsUnscoped) return 'Unscoped work';
+    return 'No scope selected';
+  },
+
+  get focusScopeMeta() {
+    if (this.selectedBoardScope) {
+      return formatFocusedScopeMeta(this.selectedBoardScope, this.scopesMap);
+    }
+    if (this.selectedBoardId === ALL_TASK_BOARD_ID) return 'Every scope';
+    if (this.selectedBoardId === RECENT_TASK_BOARD_ID) return 'Tasks updated in the last 24 hours';
+    if (this.selectedBoardIsUnscoped) return 'Tasks without scope assignment';
+    return 'Select a scope to focus the day';
+  },
+
+  get focusScopeSidebarMeta() {
+    return 'Scope';
   },
 
   get canToggleBoardDescendants() {
