@@ -301,4 +301,17 @@ export const unreadStoreMixin = {
     this._unreadTaskItems = { ...this._unreadTaskItems, [taskId]: false };
     this._unreadTasks = hasUnreadTasks(this._unreadTaskItems);
   },
+
+  /**
+   * Mark all tasks as read — advances tasks:nav cursor to now,
+   * which clears every per-task unread indicator at once.
+   */
+  async markAllTasksRead() {
+    const viewerNpub = this.session?.npub;
+    if (!viewerNpub) return;
+
+    await this.markSectionRead('tasks');
+    this._unreadTaskItems = {};
+    this._unreadTasks = false;
+  },
 };

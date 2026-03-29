@@ -125,4 +125,165 @@ describe('image-modal', () => {
     const overlay = document.getElementById('image-preview-overlay');
     expect(overlay).toBeNull();
   });
+
+  // ---- chat feed and thread reply contexts --------------------------------
+
+  it('clicking an image inside a chat feed message opens the modal', () => {
+    const feed = document.createElement('div');
+    feed.className = 'chat-feed';
+    feed.setAttribute('data-chat-feed', '');
+    feed.innerHTML = `
+      <div class="chat-post" data-message-id="msg-1">
+        <div class="chat-post-content">
+          <div class="chat-post-markdown">
+            <span class="md-storage-image-wrap">
+              <img class="md-storage-image" src="https://example.com/chat-photo.png" alt="chat image" />
+            </span>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(feed);
+
+    const img = feed.querySelector('img.md-storage-image');
+    img.click();
+
+    expect(isImageModalOpen()).toBe(true);
+    const previewImg = document.querySelector('.image-preview-img');
+    expect(previewImg.src).toBe('https://example.com/chat-photo.png');
+    expect(previewImg.alt).toBe('chat image');
+  });
+
+  it('clicking an image inside a thread parent message opens the modal', () => {
+    const threadPanel = document.createElement('div');
+    threadPanel.className = 'thread-replies';
+    threadPanel.setAttribute('data-thread-replies', '');
+    threadPanel.innerHTML = `
+      <div class="thread-message" data-thread-message-id="msg-parent">
+        <div class="thread-msg-body">
+          <div class="thread-msg-text">
+            <div class="chat-post-markdown">
+              <span class="md-storage-image-wrap">
+                <img class="md-storage-image" src="https://example.com/thread-parent.png" alt="thread parent image" />
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(threadPanel);
+
+    const img = threadPanel.querySelector('img.md-storage-image');
+    img.click();
+
+    expect(isImageModalOpen()).toBe(true);
+    const previewImg = document.querySelector('.image-preview-img');
+    expect(previewImg.src).toBe('https://example.com/thread-parent.png');
+    expect(previewImg.alt).toBe('thread parent image');
+  });
+
+  it('clicking an image inside a thread reply opens the modal', () => {
+    const threadPanel = document.createElement('div');
+    threadPanel.className = 'thread-replies';
+    threadPanel.setAttribute('data-thread-replies', '');
+    threadPanel.innerHTML = `
+      <div class="thread-message" data-thread-message-id="msg-reply-1">
+        <div class="thread-msg-body">
+          <div class="thread-msg-text">
+            <div class="chat-post-markdown">
+              <span class="md-storage-image-wrap">
+                <img class="md-storage-image" src="https://example.com/reply-photo.png" alt="reply image" />
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(threadPanel);
+
+    const img = threadPanel.querySelector('img.md-storage-image');
+    img.click();
+
+    expect(isImageModalOpen()).toBe(true);
+    const previewImg = document.querySelector('.image-preview-img');
+    expect(previewImg.src).toBe('https://example.com/reply-photo.png');
+    expect(previewImg.alt).toBe('reply image');
+  });
+
+  it('pending storage image inside chat feed does not open modal', () => {
+    const feed = document.createElement('div');
+    feed.className = 'chat-feed';
+    feed.setAttribute('data-chat-feed', '');
+    feed.innerHTML = `
+      <div class="chat-post" data-message-id="msg-2">
+        <div class="chat-post-content">
+          <div class="chat-post-markdown">
+            <span class="md-storage-image-wrap">
+              <img class="md-storage-image md-storage-image-pending" data-storage-object-id="img-pending" alt="loading" />
+            </span>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(feed);
+
+    const img = feed.querySelector('img.md-storage-image');
+    img.click();
+
+    expect(isImageModalOpen()).toBe(false);
+  });
+
+  it('storage image in chat feed opens modal after hydration resolves src', () => {
+    const feed = document.createElement('div');
+    feed.className = 'chat-feed';
+    feed.setAttribute('data-chat-feed', '');
+    feed.innerHTML = `
+      <div class="chat-post" data-message-id="msg-3">
+        <div class="chat-post-content">
+          <div class="chat-post-markdown">
+            <span class="md-storage-image-wrap">
+              <img class="md-storage-image" data-storage-object-id="img-hydrated" data-storage-resolved="true" src="blob:http://localhost/fake-uuid" alt="hydrated" />
+            </span>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(feed);
+
+    const img = feed.querySelector('img.md-storage-image');
+    img.click();
+
+    expect(isImageModalOpen()).toBe(true);
+    const previewImg = document.querySelector('.image-preview-img');
+    expect(previewImg.src).toBe('blob:http://localhost/fake-uuid');
+    expect(previewImg.alt).toBe('hydrated');
+  });
+
+  it('remote image in a thread reply opens modal', () => {
+    const threadPanel = document.createElement('div');
+    threadPanel.className = 'thread-replies';
+    threadPanel.setAttribute('data-thread-replies', '');
+    threadPanel.innerHTML = `
+      <div class="thread-message" data-thread-message-id="msg-reply-2">
+        <div class="thread-msg-body">
+          <div class="thread-msg-text">
+            <div class="chat-post-markdown">
+              <span class="md-storage-image-wrap">
+                <img class="md-storage-image" src="https://cdn.example.com/remote-pic.jpg" alt="remote in thread" />
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(threadPanel);
+
+    const img = threadPanel.querySelector('img.md-storage-image');
+    img.click();
+
+    expect(isImageModalOpen()).toBe(true);
+    const previewImg = document.querySelector('.image-preview-img');
+    expect(previewImg.src).toBe('https://cdn.example.com/remote-pic.jpg');
+    expect(previewImg.alt).toBe('remote in thread');
+  });
 });

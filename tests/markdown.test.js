@@ -50,6 +50,34 @@ describe('renderMarkdownToHtml', () => {
     expect(remoteHtml).toContain('class="md-storage-image"');
   });
 
+  it('chat message with storage image renders clickable markup for modal', () => {
+    const html = renderMarkdownToHtml('Check this out ![screenshot](storage://obj-abc123)');
+    expect(html).toContain('class="md-storage-image md-storage-image-pending"');
+    expect(html).toContain('data-storage-object-id="obj-abc123"');
+    expect(html).toContain('class="md-storage-image-wrap"');
+  });
+
+  it('chat message with remote image renders clickable markup for modal', () => {
+    const html = renderMarkdownToHtml('Look at this ![photo](https://cdn.example.com/pic.jpg)');
+    expect(html).toContain('class="md-storage-image"');
+    expect(html).toContain('src="https://cdn.example.com/pic.jpg"');
+    expect(html).toContain('class="md-storage-image-wrap"');
+  });
+
+  it('thread reply with mixed content and image renders modal-compatible markup', () => {
+    const html = renderMarkdownToHtml([
+      'Here is my reply with an image:',
+      '',
+      '![attachment](storage://thread-img-1)',
+      '',
+      'And some more text after.',
+    ].join('\n'));
+    expect(html).toContain('data-storage-object-id="thread-img-1"');
+    expect(html).toContain('class="md-storage-image md-storage-image-pending"');
+    expect(html).toContain('Here is my reply');
+    expect(html).toContain('And some more text after.');
+  });
+
   it('escapes raw html and strips unsafe javascript links', () => {
     const html = renderMarkdownToHtml([
       '<script>alert(1)</script>',
