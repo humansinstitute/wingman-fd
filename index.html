@@ -1278,11 +1278,7 @@
                     <label class="task-field-label">Scope</label>
                     <template x-if="$store.chat.editingTask.scope_id && !$store.chat.showScopePicker">
                       <div class="scope-picker-selected">
-                        <span class="scope-level-badge" :class="{
-                          'scope-badge-product': $store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level === 'product',
-                          'scope-badge-project': $store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level === 'project',
-                          'scope-badge-deliverable': $store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level === 'deliverable'
-                        }" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level)"></span>
+                        <span class="scope-level-badge" :data-level="$store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level)"></span>
                         <span x-text="$store.chat.getScopeBreadcrumb($store.chat.editingTask.scope_id)"></span>
                         <button type="button" class="scope-clear-btn" @click="$store.chat.clearTaskScope()" :disabled="$store.chat.taskScopeCascadePending" title="Remove scope">x</button>
                       </div>
@@ -1306,11 +1302,7 @@
                             @click="$store.chat.selectScopeForTask(item.record_id)"
                             @mouseenter="scopeIdx = idx"
                           >
-                            <span class="scope-level-badge" :class="{
-                              'scope-badge-product': item.level === 'product',
-                              'scope-badge-project': item.level === 'project',
-                              'scope-badge-deliverable': item.level === 'deliverable'
-                            }" x-text="$store.chat.scopeLevelLabel(item.level)"></span>
+                            <span class="scope-level-badge" :data-level="item.level" x-text="$store.chat.scopeLevelLabel(item.level)"></span>
                             <span x-text="item.title"></span>
                             <span class="scope-typeahead-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
                           </li>
@@ -2453,57 +2445,26 @@
                 @keydown.escape="$store.chat.closeDocScopeModal()"
               />
               <div class="scope-picker-results doc-scope-modal-results">
-                <template x-if="$store.chat.scopePickerResults.product.length > 0">
-                  <div class="scope-picker-group">
-                    <div class="scope-picker-group-label">Product</div>
-                    <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
-                      <button
-                        type="button"
-                        class="scope-picker-option"
-                        :class="{ 'scope-picker-option-selected': $store.chat.docScopeModalSelectedId === item.record_id }"
-                        @click="$store.chat.docScopeModalSelectedId = item.record_id"
-                      >
-                        <span class="scope-level-badge scope-badge-product">Product</span>
-                        <span x-text="item.title"></span>
-                      </button>
-                    </template>
-                  </div>
+                <template x-for="[levelKey, levelScopes] in Object.entries($store.chat.scopePickerResults)" :key="levelKey">
+                  <template x-if="levelScopes.length > 0">
+                    <div class="scope-picker-group">
+                      <div class="scope-picker-group-label" x-text="levelKey.toUpperCase()"></div>
+                      <template x-for="item in levelScopes" :key="item.record_id">
+                        <button
+                          type="button"
+                          class="scope-picker-option"
+                          :class="{ 'scope-picker-option-selected': $store.chat.docScopeModalSelectedId === item.record_id }"
+                          @click="$store.chat.docScopeModalSelectedId = item.record_id"
+                        >
+                          <span class="scope-level-badge" :data-level="levelKey" x-text="levelKey.toUpperCase()"></span>
+                          <span x-text="item.title"></span>
+                          <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </template>
                 </template>
-                <template x-if="$store.chat.scopePickerResults.project.length > 0">
-                  <div class="scope-picker-group">
-                    <div class="scope-picker-group-label">Project</div>
-                    <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
-                      <button
-                        type="button"
-                        class="scope-picker-option"
-                        :class="{ 'scope-picker-option-selected': $store.chat.docScopeModalSelectedId === item.record_id }"
-                        @click="$store.chat.docScopeModalSelectedId = item.record_id"
-                      >
-                        <span class="scope-level-badge scope-badge-project">Project</span>
-                        <span x-text="item.title"></span>
-                        <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
-                      </button>
-                    </template>
-                  </div>
-                </template>
-                <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
-                  <div class="scope-picker-group">
-                    <div class="scope-picker-group-label">Deliverable</div>
-                    <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
-                      <button
-                        type="button"
-                        class="scope-picker-option"
-                        :class="{ 'scope-picker-option-selected': $store.chat.docScopeModalSelectedId === item.record_id }"
-                        @click="$store.chat.docScopeModalSelectedId = item.record_id"
-                      >
-                        <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
-                        <span x-text="item.title"></span>
-                        <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
-                      </button>
-                    </template>
-                  </div>
-                </template>
-                <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">
+                <div class="scope-picker-empty" x-show="$store.chat.scopePickerFlat.length === 0">
                   <p>No scopes found. <a href="/scopes" @click.prevent="$store.chat.navigateTo('scopes')">Create scopes</a> first.</p>
                 </div>
               </div>
@@ -3273,87 +3234,141 @@
         <div x-show="$store.chat.navSection === 'scopes'" class="scopes-section">
           <div class="scopes-header">
             <h2>Scopes</h2>
-            <p class="scopes-subtitle">Organize work into Products, Projects, and Deliverables.</p>
+            <p class="scopes-subtitle">Organize work into a hierarchy of scopes.</p>
           </div>
 
           <!-- New scope form -->
           <div class="scope-create-bar">
             <div class="scope-create-actions">
-              <button type="button" class="scope-add-btn" @click="$store.chat.startNewScope('product')">+ Product</button>
-              <button type="button" class="scope-add-btn" @click="$store.chat.startNewScope('project')">+ Project</button>
-              <button type="button" class="scope-add-btn" @click="$store.chat.startNewScope('deliverable')">+ Deliverable</button>
+              <button type="button" class="scope-add-btn" @click="$store.chat.startNewScope('l1')">+ Scope</button>
             </div>
           </div>
 
           <!-- Scope layout: cards + tree nav -->
           <div class="scope-layout" x-show="$store.chat.scopeTree.length > 0">
 
-            <!-- Cards area -->
+            <!-- Cards area (5-level nested) -->
             <div class="scope-cards">
-              <template x-for="product in $store.chat.scopeTree" :key="product.record_id">
-                <div class="scope-card scope-card-product" :id="'scope-' + product.record_id" x-data="{ expanded: false }">
+              <template x-for="s1 in $store.chat.scopeTree" :key="s1.record_id">
+                <div class="scope-card" :data-level="s1.level" :id="'scope-' + s1.record_id" x-data="{ expanded: false }">
                   <div class="scope-card-header">
-                    <span class="scope-level-badge scope-badge-product">Product</span>
+                    <span class="scope-level-badge" :data-level="s1.level" x-text="$store.chat.scopeLevelLabel(s1.level)"></span>
                     <div class="scope-card-actions">
-                      <button type="button" class="scope-action-btn" @click="$store.chat.startNewScope('project', product.record_id)" title="Add project">+ Project</button>
-                      <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(product.record_id)" title="Edit">Edit</button>
-                      <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this product and its children?')) $store.chat.deleteScope(product.record_id)" title="Delete">Delete</button>
+                      <button x-show="parseInt(s1.level.slice(1)) < 5" type="button" class="scope-action-btn" @click="$store.chat.startNewScope('l' + (parseInt(s1.level.slice(1)) + 1), s1.record_id)" title="Add child">+ Child</button>
+                      <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s1.record_id)" title="Edit">Edit</button>
+                      <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s1.record_id)" title="Delete">Delete</button>
                     </div>
                   </div>
                   <div class="scope-card-clickable" @click="expanded = !expanded">
-                    <h3 class="scope-card-title" x-text="product.title"></h3>
-                    <p class="scope-card-desc" x-show="product.description" x-text="product.description"></p>
-                    <div class="scope-card-meta" x-show="$store.chat.getScopeGroupSummary(product) !== 'No groups'">
+                    <h3 class="scope-card-title" x-text="s1.title"></h3>
+                    <p class="scope-card-desc" x-show="s1.description" x-text="s1.description"></p>
+                    <div class="scope-card-meta" x-show="$store.chat.getScopeGroupSummary(s1) !== 'No groups'">
                       <span class="scope-card-meta-label">Groups:</span>
-                      <span x-text="$store.chat.getScopeGroupSummary(product)"></span>
+                      <span x-text="$store.chat.getScopeGroupSummary(s1)"></span>
                     </div>
-                    <span class="scope-card-expand-hint" x-show="product.projects.length > 0">
-                      <span x-text="expanded ? 'Collapse' : `${product.projects.length} project${product.projects.length === 1 ? '' : 's'}`"></span>
+                    <span class="scope-card-expand-hint" x-show="(s1.children || []).length > 0">
+                      <span x-text="expanded ? 'Collapse' : `${(s1.children || []).length} child${(s1.children || []).length === 1 ? '' : 'ren'}`"></span>
                       <svg :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
                     </span>
                   </div>
 
-                  <!-- Nested projects (collapsed by default) -->
+                  <!-- Level 2 children -->
                   <div x-show="expanded" class="scope-card-children">
-                    <template x-for="project in product.projects" :key="project.record_id">
-                      <div class="scope-card scope-card-project" :id="'scope-' + project.record_id" x-data="{ subExpanded: false }">
+                    <template x-for="s2 in (s1.children || [])" :key="s2.record_id">
+                      <div class="scope-card" :data-level="s2.level" :id="'scope-' + s2.record_id" x-data="{ expanded: false }">
                         <div class="scope-card-header">
-                          <span class="scope-level-badge scope-badge-project">Project</span>
+                          <span class="scope-level-badge" :data-level="s2.level" x-text="$store.chat.scopeLevelLabel(s2.level)"></span>
                           <div class="scope-card-actions">
-                            <button type="button" class="scope-action-btn" @click="$store.chat.startNewScope('deliverable', project.record_id)" title="Add deliverable">+ Deliverable</button>
-                            <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(project.record_id)" title="Edit">Edit</button>
-                            <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this project and its deliverables?')) $store.chat.deleteScope(project.record_id)" title="Delete">Delete</button>
+                            <button x-show="parseInt(s2.level.slice(1)) < 5" type="button" class="scope-action-btn" @click="$store.chat.startNewScope('l' + (parseInt(s2.level.slice(1)) + 1), s2.record_id)" title="Add child">+ Child</button>
+                            <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s2.record_id)" title="Edit">Edit</button>
+                            <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s2.record_id)" title="Delete">Delete</button>
                           </div>
                         </div>
-                        <div class="scope-card-clickable" @click="if (project.deliverables.length > 0) subExpanded = !subExpanded">
-                          <h4 class="scope-card-title" x-text="project.title"></h4>
-                          <p class="scope-card-desc" x-show="project.description" x-text="project.description"></p>
-                          <div class="scope-card-meta" x-show="$store.chat.getScopeGroupSummary(project) !== 'No groups'">
+                        <div class="scope-card-clickable" @click="if ((s2.children || []).length > 0) expanded = !expanded">
+                          <h4 class="scope-card-title" x-text="s2.title"></h4>
+                          <p class="scope-card-desc" x-show="s2.description" x-text="s2.description"></p>
+                          <div class="scope-card-meta" x-show="$store.chat.getScopeGroupSummary(s2) !== 'No groups'">
                             <span class="scope-card-meta-label">Groups:</span>
-                            <span x-text="$store.chat.getScopeGroupSummary(project)"></span>
+                            <span x-text="$store.chat.getScopeGroupSummary(s2)"></span>
                           </div>
-                          <span class="scope-card-expand-hint" x-show="project.deliverables.length > 0">
-                            <span x-text="subExpanded ? 'Collapse' : `${project.deliverables.length} deliverable${project.deliverables.length === 1 ? '' : 's'}`"></span>
-                            <svg :class="{ 'scope-tree-chevron-open': subExpanded }" class="scope-tree-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                          <span class="scope-card-expand-hint" x-show="(s2.children || []).length > 0">
+                            <span x-text="expanded ? 'Collapse' : `${(s2.children || []).length} child${(s2.children || []).length === 1 ? '' : 'ren'}`"></span>
+                            <svg :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
                           </span>
                         </div>
 
-                        <!-- Nested deliverables -->
-                        <div x-show="subExpanded" class="scope-card-children">
-                          <template x-for="del in project.deliverables" :key="del.record_id">
-                            <div class="scope-card scope-card-deliverable" :id="'scope-' + del.record_id">
+                        <!-- Level 3 children -->
+                        <div x-show="expanded" class="scope-card-children">
+                          <template x-for="s3 in (s2.children || [])" :key="s3.record_id">
+                            <div class="scope-card" :data-level="s3.level" :id="'scope-' + s3.record_id" x-data="{ expanded: false }">
                               <div class="scope-card-header">
-                                <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
+                                <span class="scope-level-badge" :data-level="s3.level" x-text="$store.chat.scopeLevelLabel(s3.level)"></span>
                                 <div class="scope-card-actions">
-                                  <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(del.record_id)" title="Edit">Edit</button>
-                                  <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this deliverable?')) $store.chat.deleteScope(del.record_id)" title="Delete">Delete</button>
+                                  <button x-show="parseInt(s3.level.slice(1)) < 5" type="button" class="scope-action-btn" @click="$store.chat.startNewScope('l' + (parseInt(s3.level.slice(1)) + 1), s3.record_id)" title="Add child">+ Child</button>
+                                  <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s3.record_id)" title="Edit">Edit</button>
+                                  <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s3.record_id)" title="Delete">Delete</button>
                                 </div>
                               </div>
-                              <h5 class="scope-card-title" x-text="del.title"></h5>
-                              <p class="scope-card-desc" x-show="del.description" x-text="del.description"></p>
-                              <div class="scope-card-meta" x-show="$store.chat.getScopeGroupSummary(del) !== 'No groups'">
-                                <span class="scope-card-meta-label">Groups:</span>
-                                <span x-text="$store.chat.getScopeGroupSummary(del)"></span>
+                              <div class="scope-card-clickable" @click="if ((s3.children || []).length > 0) expanded = !expanded">
+                                <h5 class="scope-card-title" x-text="s3.title"></h5>
+                                <p class="scope-card-desc" x-show="s3.description" x-text="s3.description"></p>
+                                <div class="scope-card-meta" x-show="$store.chat.getScopeGroupSummary(s3) !== 'No groups'">
+                                  <span class="scope-card-meta-label">Groups:</span>
+                                  <span x-text="$store.chat.getScopeGroupSummary(s3)"></span>
+                                </div>
+                                <span class="scope-card-expand-hint" x-show="(s3.children || []).length > 0">
+                                  <span x-text="expanded ? 'Collapse' : `${(s3.children || []).length} child${(s3.children || []).length === 1 ? '' : 'ren'}`"></span>
+                                  <svg :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </span>
+                              </div>
+
+                              <!-- Level 4 children -->
+                              <div x-show="expanded" class="scope-card-children">
+                                <template x-for="s4 in (s3.children || [])" :key="s4.record_id">
+                                  <div class="scope-card" :data-level="s4.level" :id="'scope-' + s4.record_id" x-data="{ expanded: false }">
+                                    <div class="scope-card-header">
+                                      <span class="scope-level-badge" :data-level="s4.level" x-text="$store.chat.scopeLevelLabel(s4.level)"></span>
+                                      <div class="scope-card-actions">
+                                        <button x-show="parseInt(s4.level.slice(1)) < 5" type="button" class="scope-action-btn" @click="$store.chat.startNewScope('l' + (parseInt(s4.level.slice(1)) + 1), s4.record_id)" title="Add child">+ Child</button>
+                                        <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s4.record_id)" title="Edit">Edit</button>
+                                        <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s4.record_id)" title="Delete">Delete</button>
+                                      </div>
+                                    </div>
+                                    <div class="scope-card-clickable" @click="if ((s4.children || []).length > 0) expanded = !expanded">
+                                      <h5 class="scope-card-title" x-text="s4.title"></h5>
+                                      <p class="scope-card-desc" x-show="s4.description" x-text="s4.description"></p>
+                                      <div class="scope-card-meta" x-show="$store.chat.getScopeGroupSummary(s4) !== 'No groups'">
+                                        <span class="scope-card-meta-label">Groups:</span>
+                                        <span x-text="$store.chat.getScopeGroupSummary(s4)"></span>
+                                      </div>
+                                      <span class="scope-card-expand-hint" x-show="(s4.children || []).length > 0">
+                                        <span x-text="expanded ? 'Collapse' : `${(s4.children || []).length} child${(s4.children || []).length === 1 ? '' : 'ren'}`"></span>
+                                        <svg :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                      </span>
+                                    </div>
+
+                                    <!-- Level 5 children (leaf) -->
+                                    <div x-show="expanded" class="scope-card-children">
+                                      <template x-for="s5 in (s4.children || [])" :key="s5.record_id">
+                                        <div class="scope-card" :data-level="s5.level" :id="'scope-' + s5.record_id">
+                                          <div class="scope-card-header">
+                                            <span class="scope-level-badge" :data-level="s5.level" x-text="$store.chat.scopeLevelLabel(s5.level)"></span>
+                                            <div class="scope-card-actions">
+                                              <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s5.record_id)" title="Edit">Edit</button>
+                                              <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope?')) $store.chat.deleteScope(s5.record_id)" title="Delete">Delete</button>
+                                            </div>
+                                          </div>
+                                          <h5 class="scope-card-title" x-text="s5.title"></h5>
+                                          <p class="scope-card-desc" x-show="s5.description" x-text="s5.description"></p>
+                                          <div class="scope-card-meta" x-show="$store.chat.getScopeGroupSummary(s5) !== 'No groups'">
+                                            <span class="scope-card-meta-label">Groups:</span>
+                                            <span x-text="$store.chat.getScopeGroupSummary(s5)"></span>
+                                          </div>
+                                        </div>
+                                      </template>
+                                    </div>
+                                  </div>
+                                </template>
                               </div>
                             </div>
                           </template>
@@ -3377,39 +3392,69 @@
                 </button>
               </div>
               <ul class="scope-tree-nav-list" x-show="treeOpen">
-                <template x-for="product in $store.chat.scopeTree" :key="'nav-' + product.record_id">
+                <template x-for="n1 in $store.chat.scopeTree" :key="'nav-' + n1.record_id">
                   <li x-data="{ expanded: false }">
                     <button
                       type="button"
-                      class="scope-tree-nav-item scope-tree-nav-product"
-                      :class="{ 'scope-tree-nav-active': $store.chat.scopeNavFocus === product.record_id }"
-                      @click="$store.chat.scopeNavFocus = product.record_id; document.getElementById('scope-' + product.record_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); if (product.projects.length > 0) expanded = !expanded"
+                      class="scope-tree-nav-item" :data-level="n1.level"
+                      :class="{ 'scope-tree-nav-active': $store.chat.scopeNavFocus === n1.record_id }"
+                      @click="$store.chat.scopeNavFocus = n1.record_id; document.getElementById('scope-' + n1.record_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); if ((n1.children || []).length > 0) expanded = !expanded"
                     >
-                      <svg x-show="product.projects.length > 0" :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron-inline" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"></polyline></svg>
-                      <span x-text="product.title"></span>
+                      <svg x-show="(n1.children || []).length > 0" :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron-inline" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                      <span x-text="n1.title"></span>
                     </button>
-                    <ul class="scope-tree-nav-children" x-show="expanded && product.projects.length > 0">
-                      <template x-for="project in product.projects" :key="'nav-' + project.record_id">
-                        <li x-data="{ subExpanded: false }">
+                    <ul class="scope-tree-nav-children" x-show="expanded && (n1.children || []).length > 0">
+                      <template x-for="n2 in (n1.children || [])" :key="'nav-' + n2.record_id">
+                        <li x-data="{ expanded: false }">
                           <button
                             type="button"
-                            class="scope-tree-nav-item scope-tree-nav-project"
-                            :class="{ 'scope-tree-nav-active': $store.chat.scopeNavFocus === project.record_id }"
-                            @click="$store.chat.scopeNavFocus = project.record_id; document.getElementById('scope-' + project.record_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); if (project.deliverables.length > 0) subExpanded = !subExpanded"
+                            class="scope-tree-nav-item" :data-level="n2.level"
+                            :class="{ 'scope-tree-nav-active': $store.chat.scopeNavFocus === n2.record_id }"
+                            @click="$store.chat.scopeNavFocus = n2.record_id; document.getElementById('scope-' + n2.record_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); if ((n2.children || []).length > 0) expanded = !expanded"
                           >
-                            <svg x-show="project.deliverables.length > 0" :class="{ 'scope-tree-chevron-open': subExpanded }" class="scope-tree-chevron-inline" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"></polyline></svg>
-                            <span x-text="project.title"></span>
+                            <svg x-show="(n2.children || []).length > 0" :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron-inline" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                            <span x-text="n2.title"></span>
                           </button>
-                          <ul class="scope-tree-nav-children" x-show="subExpanded && project.deliverables.length > 0">
-                            <template x-for="del in project.deliverables" :key="'nav-' + del.record_id">
-                              <li>
+                          <ul class="scope-tree-nav-children" x-show="expanded && (n2.children || []).length > 0">
+                            <template x-for="n3 in (n2.children || [])" :key="'nav-' + n3.record_id">
+                              <li x-data="{ expanded: false }">
                                 <button
                                   type="button"
-                                  class="scope-tree-nav-item scope-tree-nav-deliverable"
-                                  :class="{ 'scope-tree-nav-active': $store.chat.scopeNavFocus === del.record_id }"
-                                  @click="$store.chat.scopeNavFocus = del.record_id; document.getElementById('scope-' + del.record_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })"
-                                  x-text="del.title"
-                                ></button>
+                                  class="scope-tree-nav-item" :data-level="n3.level"
+                                  :class="{ 'scope-tree-nav-active': $store.chat.scopeNavFocus === n3.record_id }"
+                                  @click="$store.chat.scopeNavFocus = n3.record_id; document.getElementById('scope-' + n3.record_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); if ((n3.children || []).length > 0) expanded = !expanded"
+                                >
+                                  <svg x-show="(n3.children || []).length > 0" :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron-inline" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                                  <span x-text="n3.title"></span>
+                                </button>
+                                <ul class="scope-tree-nav-children" x-show="expanded && (n3.children || []).length > 0">
+                                  <template x-for="n4 in (n3.children || [])" :key="'nav-' + n4.record_id">
+                                    <li x-data="{ expanded: false }">
+                                      <button
+                                        type="button"
+                                        class="scope-tree-nav-item" :data-level="n4.level"
+                                        :class="{ 'scope-tree-nav-active': $store.chat.scopeNavFocus === n4.record_id }"
+                                        @click="$store.chat.scopeNavFocus = n4.record_id; document.getElementById('scope-' + n4.record_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); if ((n4.children || []).length > 0) expanded = !expanded"
+                                      >
+                                        <svg x-show="(n4.children || []).length > 0" :class="{ 'scope-tree-chevron-open': expanded }" class="scope-tree-chevron-inline" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                                        <span x-text="n4.title"></span>
+                                      </button>
+                                      <ul class="scope-tree-nav-children" x-show="expanded && (n4.children || []).length > 0">
+                                        <template x-for="n5 in (n4.children || [])" :key="'nav-' + n5.record_id">
+                                          <li>
+                                            <button
+                                              type="button"
+                                              class="scope-tree-nav-item" :data-level="n5.level"
+                                              :class="{ 'scope-tree-nav-active': $store.chat.scopeNavFocus === n5.record_id }"
+                                              @click="$store.chat.scopeNavFocus = n5.record_id; document.getElementById('scope-' + n5.record_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })"
+                                              x-text="n5.title"
+                                            ></button>
+                                          </li>
+                                        </template>
+                                      </ul>
+                                    </li>
+                                  </template>
+                                </ul>
                               </li>
                             </template>
                           </ul>
@@ -3423,7 +3468,7 @@
           </div>
 
           <div class="scope-empty" x-show="$store.chat.scopeTree.length === 0 && !$store.chat.showNewScopeForm">
-            <p>No scopes yet. Create a Product to start organizing your work.</p>
+            <p>No scopes yet. Create a scope to start organizing your work.</p>
           </div>
 
           <div class="doc-modal-backdrop" x-show="$store.chat.showNewScopeForm || $store.chat.editingScopeId" x-cloak @click.self="$store.chat.showNewScopeForm ? $store.chat.cancelNewScope() : $store.chat.cancelEditScope()">
@@ -3444,14 +3489,16 @@
                 <div class="scope-field">
                   <label class="scope-field-label">Level</label>
                   <select x-model="$store.chat.newScopeLevel" @change="$store.chat.handleNewScopeLevelChange($event.target.value)">
-                    <option value="product">Product</option>
-                    <option value="project">Project</option>
-                    <option value="deliverable">Deliverable</option>
+                    <option value="l1">L1</option>
+                    <option value="l2">L2</option>
+                    <option value="l3">L3</option>
+                    <option value="l4">L4</option>
+                    <option value="l5">L5</option>
                   </select>
                 </div>
-                <template x-if="$store.chat.newScopeLevel !== 'product'">
+                <template x-if="$store.chat.newScopeLevel !== 'l1'">
                   <div class="scope-field">
-                    <label class="scope-field-label" x-text="$store.chat.newScopeLevel === 'project' ? 'Parent Product' : 'Parent Project'"></label>
+                    <label class="scope-field-label">Parent scope</label>
                     <select x-model="$store.chat.newScopeParentId" @change="$store.chat.handleNewScopeParentChange($event.target.value)">
                       <option value="">Select...</option>
                       <template x-for="p in $store.chat.getAvailableParents($store.chat.newScopeLevel)" :key="p.record_id">
@@ -4322,11 +4369,7 @@
               <div class="scope-picker-wrapper">
                 <template x-if="$store.chat.selectedChannel?.scope_id">
                   <div class="scope-picker-selected">
-                    <span class="scope-level-badge" :class="{
-                      'scope-badge-product': $store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level === 'product',
-                      'scope-badge-project': $store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level === 'project',
-                      'scope-badge-deliverable': $store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level === 'deliverable'
-                    }" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level)"></span>
+                    <span class="scope-level-badge" :data-level="$store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.selectedChannel.scope_id)?.level)"></span>
                     <span x-text="$store.chat.getScopeBreadcrumb($store.chat.selectedChannel.scope_id)"></span>
                     <button type="button" class="scope-clear-btn" @click="$store.chat.clearChannelScope()" title="Remove scope">x</button>
                   </div>
@@ -4336,43 +4379,22 @@
                 <div class="scope-picker-popover" x-show="$store.chat.showScopePicker" x-cloak>
                   <input type="text" class="scope-picker-input" x-model="$store.chat.scopePickerQuery" placeholder="Search scopes..." @keydown.escape="$store.chat.closeScopePicker()" />
                   <div class="scope-picker-results">
-                    <template x-if="$store.chat.scopePickerResults.product.length > 0">
-                      <div class="scope-picker-group">
-                        <div class="scope-picker-group-label">Product</div>
-                        <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
-                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForChannel(item.record_id)">
-                            <span class="scope-level-badge scope-badge-product">Product</span>
-                            <span x-text="item.title"></span>
-                          </button>
-                        </template>
-                      </div>
-                    </template>
-                    <template x-if="$store.chat.scopePickerResults.project.length > 0">
-                      <div class="scope-picker-group">
-                        <div class="scope-picker-group-label">Project</div>
-                        <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
-                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForChannel(item.record_id)">
-                            <span class="scope-level-badge scope-badge-project">Project</span>
-                            <span x-text="item.title"></span>
-                            <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
-                          </button>
-                        </template>
-                      </div>
-                    </template>
-                    <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
-                      <div class="scope-picker-group">
-                        <div class="scope-picker-group-label">Deliverable</div>
-                        <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
-                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForChannel(item.record_id)">
-                            <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
-                            <span x-text="item.title"></span>
-                            <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
-                          </button>
-                        </template>
-                      </div>
+                    <template x-for="[levelKey, levelScopes] in Object.entries($store.chat.scopePickerResults)" :key="levelKey">
+                      <template x-if="levelScopes.length > 0">
+                        <div class="scope-picker-group">
+                          <div class="scope-picker-group-label" x-text="levelKey.toUpperCase()"></div>
+                          <template x-for="item in levelScopes" :key="item.record_id">
+                            <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForChannel(item.record_id)">
+                              <span class="scope-level-badge" :data-level="levelKey" x-text="levelKey.toUpperCase()"></span>
+                              <span x-text="item.title"></span>
+                              <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                            </button>
+                          </template>
+                        </div>
+                      </template>
                     </template>
                   </div>
-                  <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">
+                  <div class="scope-picker-empty" x-show="$store.chat.scopePickerFlat.length === 0">
                     <p>No scopes found. <a href="/scopes" @click.prevent="$store.chat.navigateTo('scopes')">Create scopes</a> first.</p>
                   </div>
                 </div>

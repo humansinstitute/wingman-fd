@@ -7558,15 +7558,17 @@ button:disabled {
   font-weight: 600;
 }
 
-.scope-tree-nav-product {
+.scope-tree-nav-item[data-level="l1"] {
   font-weight: 500;
 }
 
-.scope-tree-nav-project {
+.scope-tree-nav-item[data-level="l2"] {
   color: var(--text-muted);
 }
 
-.scope-tree-nav-deliverable {
+.scope-tree-nav-item[data-level="l3"],
+.scope-tree-nav-item[data-level="l4"],
+.scope-tree-nav-item[data-level="l5"] {
   color: var(--text-muted);
   font-size: 0.78rem;
 }
@@ -7603,6 +7605,18 @@ button:disabled {
 .scope-card[data-level="l3"] {
   margin-top: 0.5rem;
   border-left: 3px solid #10b981;
+  background: var(--bg);
+}
+
+.scope-card[data-level="l4"] {
+  margin-top: 0.5rem;
+  border-left: 3px solid #f59e0b;
+  background: var(--bg);
+}
+
+.scope-card[data-level="l5"] {
+  margin-top: 0.5rem;
+  border-left: 3px solid #ec4899;
   background: var(--bg);
 }
 
@@ -7795,19 +7809,29 @@ button:disabled {
   flex-shrink: 0;
 }
 
-.scope-badge-product {
+.scope-level-badge[data-level="l1"] {
   background: #dbeafe;
   color: #1e40af;
 }
 
-.scope-badge-project {
+.scope-level-badge[data-level="l2"] {
   background: #ede9fe;
   color: #5b21b6;
 }
 
-.scope-badge-deliverable {
+.scope-level-badge[data-level="l3"] {
   background: #d1fae5;
   color: #065f46;
+}
+
+.scope-level-badge[data-level="l4"] {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.scope-level-badge[data-level="l5"] {
+  background: #fce7f3;
+  color: #9d174d;
 }
 
 /* Scope picker (on task detail) */
