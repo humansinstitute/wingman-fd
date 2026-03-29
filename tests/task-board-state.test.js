@@ -143,22 +143,22 @@ describe('formatTaskBoardScopeDisplay', () => {
   });
 
   it('formats root-level product', () => {
-    expect(formatTaskBoardScopeDisplay(product, scopesMap)).toBe('Product X (Product)');
+    expect(formatTaskBoardScopeDisplay(product, scopesMap)).toBe('Product X (L1)');
   });
 
   it('formats nested project with ancestor path', () => {
-    expect(formatTaskBoardScopeDisplay(project, scopesMap)).toBe('Project Y (Project): Product X >');
+    expect(formatTaskBoardScopeDisplay(project, scopesMap)).toBe('Project Y (L2): Product X >');
   });
 
   it('formats deeply nested deliverable with ancestor path', () => {
     expect(formatTaskBoardScopeDisplay(deliverable, scopesMap)).toBe(
-      'Deliverable Z (Deliverable): Product X > Project Y >'
+      'Deliverable Z (L3): Product X > Project Y >'
     );
   });
 
   it('handles scope with empty title', () => {
     const scope = { ...product, title: '' };
-    expect(formatTaskBoardScopeDisplay(scope, scopesMap)).toBe('Untitled scope (Product)');
+    expect(formatTaskBoardScopeDisplay(scope, scopesMap)).toBe('Untitled scope (L1)');
   });
 });
 
@@ -170,11 +170,11 @@ describe('formatFocusedScopeMeta', () => {
   });
 
   it('returns level only for a root scope', () => {
-    expect(formatFocusedScopeMeta(product, scopesMap)).toBe('Product');
+    expect(formatFocusedScopeMeta(product, scopesMap)).toBe('L1');
   });
 
   it('returns level and trimmed ancestor path for nested scope', () => {
-    expect(formatFocusedScopeMeta(deliverable, scopesMap)).toBe('Deliverable · Product X > Project Y');
+    expect(formatFocusedScopeMeta(deliverable, scopesMap)).toBe('L3 · Product X > Project Y');
   });
 });
 
@@ -191,7 +191,7 @@ describe('getTaskBoardOptionLabel', () => {
   });
 
   it('returns formatted display for known scope', () => {
-    expect(getTaskBoardOptionLabel('scope-product', scopesMap)).toBe('Product X (Product)');
+    expect(getTaskBoardOptionLabel('scope-product', scopesMap)).toBe('Product X (L1)');
   });
 });
 
@@ -518,5 +518,68 @@ describe('flightDeckScopeOptions includes virtual boards', () => {
     );
     const ids = filtered.map((o) => o.id);
     expect(ids).toContain(ALL_TASK_BOARD_ID);
+  });
+});
+
+// --- sidebar scope picker as single source of scope selection ---
+describe('sidebar scope picker covers all active scopes', () => {
+  function buildMockStore(scopes = [product, project, deliverable], tasks = []) {
+    const scopesMap = buildScopesMap(scopes);
+    const store = {
+      scopes,
+      tasks,
+      scopesMap,
+      boardPickerQuery: '',
+      getScopeAncestorPath(id) { return getScopeAncestorPath(id, scopesMap); },
+      formatTaskBoardScopeDisplay(scope) { return formatTaskBoardScopeDisplay(scope, scopesMap); },
+      getTaskBoardSearchText(id) { return getTaskBoardSearchText(id, scopesMap); },
+    };
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(taskBoardStateMixin))) {
+      if (descriptor.get) {
+        Object.defineProperty(store, key, { get: descriptor.get.bind(store), configurable: true });
+      }
+    }
+    return store;
+  }
+
+  it('includes every active scope from taskBoards (except Unscoped)', () => {
+    const unscopedTask = { record_id: 't1', record_state: 'active', scope_id: null };
+    const store = buildMockStore([product, project, deliverable], [unscopedTask]);
+    const sidebarIds = store.flightDeckScopeOptions.map((o) => o.id);
+    const inlineIds = store.taskBoards.map((o) => o.id);
+
+    // Sidebar should contain every scope board that the inline selector had
+    for (const id of inlineIds) {
+      if (id === UNSCOPED_TASK_BOARD_ID) continue; // Unscoped intentionally excluded
+      expect(sidebarIds).toContain(id);
+    }
+  });
+
+  it('sidebar options include all scope levels (product, project, deliverable)', () => {
+    const store = buildMockStore();
+    const ids = store.flightDeckScopeOptions.map((o) => o.id);
+    expect(ids).toContain(product.record_id);
+    expect(ids).toContain(project.record_id);
+    expect(ids).toContain(deliverable.record_id);
+  });
+
+  it('sidebar filterFlightDeckScopeOptions can find scopes by title', () => {
+    const store = buildMockStore();
+    const filtered = taskBoardStateMixin.filterFlightDeckScopeOptions.call(
+      { ...store, flightDeckScopeOptions: store.flightDeckScopeOptions, getTaskBoardSearchText: store.getTaskBoardSearchText },
+      'Product X'
+    );
+    expect(filtered.length).toBeGreaterThanOrEqual(1);
+    expect(filtered.some((o) => o.id === product.record_id)).toBe(true);
+  });
+
+  it('sidebar filterFlightDeckScopeOptions returns all options with empty query', () => {
+    const store = buildMockStore();
+    const all = store.flightDeckScopeOptions;
+    const filtered = taskBoardStateMixin.filterFlightDeckScopeOptions.call(
+      { ...store, flightDeckScopeOptions: all, getTaskBoardSearchText: store.getTaskBoardSearchText },
+      ''
+    );
+    expect(filtered).toEqual(all);
   });
 });
