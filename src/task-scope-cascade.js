@@ -1,8 +1,10 @@
 export function taskScopeAssignmentChanged(previousTask, nextTask) {
   return (previousTask?.scope_id || null) !== (nextTask?.scope_id || null)
-    || (previousTask?.scope_product_id || null) !== (nextTask?.scope_product_id || null)
-    || (previousTask?.scope_project_id || null) !== (nextTask?.scope_project_id || null)
-    || (previousTask?.scope_deliverable_id || null) !== (nextTask?.scope_deliverable_id || null)
+    || (previousTask?.scope_l1_id || null) !== (nextTask?.scope_l1_id || null)
+    || (previousTask?.scope_l2_id || null) !== (nextTask?.scope_l2_id || null)
+    || (previousTask?.scope_l3_id || null) !== (nextTask?.scope_l3_id || null)
+    || (previousTask?.scope_l4_id || null) !== (nextTask?.scope_l4_id || null)
+    || (previousTask?.scope_l5_id || null) !== (nextTask?.scope_l5_id || null)
     || (previousTask?.board_group_id || null) !== (nextTask?.board_group_id || null)
     || JSON.stringify(previousTask?.group_ids || []) !== JSON.stringify(nextTask?.group_ids || [])
     || JSON.stringify(previousTask?.shares || []) !== JSON.stringify(nextTask?.shares || []);

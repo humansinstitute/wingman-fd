@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { fetchRecordHistory, syncRecords } from '../src/api.js';
 import { syncManagerMixin } from '../src/sync-manager.js';
+import { getSyncFamilyHash } from '../src/sync-families.js';
+
+vi.mock('../src/api.js', () => ({
+  fetchRecordHistory: vi.fn(),
+  syncRecords: vi.fn(),
+}));
 
 // ---------------------------------------------------------------------------
 // Helper: create a fake store with all mixin methods applied
@@ -36,6 +43,23 @@ function createStore(overrides = {}) {
     repairError: null,
     repairNotice: '',
     repairBusy: false,
+    repairTaskIdInput: '',
+    repairTaskProbeBusy: false,
+    recordStatusModalOpen: false,
+    recordStatusFamilyId: '',
+    recordStatusTargetId: '',
+    recordStatusTargetLabel: '',
+    recordStatusBusy: false,
+    recordStatusSyncBusy: false,
+    recordStatusError: null,
+    recordStatusNotice: '',
+    recordStatusTowerVersionCount: 0,
+    recordStatusTowerUpdatedAt: '',
+    recordStatusLocalPresent: false,
+    recordStatusPendingWriteCount: 0,
+    recordStatusWriteGroupRef: '',
+    recordStatusWriteGroupLabel: '',
+    recordStatusWriteGroupKeyLoaded: false,
     syncQuarantineError: null,
     syncQuarantineNotice: '',
     syncQuarantineBusy: false,
@@ -45,6 +69,7 @@ function createStore(overrides = {}) {
     messages: [],
     documents: [],
     directories: [],
+    reports: [],
     tasks: [],
     taskComments: [],
     scopes: [],
@@ -71,6 +96,9 @@ function createStore(overrides = {}) {
     refreshWorkspaceSettings: vi.fn().mockResolvedValue(undefined),
     refreshStatusRecentChanges: vi.fn().mockResolvedValue(undefined),
     ensureTaskBoardScopeSetup: vi.fn().mockResolvedValue(undefined),
+    getEffectiveDocShares: vi.fn((record) => record?.shares || []),
+    patchDirectoryLocal: vi.fn(),
+    patchDocumentLocal: vi.fn(),
     loadDocComments: vi.fn().mockResolvedValue(undefined),
     loadTaskComments: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -436,6 +464,364 @@ describe('restoreSelectedFamiliesFromSuperBased', () => {
     });
     await fn();
     expect(store.repairError).toBe('Select at least one record family.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// probeTaskOnTowerAndRepair
+// ---------------------------------------------------------------------------
+describe('probeTaskOnTowerAndRepair', () => {
+  it('sets error when task id is missing', async () => {
+    const { fn, store } = bindMethod('probeTaskOnTowerAndRepair', {
+      repairTaskIdInput: '',
+    });
+    await fn();
+    expect(store.repairError).toBe('Enter a task ID.');
+  });
+
+  it('reports when a task is not found on Tower', async () => {
+    fetchRecordHistory.mockResolvedValueOnce({ versions: [] });
+    const { fn, store } = bindMethod('probeTaskOnTowerAndRepair', {
+      repairTaskIdInput: 'task-1',
+      session: { npub: 'npub1me' },
+      workspaceOwnerNpub: 'npub1owner',
+      tasks: [],
+    });
+    await fn();
+    expect(store.repairError).toBe('Task not found on Tower for the current workspace/user view.');
+  });
+
+  it('reports success when the task exists on Tower and is already local', async () => {
+    fetchRecordHistory.mockResolvedValueOnce({ versions: [{ version: 1 }] });
+    const { fn, store } = bindMethod('probeTaskOnTowerAndRepair', {
+      repairTaskIdInput: 'task-1',
+      session: { npub: 'npub1me' },
+      workspaceOwnerNpub: 'npub1owner',
+      tasks: [{ record_id: 'task-1' }],
+    });
+    await fn();
+    expect(store.repairNotice).toContain('already present locally');
+  });
+
+  it('rebuilds the task family when the task exists on Tower but is missing locally', async () => {
+    fetchRecordHistory.mockResolvedValueOnce({ versions: [{ version: 1 }, { version: 2 }] });
+    const restoreFamiliesFromSuperBased = vi.fn().mockImplementation(async () => {
+      store.tasks = [{ record_id: 'task-1' }];
+      return { cancelled: false, restored: 1 };
+    });
+    const { fn, store } = bindMethod('probeTaskOnTowerAndRepair', {
+      repairTaskIdInput: 'task-1',
+      session: { npub: 'npub1me' },
+      workspaceOwnerNpub: 'npub1owner',
+      tasks: [],
+      restoreFamiliesFromSuperBased,
+    });
+    await fn();
+    expect(restoreFamiliesFromSuperBased).toHaveBeenCalledWith(['task'], { confirm: false });
+    expect(store.repairNotice).toContain('restored it locally');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// record status modal
+// ---------------------------------------------------------------------------
+describe('record status modal', () => {
+  it('opens and reports when a local task exists on Tower', async () => {
+    fetchRecordHistory.mockResolvedValueOnce({
+      versions: [
+        { version: 1, updated_at: '2026-03-27T10:00:00.000Z' },
+        { version: 2, updated_at: '2026-03-28T11:00:00.000Z' },
+      ],
+    });
+    const { fn, store } = bindMethod('openRecordStatusModal', {
+      session: { npub: 'npub1me' },
+      tasks: [{ record_id: 'task-1' }],
+      getRecordStatusPendingWrites: vi.fn().mockResolvedValue([]),
+    });
+
+    await fn({ familyId: 'task', recordId: 'task-1', label: 'Task One' });
+
+    expect(store.recordStatusModalOpen).toBe(true);
+    expect(store.recordStatusTowerVersionCount).toBe(2);
+    expect(store.recordStatusTowerUpdatedAt).toBe('2026-03-28T11:00:00.000Z');
+    expect(store.recordStatusLocalPresent).toBe(true);
+    expect(store.recordStatusNotice).toContain('local copy is present');
+  });
+
+  it('reports when a record is missing on Tower', async () => {
+    fetchRecordHistory.mockResolvedValueOnce({ versions: [] });
+    const { fn, store } = bindMethod('openRecordStatusModal', {
+      session: { npub: 'npub1me' },
+      documents: [{ record_id: 'doc-1' }],
+      getRecordStatusPendingWrites: vi.fn().mockResolvedValue([]),
+    });
+
+    await fn({ familyId: 'document', recordId: 'doc-1', label: 'Doc One' });
+
+    expect(store.recordStatusNotice).toBe('Doc One is missing on Tower. You can force push this local record.');
+    expect(store.recordStatusTowerVersionCount).toBe(0);
+  });
+
+  it('derives task write groups from the attached scope when the local task row is stale', async () => {
+    fetchRecordHistory.mockResolvedValueOnce({ versions: [] });
+    const { fn, store } = bindMethod('openRecordStatusModal', {
+      session: { npub: 'npub1me' },
+      groups: [{ group_id: 'group-1', name: 'Scope Writers' }],
+      tasks: [{
+        record_id: 'task-1',
+        scope_id: 'scope-1',
+        scope_l1_id: 'scope-1',
+        board_group_id: null,
+        group_ids: [],
+        shares: [],
+      }],
+      buildTaskBoardAssignment: vi.fn().mockReturnValue({
+        scope_id: 'scope-1',
+        scope_l1_id: 'scope-1',
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        board_group_id: 'group-1',
+        group_ids: ['group-1'],
+        shares: [{ type: 'group', group_npub: 'group-1', access: 'write' }],
+      }),
+      getRecordStatusPendingWrites: vi.fn().mockResolvedValue([]),
+      resolveGroupId: vi.fn((groupRef) => groupRef),
+      buildScopeDefaultShares: vi.fn((groupIds = []) => groupIds.map((groupId) => ({
+        type: 'group',
+        group_npub: groupId,
+        access: 'write',
+      }))),
+    });
+
+    await fn({ familyId: 'task', recordId: 'task-1', label: 'Task One' });
+
+    expect(store.recordStatusWriteGroupRef).toBe('group-1');
+    expect(store.recordStatusWriteGroupLabel).toBe('Scope Writers');
+    expect(store.recordStatusNotice).toBe('Task One is missing on Tower. You can force push this local record.');
+  });
+
+  it('force-pushes the current local snapshot plus local comments as fresh v1 records and clears stale pending writes', async () => {
+    syncRecords.mockResolvedValueOnce({ synced: 1, created: 1, updated: 0, rejected: [] });
+    fetchRecordHistory.mockResolvedValueOnce({
+      versions: [{ version: 1, updated_at: '2026-03-28T12:00:00.000Z' }],
+    });
+    const documentFamilyHash = getSyncFamilyHash('document');
+    const commentFamilyHash = getSyncFamilyHash('comment');
+    const getRecordStatusPendingWrites = vi.fn().mockResolvedValue([
+      { row_id: 11, record_id: 'doc-1', record_family_hash: documentFamilyHash, created_at: '2026-03-28T10:00:00.000Z', envelope: { version: 4 } },
+      { row_id: 12, record_id: 'comment-1', record_family_hash: commentFamilyHash, created_at: '2026-03-28T11:00:00.000Z', envelope: { version: 2 } },
+    ]);
+    const getRecordStatusRelatedComments = vi.fn().mockResolvedValue([
+      {
+        record_id: 'comment-1',
+        owner_npub: 'npub1owner',
+        target_record_id: 'doc-1',
+        target_record_family_hash: documentFamilyHash,
+        body: 'hello',
+        attachments: [],
+        parent_comment_id: null,
+      },
+    ]);
+    const removeRecordStatusPendingWrite = vi.fn().mockResolvedValue(undefined);
+    const buildRecordStatusEnvelope = vi.fn().mockResolvedValue({
+      record_id: 'doc-1',
+      record_family_hash: documentFamilyHash,
+      version: 1,
+      previous_version: 0,
+    });
+    const buildRecordStatusCommentEnvelope = vi.fn().mockResolvedValue({
+      record_id: 'comment-1',
+      record_family_hash: commentFamilyHash,
+      version: 1,
+      previous_version: 0,
+    });
+    const markRecordStatusLocalRecordSynced = vi.fn(async function (familyId, localRecord, options = {}) {
+      this.documents = this.documents.map((entry) => entry.record_id === localRecord.record_id
+        ? { ...entry, sync_status: 'synced', version: options.version ?? entry.version }
+        : entry);
+    });
+    const markRecordStatusCommentsSynced = vi.fn().mockResolvedValue(undefined);
+    const { fn, store } = bindMethod('forcePushRecordStatusTarget', {
+      session: { npub: 'npub1me' },
+      recordStatusFamilyId: 'document',
+      recordStatusTargetId: 'doc-1',
+      recordStatusTargetLabel: 'Doc One',
+      recordStatusLocalPresent: true,
+      documents: [{ record_id: 'doc-1', owner_npub: 'npub1owner', group_ids: ['group-1'], shares: ['group-1'], version: 2, sync_status: 'pending' }],
+      recordStatusTowerVersionCount: 0,
+      getRecordStatusPendingWrites,
+      getRecordStatusRelatedComments,
+      removeRecordStatusPendingWrite,
+      buildRecordStatusEnvelope,
+      buildRecordStatusCommentEnvelope,
+      markRecordStatusLocalRecordSynced,
+      markRecordStatusCommentsSynced,
+      checkRecordStatusOnTower: syncManagerMixin.checkRecordStatusOnTower,
+    });
+
+    await fn();
+
+    expect(syncRecords).toHaveBeenCalledWith({
+      owner_npub: 'npub1owner',
+      records: [
+        expect.objectContaining({ record_id: 'doc-1', version: 1, previous_version: 0 }),
+        expect.objectContaining({ record_id: 'comment-1', version: 1, previous_version: 0 }),
+      ],
+    });
+    expect(removeRecordStatusPendingWrite).toHaveBeenCalledWith(11);
+    expect(removeRecordStatusPendingWrite).toHaveBeenCalledWith(12);
+    expect(store.recordStatusNotice).toContain('cleared 2 stale pending writes');
+    expect(store.recordStatusNotice).toContain('Recreated 1 local comment');
+    expect(store.recordStatusLocalPresent).toBe(true);
+    expect(store.documents[0].version).toBe(1);
+  });
+
+  it('force-pushes scoped tasks using recovered scope groups and persists the repaired assignment locally', async () => {
+    syncRecords.mockResolvedValueOnce({ synced: 1, created: 1, updated: 0, rejected: [] });
+    fetchRecordHistory.mockResolvedValueOnce({
+      versions: [{ version: 1, updated_at: '2026-03-28T12:00:00.000Z' }],
+    });
+    const taskFamilyHash = getSyncFamilyHash('task');
+    const getRecordStatusPendingWrites = vi.fn().mockResolvedValue([]);
+    const buildRecordStatusEnvelope = vi.fn().mockResolvedValue({
+      record_id: 'task-1',
+      record_family_hash: taskFamilyHash,
+      version: 1,
+      previous_version: 0,
+    });
+    const buildRecordStatusCommentEnvelope = vi.fn().mockResolvedValue({
+      record_id: 'comment-1',
+      record_family_hash: getSyncFamilyHash('comment'),
+      version: 1,
+      previous_version: 0,
+    });
+    const markRecordStatusLocalRecordSynced = vi.fn(async function (familyId, localRecord, options = {}) {
+      this.tasks = this.tasks.map((entry) => entry.record_id === localRecord.record_id
+        ? { ...localRecord, sync_status: 'synced', version: options.version ?? entry.version }
+        : entry);
+    });
+    const { fn, store } = bindMethod('forcePushRecordStatusTarget', {
+      session: { npub: 'npub1me' },
+      recordStatusFamilyId: 'task',
+      recordStatusTargetId: 'task-1',
+      recordStatusTargetLabel: 'Task One',
+      recordStatusLocalPresent: true,
+      recordStatusTowerVersionCount: 0,
+      groups: [{ group_id: 'group-1', name: 'Scope Writers' }],
+      tasks: [{
+        record_id: 'task-1',
+        owner_npub: 'npub1owner',
+        title: 'Task One',
+        scope_id: 'scope-1',
+        scope_l1_id: 'scope-1',
+        board_group_id: null,
+        group_ids: [],
+        shares: [],
+        version: 3,
+        sync_status: 'pending',
+      }],
+      getRecordStatusPendingWrites,
+      getRecordStatusRelatedComments: vi.fn().mockResolvedValue([{
+        record_id: 'comment-1',
+        owner_npub: 'npub1owner',
+        target_record_id: 'task-1',
+        target_record_family_hash: taskFamilyHash,
+        body: 'hello',
+        attachments: [],
+        parent_comment_id: null,
+      }]),
+      removeRecordStatusPendingWrite: vi.fn().mockResolvedValue(undefined),
+      buildRecordStatusEnvelope,
+      buildRecordStatusCommentEnvelope,
+      markRecordStatusLocalRecordSynced,
+      markRecordStatusCommentsSynced: vi.fn().mockResolvedValue(undefined),
+      checkRecordStatusOnTower: syncManagerMixin.checkRecordStatusOnTower,
+      buildTaskBoardAssignment: vi.fn().mockReturnValue({
+        scope_id: 'scope-1',
+        scope_l1_id: 'scope-1',
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        board_group_id: 'group-1',
+        group_ids: ['group-1'],
+        shares: [{ type: 'group', group_npub: 'group-1', access: 'write' }],
+      }),
+      resolveGroupId: vi.fn((groupRef) => groupRef),
+      buildScopeDefaultShares: vi.fn((groupIds = []) => groupIds.map((groupId) => ({
+        type: 'group',
+        group_npub: groupId,
+        access: 'write',
+      }))),
+    });
+
+    await fn();
+
+    expect(buildRecordStatusEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+      board_group_id: 'group-1',
+      group_ids: ['group-1'],
+    }), 'task', { bootstrap: true });
+    expect(buildRecordStatusCommentEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+      record_id: 'comment-1',
+    }), { targetGroupIds: ['group-1'] });
+    expect(markRecordStatusLocalRecordSynced).toHaveBeenCalledWith('task', expect.objectContaining({
+      board_group_id: 'group-1',
+      group_ids: ['group-1'],
+    }), { version: 1 });
+    expect(store.tasks[0].board_group_id).toBe('group-1');
+    expect(store.tasks[0].group_ids).toEqual(['group-1']);
+  });
+
+  it('bootstraps the current local snapshot when pending writes are missing', async () => {
+    syncRecords.mockResolvedValueOnce({ synced: 1, created: 1, updated: 0, rejected: [] });
+    fetchRecordHistory.mockResolvedValueOnce({
+      versions: [{ version: 1, updated_at: '2026-03-28T12:00:00.000Z' }],
+    });
+    const getRecordStatusPendingWrites = vi.fn().mockResolvedValue([]);
+    const removeRecordStatusPendingWrite = vi.fn().mockResolvedValue(undefined);
+    const buildRecordStatusEnvelope = vi.fn().mockResolvedValue({
+      record_id: 'doc-1',
+      record_family_hash: getSyncFamilyHash('document'),
+      version: 1,
+      previous_version: 0,
+    });
+    const buildRecordStatusCommentEnvelope = vi.fn();
+    const getRecordStatusRelatedComments = vi.fn().mockResolvedValue([]);
+    const markRecordStatusLocalRecordSynced = vi.fn(async function (familyId, localRecord, options = {}) {
+      this.documents = this.documents.map((entry) => entry.record_id === localRecord.record_id
+        ? { ...entry, sync_status: 'synced', version: options.version ?? entry.version }
+        : entry);
+    });
+    const markRecordStatusCommentsSynced = vi.fn().mockResolvedValue(undefined);
+    const { fn, store } = bindMethod('forcePushRecordStatusTarget', {
+      session: { npub: 'npub1me' },
+      recordStatusFamilyId: 'document',
+      recordStatusTargetId: 'doc-1',
+      recordStatusTargetLabel: 'Doc One',
+      recordStatusLocalPresent: true,
+      documents: [{ record_id: 'doc-1', owner_npub: 'npub1owner', title: 'Doc One', content: 'hello', group_ids: ['group-1'], shares: ['group-1'], version: 3, sync_status: 'pending' }],
+      recordStatusTowerVersionCount: 0,
+      getRecordStatusPendingWrites,
+      getRecordStatusRelatedComments,
+      removeRecordStatusPendingWrite,
+      buildRecordStatusEnvelope,
+      buildRecordStatusCommentEnvelope,
+      markRecordStatusLocalRecordSynced,
+      markRecordStatusCommentsSynced,
+      checkRecordStatusOnTower: syncManagerMixin.checkRecordStatusOnTower,
+    });
+
+    await fn();
+
+    expect(syncRecords).toHaveBeenCalledWith({
+      owner_npub: 'npub1owner',
+      records: [expect.objectContaining({ record_id: 'doc-1', version: 1, previous_version: 0 })],
+    });
+    expect(removeRecordStatusPendingWrite).not.toHaveBeenCalled();
+    expect(store.documents[0].version).toBe(1);
+    expect(store.recordStatusNotice).toContain('new Documents version 1');
   });
 });
 

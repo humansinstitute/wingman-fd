@@ -346,6 +346,9 @@ export function initApp() {
 
     currentFolderId: null,
     docFilter: '',
+    docSelectionMode: false,
+    selectedDocIds: [],
+    bulkDocBusy: false,
     docEditorTitle: '',
     docEditorContent: '',
     docEditorShares: [],
@@ -354,6 +357,12 @@ export function initApp() {
     docEditorSharesDirty: false,
     docShareTargetType: '',
     docShareTargetId: '',
+    showDocScopeModal: false,
+    docScopeTargetType: '',
+    docScopeTargetId: '',
+    docScopeTargetIds: [],
+    docScopeModalSelectedId: null,
+    docScopeModalSubmitting: false,
     docEditorBlocks: [],
     docEditingBlockIndex: -1,
     docBlockBuffer: '',
@@ -371,6 +380,11 @@ export function initApp() {
     docAutosaveTimer: null,
     docAutosaveState: 'saved',
     showDocShareModal: false,
+    docMoveScopePrompt: null,
+    showDocMoveModal: false,
+    docMoveRecordIds: [],
+    docMoveDirectoryQuery: '',
+    docMoveModalSubmitting: false,
     newDocModalType: null,
     newDocModalTitle: '',
     newDocModalSubmitting: false,
@@ -442,6 +456,10 @@ export function initApp() {
     recordStatusTowerVersionCount: 0,
     recordStatusTowerUpdatedAt: '',
     recordStatusLocalPresent: false,
+    recordStatusPendingWriteCount: 0,
+    recordStatusWriteGroupRef: '',
+    recordStatusWriteGroupLabel: '',
+    recordStatusWriteGroupKeyLoaded: false,
     syncQuarantine: [],
     syncQuarantineBusy: false,
     syncQuarantineError: null,
@@ -776,6 +794,62 @@ export function initApp() {
 
       walk(this.currentFolderId ?? null);
       return rows;
+    },
+
+    get visibleDocBrowserIds() {
+      return this.filteredDocBrowserItems
+        .filter((row) => row.type === 'document')
+        .map((row) => row.item.record_id);
+    },
+
+    get selectedDocCount() {
+      return this.selectedDocIds.length;
+    },
+
+    get activeDocMoveItems() {
+      const selectedIds = new Set(this.docMoveRecordIds);
+      return this.documents
+        .filter((item) => selectedIds.has(item.record_id) && item.record_state !== 'deleted');
+    },
+
+    get docMoveSourceParentIds() {
+      return [...new Set(this.activeDocMoveItems.map((item) => item.parent_directory_id ?? null))];
+    },
+
+    get docMoveDirectoryOptions() {
+      const query = String(this.docMoveDirectoryQuery || '').trim().toLowerCase();
+      const activeDirectories = this.directories.filter((item) => item.record_state !== 'deleted');
+      const childDirsByParent = new Map();
+      for (const directory of activeDirectories) {
+        const key = directory.parent_directory_id ?? '__root__';
+        const list = childDirsByParent.get(key) ?? [];
+        list.push(directory);
+        childDirsByParent.set(key, list);
+      }
+
+      const options = [{ record_id: null, title: 'Docs', breadcrumb: 'Root', depth: 0 }];
+      const walk = (parentId = null, depth = 1) => {
+        const key = parentId ?? '__root__';
+        const directories = (childDirsByParent.get(key) ?? [])
+          .slice()
+          .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+        for (const directory of directories) {
+          options.push({
+            record_id: directory.record_id,
+            title: directory.title || 'Untitled folder',
+            breadcrumb: this.getDirectoryMoveOptionBreadcrumb(directory.record_id),
+            depth,
+          });
+          walk(directory.record_id, depth + 1);
+        }
+      };
+      walk();
+      if (!query) return options;
+      return options.filter((option) => {
+        const title = String(option.title || '').toLowerCase();
+        const breadcrumb = String(option.breadcrumb || '').toLowerCase();
+        return title.includes(query) || breadcrumb.includes(query);
+      });
     },
 
     // --- task board computed (extracted to task-board-state.js) ---
@@ -1784,9 +1858,11 @@ export function initApp() {
       if (!report) return '';
       if (isTaskUnscoped(report, this.scopesMap)) return 'Unscoped';
       const scopeRef = report.scope_id
-        ?? report.scope_deliverable_id
-        ?? report.scope_project_id
-        ?? report.scope_product_id
+        ?? report.scope_l5_id
+        ?? report.scope_l4_id
+        ?? report.scope_l3_id
+        ?? report.scope_l2_id
+        ?? report.scope_l1_id
         ?? null;
       if (!scopeRef) return '';
       return this.getTaskBoardLabel(scopeRef);
@@ -2019,7 +2095,7 @@ export function initApp() {
           updatedAt: report.updated_at,
           updatedTs: Date.parse(report.updated_at) || 0,
           recordId: report.record_id,
-          boardScopeId: report.scope_id ?? report.scope_deliverable_id ?? report.scope_project_id ?? report.scope_product_id ?? null,
+          boardScopeId: report.scope_id ?? report.scope_l5_id ?? report.scope_l4_id ?? report.scope_l3_id ?? report.scope_l2_id ?? report.scope_l1_id ?? null,
         });
       }
 
@@ -2035,7 +2111,7 @@ export function initApp() {
           updatedAt: task.updated_at,
           updatedTs: Date.parse(task.updated_at) || 0,
           recordId: task.record_id,
-          boardScopeId: task.scope_id ?? task.scope_deliverable_id ?? task.scope_project_id ?? task.scope_product_id ?? null,
+          boardScopeId: task.scope_id ?? task.scope_l5_id ?? task.scope_l4_id ?? task.scope_l3_id ?? task.scope_l2_id ?? task.scope_l1_id ?? null,
         });
       }
 
@@ -2069,7 +2145,7 @@ export function initApp() {
           updatedTs: Date.parse(comment.updated_at) || 0,
           recordId: task.record_id,
           focusRecordId: comment.record_id,
-          boardScopeId: task.scope_id ?? task.scope_deliverable_id ?? task.scope_project_id ?? task.scope_product_id ?? null,
+          boardScopeId: task.scope_id ?? task.scope_l5_id ?? task.scope_l4_id ?? task.scope_l3_id ?? task.scope_l2_id ?? task.scope_l1_id ?? null,
         });
       }
 
@@ -2638,9 +2714,11 @@ export function initApp() {
       if (subtasks.length === 0) return 0;
 
       const scopeRef = nextParentTask.scope_id
-        ?? nextParentTask.scope_deliverable_id
-        ?? nextParentTask.scope_project_id
-        ?? nextParentTask.scope_product_id
+        ?? nextParentTask.scope_l5_id
+        ?? nextParentTask.scope_l4_id
+        ?? nextParentTask.scope_l3_id
+        ?? nextParentTask.scope_l2_id
+        ?? nextParentTask.scope_l1_id
         ?? null;
       const assignment = this.buildTaskBoardAssignment(scopeRef, nextParentTask);
 
@@ -2693,7 +2771,7 @@ export function initApp() {
         state: 'new',
         priority: 'sand',
         parent_task_id: parentId,
-        ...this.buildTaskBoardAssignment(parent?.scope_id ?? parent?.scope_deliverable_id ?? parent?.scope_project_id ?? parent?.scope_product_id ?? null, parent),
+        ...this.buildTaskBoardAssignment(parent?.scope_id ?? parent?.scope_l5_id ?? parent?.scope_l4_id ?? parent?.scope_l3_id ?? parent?.scope_l2_id ?? parent?.scope_l1_id ?? null, parent),
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
@@ -2777,9 +2855,11 @@ export function initApp() {
         tags: this.editingTask.tags,
         assigned_to_npub: this.editingTask.assigned_to_npub ?? null,
         scope_id: this.editingTask.scope_id ?? null,
-        scope_product_id: this.editingTask.scope_product_id ?? null,
-        scope_project_id: this.editingTask.scope_project_id ?? null,
-        scope_deliverable_id: this.editingTask.scope_deliverable_id ?? null,
+        scope_l1_id: this.editingTask.scope_l1_id ?? null,
+        scope_l2_id: this.editingTask.scope_l2_id ?? null,
+        scope_l3_id: this.editingTask.scope_l3_id ?? null,
+        scope_l4_id: this.editingTask.scope_l4_id ?? null,
+        scope_l5_id: this.editingTask.scope_l5_id ?? null,
         references: parseReferencesFromDescription(this.editingTask.description),
         version: nextVersion,
         sync_status: 'pending',
@@ -2911,9 +2991,11 @@ export function initApp() {
     openCalendarTask(taskId) {
       const task = this.tasks.find((item) => item.record_id === taskId) || null;
       const scopeId = task?.scope_id
-        ?? task?.scope_deliverable_id
-        ?? task?.scope_project_id
-        ?? task?.scope_product_id
+        ?? task?.scope_l5_id
+        ?? task?.scope_l4_id
+        ?? task?.scope_l3_id
+        ?? task?.scope_l2_id
+        ?? task?.scope_l1_id
         ?? (task && isTaskUnscoped(task, this.scopesMap) ? UNSCOPED_TASK_BOARD_ID : null);
       if (scopeId) {
         this.selectedBoardId = scopeId;
@@ -2963,7 +3045,7 @@ export function initApp() {
       url.pathname = '/tasks';
       url.search = '';
       const task = this.tasks.find((item) => item.record_id === taskId);
-      const scopeId = task?.scope_id ?? task?.scope_deliverable_id ?? task?.scope_project_id ?? task?.scope_product_id ?? this.selectedBoardId ?? null;
+      const scopeId = task?.scope_id ?? task?.scope_l5_id ?? task?.scope_l4_id ?? task?.scope_l3_id ?? task?.scope_l2_id ?? task?.scope_l1_id ?? this.selectedBoardId ?? null;
       if (scopeId) url.searchParams.set('scopeid', scopeId);
       if (taskId) url.searchParams.set('taskid', taskId);
       return url.toString();
@@ -3189,6 +3271,193 @@ export function initApp() {
       this.openTaskDetail(taskId);
     },
 
+    getDirectoryMoveOptionBreadcrumb(directoryId = null) {
+      if (!directoryId) return 'Root';
+      const breadcrumbs = [];
+      let cursor = this.directories.find((item) => item.record_id === directoryId && item.record_state !== 'deleted') || null;
+      while (cursor) {
+        breadcrumbs.unshift(cursor.title || 'Untitled folder');
+        cursor = cursor.parent_directory_id
+          ? (this.directories.find((item) => item.record_id === cursor.parent_directory_id && item.record_state !== 'deleted') || null)
+          : null;
+      }
+      return breadcrumbs.join(' / ');
+    },
+
+    getDirectoryMoveOptionSortKey(directory) {
+      return this.getDirectoryMoveOptionBreadcrumb(directory?.record_id || null).toLowerCase();
+    },
+
+    isDocSelected(recordId) {
+      return this.selectedDocIds.includes(recordId);
+    },
+
+    setDocSelectionMode(enabled) {
+      this.docSelectionMode = enabled === true;
+      if (!this.docSelectionMode) this.selectedDocIds = [];
+    },
+
+    toggleDocSelectionMode() {
+      this.setDocSelectionMode(!this.docSelectionMode);
+    },
+
+    toggleDocSelection(recordId) {
+      if (!recordId) return;
+      if (this.isDocSelected(recordId)) {
+        this.selectedDocIds = this.selectedDocIds.filter((candidate) => candidate !== recordId);
+      } else {
+        this.selectedDocIds = [...this.selectedDocIds, recordId];
+      }
+    },
+
+    selectVisibleDocs() {
+      this.selectedDocIds = [...new Set([...this.selectedDocIds, ...this.visibleDocBrowserIds])];
+    },
+
+    clearSelectedDocs() {
+      this.selectedDocIds = [];
+    },
+
+    openBulkDocScopeModal() {
+      this.openDocScopeModal({
+        type: 'bulk-documents',
+        ids: this.selectedDocIds,
+      });
+    },
+
+    closeDocMoveModal() {
+      this.showDocMoveModal = false;
+      this.docMoveRecordIds = [];
+      this.docMoveDirectoryQuery = '';
+      this.docMoveModalSubmitting = false;
+    },
+
+    openDocMoveModal(recordIds = []) {
+      const nextIds = [...new Set((Array.isArray(recordIds) ? recordIds : []).filter(Boolean))];
+      if (nextIds.length === 0) {
+        this.error = 'Select at least one document first';
+        return;
+      }
+      this.docMoveRecordIds = nextIds;
+      this.docMoveDirectoryQuery = '';
+      this.docMoveModalSubmitting = false;
+      this.showDocMoveModal = true;
+    },
+
+    canMoveActiveDocsToFolder(targetFolderId = null) {
+      const items = this.activeDocMoveItems;
+      if (items.length === 0) return false;
+      return items.some((item) => (item.parent_directory_id ?? null) !== (targetFolderId ?? null));
+    },
+
+    async moveActiveDocsToFolder(targetFolderId = null) {
+      if (this.docMoveModalSubmitting || !this.canMoveActiveDocsToFolder(targetFolderId)) return;
+      this.docMoveModalSubmitting = true;
+      const recordIds = this.activeDocMoveItems.map((item) => item.record_id);
+      try {
+        for (const recordId of recordIds) {
+          await this.moveDocItemToFolder('document', recordId, targetFolderId, {
+            applyDefaultScope: true,
+            sync: false,
+            refresh: false,
+          });
+        }
+        this.closeDocMoveModal();
+        await this.performSync({ silent: false });
+        await this.refreshDirectories();
+        await this.refreshDocuments();
+        this.clearSelectedDocs();
+      } finally {
+        this.docMoveModalSubmitting = false;
+      }
+    },
+
+    async deleteDocumentsByIds(recordIds = [], options = {}) {
+      const ownerNpub = this.workspaceOwnerNpub;
+      if (!ownerNpub || !this.session?.npub) {
+        this.error = 'Select a document first';
+        return false;
+      }
+      const items = [...new Set(recordIds)]
+        .map((recordId) => this.documents.find((item) => item.record_id === recordId && item.record_state !== 'deleted'))
+        .filter(Boolean);
+      if (items.length === 0) {
+        this.error = 'Select a document first';
+        return false;
+      }
+
+      if (typeof window !== 'undefined' && options.confirmMessage) {
+        const confirmed = window.confirm(options.confirmMessage);
+        if (!confirmed) return false;
+      }
+
+      for (const item of items) {
+        const shares = this.getEffectiveDocShares(item);
+        const now = new Date().toISOString();
+        const nextVersion = (item.version ?? 1) + 1;
+        const updated = {
+          ...item,
+          record_state: 'deleted',
+          sync_status: 'pending',
+          version: nextVersion,
+          updated_at: now,
+        };
+        await upsertDocument(updated);
+        this.patchDocumentLocal(updated);
+        await addPendingWrite({
+          record_id: item.record_id,
+          record_family_hash: recordFamilyHash('document'),
+          envelope: await outboundDocument({
+            record_id: item.record_id,
+            owner_npub: ownerNpub,
+            title: item.title,
+            content: item.content,
+            parent_directory_id: item.parent_directory_id,
+            scope_id: item.scope_id ?? null,
+            scope_l1_id: item.scope_l1_id ?? null,
+            scope_l2_id: item.scope_l2_id ?? null,
+            scope_l3_id: item.scope_l3_id ?? null,
+            scope_l4_id: item.scope_l4_id ?? null,
+            scope_l5_id: item.scope_l5_id ?? null,
+            shares,
+            version: nextVersion,
+            previous_version: item.version ?? 1,
+            record_state: 'deleted',
+            signature_npub: this.session?.npub,
+            write_group_npub: item.group_ids?.[0] || null,
+          }),
+        });
+      }
+
+      if (items.some((item) => item.record_id === this.selectedDocId)) {
+        this.selectedDocId = null;
+        this.selectedDocType = null;
+      }
+      return true;
+    },
+
+    async applyBulkDocAction(action) {
+      if (this.bulkDocBusy || this.selectedDocIds.length === 0) return;
+      if (action === 'move') {
+        this.openDocMoveModal(this.selectedDocIds);
+        return;
+      }
+      if (action !== 'delete') return;
+      this.bulkDocBusy = true;
+      try {
+        const removed = await this.deleteDocumentsByIds(this.selectedDocIds, {
+          confirmMessage: `Delete ${this.selectedDocIds.length} document${this.selectedDocIds.length === 1 ? '' : 's'}?`,
+        });
+        if (!removed) return;
+        await this.performSync({ silent: false });
+        await this.refreshDirectories();
+        await this.refreshDocuments();
+        this.clearSelectedDocs();
+      } finally {
+        this.bulkDocBusy = false;
+      }
+    },
+
     toggleTaskFilterTag(tag) {
       const idx = this.taskFilterTags.indexOf(tag);
       if (idx >= 0) {
@@ -3275,6 +3544,10 @@ export function initApp() {
         this._docBrowserWasDragged = false;
         return;
       }
+      if (this.docSelectionMode && type === 'document') {
+        this.toggleDocSelection(recordId);
+        return;
+      }
       this.selectDocItem(type, recordId);
     },
 
@@ -3336,10 +3609,49 @@ export function initApp() {
       }
       const dragItem = this._dragDocBrowserItem;
       if (!this.canMoveDocItemToFolder(dragItem, targetFolderId)) return;
-      await this.moveDocItemToFolder(dragItem.type, dragItem.recordId, targetFolderId);
+      await this.maybeMoveDocItemToFolder(dragItem.type, dragItem.recordId, targetFolderId);
     },
 
-    async moveDocItemToFolder(type, recordId, targetFolderId = null) {
+    async maybeMoveDocItemToFolder(type, recordId, targetFolderId = null) {
+      const targetDirectory = targetFolderId
+        ? this.directories.find((entry) => entry.record_id === targetFolderId && entry.record_state !== 'deleted')
+        : null;
+      const defaultScopeAssignment = this.getDirectoryDefaultScopeAssignment(targetDirectory);
+      const hasDefaultScope = Boolean(defaultScopeAssignment.scope_id);
+      const item = type === 'directory'
+        ? this.directories.find((entry) => entry.record_id === recordId)
+        : this.documents.find((entry) => entry.record_id === recordId);
+      if (
+        hasDefaultScope
+        && item
+        && !this.hasSameScopeAssignment(item, defaultScopeAssignment)
+      ) {
+        this.docMoveScopePrompt = {
+          type,
+          recordId,
+          targetFolderId,
+          targetFolderTitle: targetDirectory?.title || 'this folder',
+          scopeId: defaultScopeAssignment.scope_id,
+        };
+        return;
+      }
+      await this.moveDocItemToFolder(type, recordId, targetFolderId);
+    },
+
+    closeDocMoveScopePrompt() {
+      this.docMoveScopePrompt = null;
+    },
+
+    async confirmDocMoveScopePrompt(applyDefaultScope) {
+      const prompt = this.docMoveScopePrompt;
+      if (!prompt) return;
+      this.docMoveScopePrompt = null;
+      await this.moveDocItemToFolder(prompt.type, prompt.recordId, prompt.targetFolderId, {
+        applyDefaultScope: applyDefaultScope === true,
+      });
+    },
+
+    async moveDocItemToFolder(type, recordId, targetFolderId = null, options = {}) {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub || !this.session?.npub) {
         this.error = 'Sign in first';
@@ -3358,9 +3670,13 @@ export function initApp() {
       if (shares.length === 0) shares = this.getDefaultPrivateShares();
       const groupIds = this.getShareGroupIds(shares);
       const nextVersion = (item.version ?? 1) + 1;
+      const scopeAssignment = options.applyDefaultScope === true
+        ? this.getDirectoryDefaultScopeAssignment(targetFolderId)
+        : this.getDirectoryDefaultScopeAssignment(item);
       const updated = {
         ...item,
         parent_directory_id: targetFolderId,
+        ...scopeAssignment,
         shares,
         group_ids: groupIds,
         sync_status: 'pending',
@@ -3374,6 +3690,9 @@ export function initApp() {
       } else {
         await upsertDocument(updated);
         this.patchDocumentLocal(updated);
+        if (this.selectedDocId === recordId) {
+          this.currentFolderId = targetFolderId ?? null;
+        }
       }
 
       const envelope = isDirectory
@@ -3383,9 +3702,11 @@ export function initApp() {
           title: updated.title,
           parent_directory_id: updated.parent_directory_id,
           scope_id: updated.scope_id ?? null,
-          scope_product_id: updated.scope_product_id ?? null,
-          scope_project_id: updated.scope_project_id ?? null,
-          scope_deliverable_id: updated.scope_deliverable_id ?? null,
+          scope_l1_id: updated.scope_l1_id ?? null,
+          scope_l2_id: updated.scope_l2_id ?? null,
+          scope_l3_id: updated.scope_l3_id ?? null,
+          scope_l4_id: updated.scope_l4_id ?? null,
+          scope_l5_id: updated.scope_l5_id ?? null,
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
@@ -3399,9 +3720,11 @@ export function initApp() {
           content: updated.content,
           parent_directory_id: updated.parent_directory_id,
           scope_id: updated.scope_id ?? null,
-          scope_product_id: updated.scope_product_id ?? null,
-          scope_project_id: updated.scope_project_id ?? null,
-          scope_deliverable_id: updated.scope_deliverable_id ?? null,
+          scope_l1_id: updated.scope_l1_id ?? null,
+          scope_l2_id: updated.scope_l2_id ?? null,
+          scope_l3_id: updated.scope_l3_id ?? null,
+          scope_l4_id: updated.scope_l4_id ?? null,
+          scope_l5_id: updated.scope_l5_id ?? null,
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
@@ -3415,14 +3738,19 @@ export function initApp() {
         envelope,
       });
 
-      await this.performSync({ silent: false });
-      await this.refreshDirectories();
-      await this.refreshDocuments();
+      if (options.sync !== false) {
+        await this.performSync({ silent: false });
+      }
+      if (options.refresh !== false) {
+        await this.refreshDirectories();
+        await this.refreshDocuments();
+      }
     },
 
     // --- docs ---
 
     selectDocItem(type, recordId) {
+      if (type === 'document') this.setDocSelectionMode(false);
       if (type === 'directory') {
         this.navigateToFolder(recordId);
         return;
@@ -3432,6 +3760,10 @@ export function initApp() {
 
     navigateToFolder(folderId = null, options = {}) {
       this.stopDocCommentsLiveQuery();
+      this.closeDocScopeModal();
+      this.closeDocMoveScopePrompt();
+      this.closeDocMoveModal();
+      this.setDocSelectionMode(false);
       this.currentFolderId = folderId || null;
       this.selectedDocType = null;
       this.selectedDocId = null;
@@ -3733,55 +4065,14 @@ export function initApp() {
       this.cancelDocAutosave();
       this.error = null;
       const item = this.selectedDocument;
-      const ownerNpub = this.workspaceOwnerNpub;
-      if (!item || !ownerNpub) {
+      if (!item) {
         this.error = 'Select a document first';
         return;
       }
-
-      if (typeof window !== 'undefined') {
-        const confirmed = window.confirm('Delete this document?');
-        if (!confirmed) return;
-      }
-
-      const shares = this.getEffectiveDocShares(item);
-      const now = new Date().toISOString();
-      const nextVersion = (item.version ?? 1) + 1;
-
-      await upsertDocument({
-        ...item,
-        record_state: 'deleted',
-        sync_status: 'pending',
-        version: nextVersion,
-        updated_at: now,
+      const removed = await this.deleteDocumentsByIds([item.record_id], {
+        confirmMessage: 'Delete this document?',
       });
-      this.patchDocumentLocal({
-        ...item,
-        record_state: 'deleted',
-        sync_status: 'pending',
-        version: nextVersion,
-        updated_at: now,
-      });
-      await addPendingWrite({
-        record_id: item.record_id,
-        record_family_hash: recordFamilyHash('document'),
-        envelope: await outboundDocument({
-          record_id: item.record_id,
-          owner_npub: ownerNpub,
-          title: item.title,
-          content: item.content,
-          parent_directory_id: item.parent_directory_id,
-          shares,
-          version: nextVersion,
-          previous_version: item.version ?? 1,
-          record_state: 'deleted',
-          signature_npub: this.session?.npub,
-          write_group_npub: item.group_ids?.[0] || null,
-        }),
-      });
-
-      this.selectedDocId = null;
-      this.selectedDocType = null;
+      if (!removed) return;
       await this.performSync({ silent: false });
       await this.refreshDirectories();
       await this.refreshDocuments();

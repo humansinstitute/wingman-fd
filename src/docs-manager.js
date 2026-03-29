@@ -177,6 +177,9 @@ export const docsManagerMixin = {
     this.docDiffToIndex = -1;
     this.docCommentBackfillAttemptsByDocId = {};
     this.clearDocCommentConnector();
+    this.closeDocScopeModal?.();
+    this.closeDocMoveModal?.();
+    this.closeDocMoveScopePrompt?.();
     this.loadDocEditorFromSelection();
     if (options.syncRoute !== false) this.syncRoute();
   },
@@ -999,18 +1002,21 @@ export const docsManagerMixin = {
       return;
     }
 
+    const parentDirectoryId = this.getDefaultParentDirectoryId();
     const recordId = crypto.randomUUID();
     const now = new Date().toISOString();
     const row = {
       record_id: recordId,
       owner_npub: ownerNpub,
       title,
-      parent_directory_id: this.getDefaultParentDirectoryId(),
+      parent_directory_id: parentDirectoryId,
       scope_id: null,
-      scope_product_id: null,
-      scope_project_id: null,
-      scope_deliverable_id: null,
-      shares: this.getInheritedDirectoryShares(this.getDefaultParentDirectoryId()),
+      scope_l1_id: null,
+      scope_l2_id: null,
+      scope_l3_id: null,
+      scope_l4_id: null,
+      scope_l5_id: null,
+      shares: this.getInheritedDirectoryShares(parentDirectoryId),
       group_ids: [],
       sync_status: 'pending',
       record_state: 'active',
@@ -1031,9 +1037,11 @@ export const docsManagerMixin = {
         title: row.title,
         parent_directory_id: row.parent_directory_id,
         scope_id: row.scope_id ?? null,
-        scope_product_id: row.scope_product_id ?? null,
-        scope_project_id: row.scope_project_id ?? null,
-        scope_deliverable_id: row.scope_deliverable_id ?? null,
+        scope_l1_id: row.scope_l1_id ?? null,
+        scope_l2_id: row.scope_l2_id ?? null,
+        scope_l3_id: row.scope_l3_id ?? null,
+        scope_l4_id: row.scope_l4_id ?? null,
+        scope_l5_id: row.scope_l5_id ?? null,
         shares: row.shares,
         signature_npub: this.session?.npub,
         write_group_npub: row.group_ids?.[0] || null,
@@ -1052,6 +1060,8 @@ export const docsManagerMixin = {
       return;
     }
 
+    const parentDirectoryId = this.getDefaultParentDirectoryId();
+    const defaultScopeAssignment = this.getDirectoryDefaultScopeAssignment(parentDirectoryId);
     const recordId = crypto.randomUUID();
     const now = new Date().toISOString();
     const row = {
@@ -1059,8 +1069,9 @@ export const docsManagerMixin = {
       owner_npub: ownerNpub,
       title,
       content: '',
-      parent_directory_id: this.getDefaultParentDirectoryId(),
-      shares: this.getInheritedDirectoryShares(this.getDefaultParentDirectoryId()),
+      parent_directory_id: parentDirectoryId,
+      ...defaultScopeAssignment,
+      shares: this.getInheritedDirectoryShares(parentDirectoryId),
       group_ids: [],
       sync_status: 'pending',
       record_state: 'active',
@@ -1081,6 +1092,12 @@ export const docsManagerMixin = {
         title: row.title,
         content: row.content,
         parent_directory_id: row.parent_directory_id,
+        scope_id: row.scope_id ?? null,
+        scope_l1_id: row.scope_l1_id ?? null,
+        scope_l2_id: row.scope_l2_id ?? null,
+        scope_l3_id: row.scope_l3_id ?? null,
+        scope_l4_id: row.scope_l4_id ?? null,
+        scope_l5_id: row.scope_l5_id ?? null,
         shares: row.shares,
         signature_npub: this.session?.npub,
         write_group_npub: row.group_ids?.[0] || null,
@@ -1133,9 +1150,11 @@ export const docsManagerMixin = {
         title: updated.title,
         parent_directory_id: updated.parent_directory_id,
         scope_id: updated.scope_id ?? null,
-        scope_product_id: updated.scope_product_id ?? null,
-        scope_project_id: updated.scope_project_id ?? null,
-        scope_deliverable_id: updated.scope_deliverable_id ?? null,
+        scope_l1_id: updated.scope_l1_id ?? null,
+        scope_l2_id: updated.scope_l2_id ?? null,
+        scope_l3_id: updated.scope_l3_id ?? null,
+        scope_l4_id: updated.scope_l4_id ?? null,
+        scope_l5_id: updated.scope_l5_id ?? null,
         shares,
         version: nextVersion,
         previous_version: item.version ?? 1,
@@ -1201,9 +1220,11 @@ export const docsManagerMixin = {
           content: updated.content,
           parent_directory_id: updated.parent_directory_id,
           scope_id: updated.scope_id ?? null,
-          scope_product_id: updated.scope_product_id ?? null,
-          scope_project_id: updated.scope_project_id ?? null,
-          scope_deliverable_id: updated.scope_deliverable_id ?? null,
+          scope_l1_id: updated.scope_l1_id ?? null,
+          scope_l2_id: updated.scope_l2_id ?? null,
+          scope_l3_id: updated.scope_l3_id ?? null,
+          scope_l4_id: updated.scope_l4_id ?? null,
+          scope_l5_id: updated.scope_l5_id ?? null,
           shares,
           version: nextVersion,
           previous_version: item.version ?? 1,

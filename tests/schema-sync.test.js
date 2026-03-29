@@ -19,6 +19,7 @@ import { outboundAudioNote } from '../src/translators/audio-notes.js';
 import { outboundChannel, outboundChatMessage } from '../src/translators/chat.js';
 import { outboundComment } from '../src/translators/comments.js';
 import { outboundDirectory, outboundDocument } from '../src/translators/docs.js';
+import { outboundReport } from '../src/translators/reports.js';
 import { outboundSchedule } from '../src/translators/schedules.js';
 import { outboundScope } from '../src/translators/scopes.js';
 import { outboundWorkspaceSettings } from '../src/translators/settings.js';
@@ -35,6 +36,7 @@ const expectedFamilies = [
   'comment',
   'directory',
   'document',
+  'report',
   'schedule',
   'scope',
   'settings',
@@ -98,9 +100,11 @@ describe('published Flight Deck schema manifests', () => {
         owner_npub: 'npub_owner',
         title: 'Projects',
         scope_id: 'product-1',
-        scope_product_id: 'product-1',
-        scope_project_id: null,
-        scope_deliverable_id: null,
+        scope_l1_id: 'product-1',
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
         shares: [],
       })).owner_payload.ciphertext),
       document: JSON.parse((await outboundDocument({
@@ -109,10 +113,40 @@ describe('published Flight Deck schema manifests', () => {
         title: 'Spec',
         content: 'hello world',
         scope_id: 'scope-1',
-        scope_product_id: 'product-1',
-        scope_project_id: 'project-1',
-        scope_deliverable_id: 'deliverable-1',
+        scope_l1_id: 'product-1',
+        scope_l2_id: 'project-1',
+        scope_l3_id: 'deliverable-1',
+        scope_l4_id: null,
+        scope_l5_id: null,
         shares: [],
+      })).owner_payload.ciphertext),
+      report: JSON.parse((await outboundReport({
+        record_id: 'report-1',
+        owner_npub: 'npub_owner',
+        group_ids: ['group-1'],
+        metadata: {
+          title: 'Daily Users',
+          generated_at: '2026-03-25T00:55:00Z',
+          record_state: 'active',
+          surface: 'flightdeck',
+          scope: {
+            id: 'deliverable-1',
+            level: 'deliverable',
+            l1_id: 'product-1',
+            l2_id: 'project-1',
+            l3_id: 'deliverable-1',
+            l4_id: null,
+            l5_id: null,
+          },
+        },
+        data: {
+          declaration_type: 'metric',
+          payload: {
+            label: 'Daily Users',
+            value: 50,
+            unit: 'per day',
+          },
+        },
       })).owner_payload.ciphertext),
       schedule: JSON.parse((await outboundSchedule({
         record_id: 'schedule-1',
@@ -149,9 +183,11 @@ describe('published Flight Deck schema manifests', () => {
         priority: 'rock',
         assigned_to_npub: 'npub_assignee',
         scope_id: 'deliverable-1',
-        scope_product_id: 'product-1',
-        scope_project_id: 'project-1',
-        scope_deliverable_id: 'deliverable-1',
+        scope_l1_id: 'product-1',
+        scope_l2_id: 'project-1',
+        scope_l3_id: 'deliverable-1',
+        scope_l4_id: null,
+        scope_l5_id: null,
         shares: [],
         group_ids: ['group-1'],
       })).owner_payload.ciphertext),

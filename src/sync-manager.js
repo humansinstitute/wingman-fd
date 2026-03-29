@@ -8,6 +8,7 @@
 import {
   getPendingWrites,
   getPendingWritesByFamilies,
+  removePendingWrite,
   clearSyncState,
   clearRuntimeFamilies,
   clearSyncStateForFamilies,
@@ -15,10 +16,20 @@ import {
   deleteSyncQuarantineEntry,
   clearSyncQuarantineForFamilies,
   deleteRuntimeRecordByFamily,
+  upsertTask,
+  upsertDocument,
+  upsertDirectory,
+  getCommentsByTarget,
+  upsertComment,
 } from './db.js';
+import { fetchRecordHistory, syncRecords } from './api.js';
 import { runSync, pullRecordsForFamilies } from './worker/sync-worker.js';
 import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
+import { outboundTask } from './translators/tasks.js';
+import { outboundDocument, outboundDirectory } from './translators/docs.js';
+import { hasGroupKey } from './crypto/group-keys.js';
+import { outboundComment } from './translators/comments.js';
 
 // ---------------------------------------------------------------------------
 // Mixin — methods and getters that use `this` (the Alpine store)
@@ -56,6 +67,490 @@ export const syncManagerMixin = {
     this.repairError = null;
     this.repairNotice = '';
     this.repairSelectedFamilyIds = [];
+  },
+
+  async probeTaskOnTowerAndRepair() {
+    const taskId = String(this.repairTaskIdInput || '').trim();
+    if (!taskId) {
+      this.repairError = 'Enter a task ID.';
+      return;
+    }
+    if (!this.workspaceOwnerNpub || !this.session?.npub) {
+      this.repairError = 'Configure workspace sync first.';
+      return;
+    }
+
+    this.repairError = null;
+    this.repairNotice = '';
+    this.repairTaskProbeBusy = true;
+    try {
+      const result = await fetchRecordHistory({
+        record_id: taskId,
+        owner_npub: this.workspaceOwnerNpub,
+        viewer_npub: this.session.npub,
+      });
+      const versions = Array.isArray(result?.versions) ? result.versions : [];
+      const localPresent = this.tasks.some((task) => task.record_id === taskId);
+
+      if (versions.length === 0) {
+        this.repairError = 'Task not found on Tower for the current workspace/user view.';
+        return;
+      }
+
+      if (localPresent) {
+        this.repairNotice = `Task exists on Tower with ${versions.length} version${versions.length === 1 ? '' : 's'} and is already present locally.`;
+        return;
+      }
+
+      const repairResult = await this.restoreFamiliesFromSuperBased(['task'], { confirm: false });
+      if (repairResult.cancelled) return;
+
+      const repairedLocalPresent = this.tasks.some((task) => task.record_id === taskId);
+      this.repairNotice = repairedLocalPresent
+        ? `Task exists on Tower with ${versions.length} version${versions.length === 1 ? '' : 's'}. Rebuilt the Tasks family and restored it locally.`
+        : `Task exists on Tower with ${versions.length} version${versions.length === 1 ? '' : 's'}. Rebuilt the Tasks family, but the task still did not materialize locally.`;
+    } catch (error) {
+      this.repairError = error?.message || 'Failed to probe task history on Tower.';
+    } finally {
+      this.repairTaskProbeBusy = false;
+    }
+  },
+
+  getRecordStatusFamilyLabel(familyId) {
+    return getSyncFamily(familyId)?.label || familyId || 'Record';
+  },
+
+  getLocalRecordsForStatusFamily(familyId) {
+    switch (familyId) {
+      case 'task':
+        return this.tasks || [];
+      case 'document':
+        return this.documents || [];
+      case 'directory':
+        return this.directories || [];
+      case 'channel':
+        return this.channels || [];
+      case 'chat_message':
+        return this.messages || [];
+      case 'schedule':
+        return this.schedules || [];
+      case 'scope':
+        return this.scopes || [];
+      case 'report':
+        return this.reports || [];
+      default:
+        return [];
+    }
+  },
+
+  getLocalStatusRecord(familyId, recordId) {
+    return this.getLocalRecordsForStatusFamily(familyId).find((record) => record?.record_id === recordId) ?? null;
+  },
+
+  async getRecordStatusPendingWrites() {
+    return getPendingWrites();
+  },
+
+  async removeRecordStatusPendingWrite(rowId) {
+    return removePendingWrite(rowId);
+  },
+
+  async getRecordStatusRelatedComments(recordId, targetFamilyHash) {
+    const comments = await getCommentsByTarget(recordId);
+    return comments.filter((comment) => comment?.target_record_family_hash === targetFamilyHash);
+  },
+
+  isLocalStatusRecordPresent(familyId, recordId) {
+    return Boolean(this.getLocalStatusRecord(familyId, recordId));
+  },
+
+  getRecordStatusWriteGroupRefFromRecord(localRecord, familyId) {
+    if (!localRecord) return '';
+    if (familyId === 'task') {
+      return String(localRecord.board_group_id || localRecord.group_ids?.[0] || '').trim();
+    }
+    return String(localRecord.group_ids?.[0] || '').trim();
+  },
+
+  resolveRecordStatusTaskScopeRef(localRecord) {
+    if (!localRecord) return null;
+    const scope = typeof this.getTaskBoardScopeFromTask === 'function'
+      ? this.getTaskBoardScopeFromTask(localRecord)
+      : null;
+    return scope?.record_id
+      || localRecord.scope_id
+      || localRecord.scope_l5_id
+      || localRecord.scope_l4_id
+      || localRecord.scope_l3_id
+      || localRecord.scope_l2_id
+      || localRecord.scope_l1_id
+      || null;
+  },
+
+  buildRecordStatusLocalRecord(localRecord, familyId, options = {}) {
+    if (!localRecord) return null;
+    if (familyId !== 'task') return localRecord;
+
+    const bootstrap = options.bootstrap === true;
+    const scopeRef = this.resolveRecordStatusTaskScopeRef(localRecord);
+    const assignment = bootstrap && scopeRef && typeof this.buildTaskBoardAssignment === 'function'
+      ? this.buildTaskBoardAssignment(scopeRef, localRecord)
+      : null;
+    const resolveGroup = (groupRef) => (
+      typeof this.resolveGroupId === 'function'
+        ? this.resolveGroupId(groupRef)
+        : String(groupRef || '').trim() || null
+    );
+    const assignmentGroupIds = Array.isArray(assignment?.group_ids) ? assignment.group_ids : [];
+    const localGroupIds = Array.isArray(localRecord.group_ids) ? localRecord.group_ids : [];
+    const candidateGroupIds = [...new Set((assignmentGroupIds.length > 0 ? assignmentGroupIds : localGroupIds)
+      .map((groupId) => resolveGroup(groupId))
+      .filter(Boolean))];
+    const resolvedBoardGroupId = resolveGroup(assignment?.board_group_id) || candidateGroupIds[0] || resolveGroup(localRecord.board_group_id);
+    const nextGroupIds = resolvedBoardGroupId && !candidateGroupIds.includes(resolvedBoardGroupId)
+      ? [resolvedBoardGroupId, ...candidateGroupIds]
+      : candidateGroupIds;
+    const nextShares = nextGroupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
+      ? this.buildScopeDefaultShares(nextGroupIds)
+      : (assignment?.shares || localRecord.shares || []);
+
+    return {
+      ...localRecord,
+      ...(assignment || {}),
+      board_group_id: resolvedBoardGroupId || null,
+      group_ids: nextGroupIds,
+      shares: nextShares,
+    };
+  },
+
+  describeRecordStatusGroup(groupRef) {
+    const resolvedGroupRef = typeof this.resolveGroupId === 'function' ? this.resolveGroupId(groupRef) : String(groupRef || '').trim();
+    if (!resolvedGroupRef) return { ref: '', label: '', keyLoaded: false };
+    const group = (this.groups || []).find((entry) => entry.group_id === resolvedGroupRef || entry.group_npub === resolvedGroupRef);
+    return {
+      ref: resolvedGroupRef,
+      label: group?.name || resolvedGroupRef,
+      keyLoaded: hasGroupKey(resolvedGroupRef),
+    };
+  },
+
+  async refreshRecordStatusLocalContext() {
+    const familyId = String(this.recordStatusFamilyId || '').trim();
+    const recordId = String(this.recordStatusTargetId || '').trim();
+    const rawLocalRecord = this.getLocalStatusRecord(familyId, recordId);
+    const localRecord = this.buildRecordStatusLocalRecord(rawLocalRecord, familyId, { bootstrap: true });
+    const groupInfo = this.describeRecordStatusGroup(this.getRecordStatusWriteGroupRefFromRecord(localRecord, familyId));
+    const pendingWrites = await this.getRecordStatusPendingWrites();
+    const familyHash = getSyncFamily(familyId)?.hash;
+
+    this.recordStatusLocalPresent = Boolean(rawLocalRecord);
+    this.recordStatusWriteGroupRef = groupInfo.ref;
+    this.recordStatusWriteGroupLabel = groupInfo.label;
+    this.recordStatusWriteGroupKeyLoaded = groupInfo.keyLoaded;
+    this.recordStatusPendingWriteCount = pendingWrites.filter((row) => row.record_id === recordId && row.record_family_hash === familyHash).length;
+    return { localRecord, rawLocalRecord, groupInfo };
+  },
+
+  canForcePushRecordStatusTarget() {
+    return Boolean(
+      this.recordStatusTargetId
+      && this.recordStatusFamilyId
+      && this.recordStatusLocalPresent
+      && this.recordStatusTowerVersionCount === 0
+    );
+  },
+
+  async buildRecordStatusEnvelope(localRecord, familyId, options = {}) {
+    if (!localRecord) throw new Error('Local record not found.');
+
+    const bootstrap = options.bootstrap === true;
+    const effectiveLocalRecord = this.buildRecordStatusLocalRecord(localRecord, familyId, { bootstrap });
+    const ownerNpub = localRecord.owner_npub || this.workspaceOwnerNpub;
+    const isOwnerWrite = String(this.session?.npub || '').trim() === String(ownerNpub || '').trim();
+    const version = bootstrap ? 1 : (localRecord.version ?? 1);
+    const previousVersion = bootstrap ? 0 : Math.max(0, version - 1);
+
+    if (familyId === 'task') {
+      const candidateGroupIds = Array.isArray(effectiveLocalRecord.group_ids) ? effectiveLocalRecord.group_ids : [];
+      const loadedGroupIds = candidateGroupIds.filter((groupId) => hasGroupKey(groupId));
+      const nextGroupIds = loadedGroupIds.length > 0 ? loadedGroupIds : candidateGroupIds;
+      const nextShares = loadedGroupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
+        ? this.buildScopeDefaultShares(loadedGroupIds)
+        : (effectiveLocalRecord.shares || []);
+      const writeGroupNpub = nextGroupIds[0] || effectiveLocalRecord.board_group_id || null;
+      if (!writeGroupNpub) throw new Error('Task is missing a writable group.');
+      return outboundTask({
+        ...effectiveLocalRecord,
+        owner_npub: ownerNpub,
+        board_group_id: writeGroupNpub,
+        group_ids: nextGroupIds,
+        shares: nextShares,
+        version,
+        previous_version: previousVersion,
+        signature_npub: this.session?.npub,
+        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+      });
+    }
+
+    if (familyId === 'document') {
+      const shares = typeof this.getEffectiveDocShares === 'function'
+        ? this.getEffectiveDocShares(localRecord)
+        : (localRecord.shares || []);
+      const writeGroupNpub = localRecord.group_ids?.[0] || null;
+      if (!writeGroupNpub) throw new Error('Document is missing a writable group.');
+      return outboundDocument({
+        ...localRecord,
+        owner_npub: ownerNpub,
+        shares,
+        version,
+        previous_version: previousVersion,
+        signature_npub: this.session?.npub,
+        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+      });
+    }
+
+    if (familyId === 'directory') {
+      const shares = typeof this.getEffectiveDocShares === 'function'
+        ? this.getEffectiveDocShares(localRecord)
+        : (localRecord.shares || []);
+      const writeGroupNpub = localRecord.group_ids?.[0] || null;
+      if (!writeGroupNpub) throw new Error('Folder is missing a writable group.');
+      return outboundDirectory({
+        ...localRecord,
+        owner_npub: ownerNpub,
+        shares,
+        version,
+        previous_version: previousVersion,
+        signature_npub: this.session?.npub,
+        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+      });
+    }
+
+    throw new Error(`Force push is not implemented for ${this.getRecordStatusFamilyLabel(familyId)} yet.`);
+  },
+
+  async markRecordStatusLocalRecordSynced(familyId, localRecord, options = {}) {
+    if (!localRecord) return;
+
+    const nextRecord = {
+      ...localRecord,
+      sync_status: 'synced',
+      version: options.version ?? localRecord.version ?? 1,
+    };
+
+    if (familyId === 'task') {
+      await upsertTask(nextRecord);
+      this.tasks = this.tasks.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      if (this.editingTask?.record_id === nextRecord.record_id) {
+        this.editingTask = { ...nextRecord };
+      }
+      return;
+    }
+
+    if (familyId === 'document') {
+      await upsertDocument(nextRecord);
+      if (typeof this.patchDocumentLocal === 'function') this.patchDocumentLocal(nextRecord);
+      return;
+    }
+
+    if (familyId === 'directory') {
+      await upsertDirectory(nextRecord);
+      if (typeof this.patchDirectoryLocal === 'function') this.patchDirectoryLocal(nextRecord);
+    }
+  },
+
+  async markRecordStatusCommentsSynced(comments = []) {
+    if (!Array.isArray(comments) || comments.length === 0) return;
+    for (const comment of comments) {
+      await upsertComment({
+        ...comment,
+        sync_status: 'synced',
+        version: 1,
+      });
+    }
+    if (this.activeTaskId && this.recordStatusFamilyId === 'task' && this.recordStatusTargetId === this.activeTaskId) {
+      await this.loadTaskComments(this.activeTaskId);
+    }
+    if (this.docsEditorOpen && this.selectedDocId && this.recordStatusTargetId === this.selectedDocId) {
+      await this.loadDocComments(this.selectedDocId);
+    }
+  },
+
+  async buildRecordStatusCommentEnvelope(comment, options = {}) {
+    const targetGroupIds = Array.isArray(options.targetGroupIds) ? options.targetGroupIds : [];
+    return outboundComment({
+      ...comment,
+      version: 1,
+      previous_version: 0,
+      target_group_ids: targetGroupIds,
+      signature_npub: this.session?.npub,
+      write_group_npub: null,
+    });
+  },
+
+  async openRecordStatusModal(target = {}) {
+    const familyId = String(target?.familyId || '').trim();
+    const recordId = String(target?.recordId || '').trim();
+    const label = String(target?.label || '').trim();
+
+    this.recordStatusModalOpen = true;
+    this.recordStatusFamilyId = familyId;
+    this.recordStatusTargetId = recordId;
+    this.recordStatusTargetLabel = label;
+    this.recordStatusError = null;
+    this.recordStatusNotice = '';
+    this.recordStatusTowerVersionCount = 0;
+    this.recordStatusTowerUpdatedAt = '';
+    await this.refreshRecordStatusLocalContext();
+
+    await this.checkRecordStatusOnTower();
+  },
+
+  closeRecordStatusModal() {
+    this.recordStatusModalOpen = false;
+    this.recordStatusFamilyId = '';
+    this.recordStatusTargetId = '';
+    this.recordStatusTargetLabel = '';
+    this.recordStatusBusy = false;
+    this.recordStatusSyncBusy = false;
+    this.recordStatusError = null;
+    this.recordStatusNotice = '';
+    this.recordStatusTowerVersionCount = 0;
+    this.recordStatusTowerUpdatedAt = '';
+    this.recordStatusLocalPresent = false;
+    this.recordStatusPendingWriteCount = 0;
+    this.recordStatusWriteGroupRef = '';
+    this.recordStatusWriteGroupLabel = '';
+    this.recordStatusWriteGroupKeyLoaded = false;
+  },
+
+  async checkRecordStatusOnTower() {
+    const familyId = String(this.recordStatusFamilyId || '').trim();
+    const recordId = String(this.recordStatusTargetId || '').trim();
+    const familyLabel = this.getRecordStatusFamilyLabel(familyId);
+    const targetLabel = this.recordStatusTargetLabel || `${familyLabel} record`;
+
+    if (!familyId || !recordId) {
+      this.recordStatusError = 'Select a record first.';
+      return;
+    }
+    if (!this.workspaceOwnerNpub || !this.session?.npub) {
+      this.recordStatusError = 'Configure workspace sync first.';
+      return;
+    }
+
+    this.recordStatusBusy = true;
+    this.recordStatusError = null;
+    this.recordStatusNotice = '';
+    try {
+      const result = await fetchRecordHistory({
+        record_id: recordId,
+        owner_npub: this.workspaceOwnerNpub,
+        viewer_npub: this.session.npub,
+      });
+      const versions = Array.isArray(result?.versions) ? result.versions : [];
+      const latestVersion = versions.reduce((latest, current) => {
+        if (!latest) return current;
+        const currentTime = Date.parse(current?.updated_at || '') || 0;
+        const latestTime = Date.parse(latest?.updated_at || '') || 0;
+        return currentTime >= latestTime ? current : latest;
+      }, null);
+
+      this.recordStatusTowerVersionCount = versions.length;
+      this.recordStatusTowerUpdatedAt = latestVersion?.updated_at || '';
+      await this.refreshRecordStatusLocalContext();
+
+      if (versions.length === 0) {
+        if (this.recordStatusLocalPresent) {
+          this.recordStatusNotice = `${targetLabel} is missing on Tower. You can force push this local record.`;
+        } else {
+          this.recordStatusError = `${targetLabel} is not on Tower for the current workspace/user view.`;
+        }
+        return;
+      }
+
+      this.recordStatusNotice = this.recordStatusLocalPresent
+        ? `${targetLabel} is on Tower with ${versions.length} version${versions.length === 1 ? '' : 's'}, and the local copy is present.`
+        : `${targetLabel} is on Tower with ${versions.length} version${versions.length === 1 ? '' : 's'}, but the local copy is missing.`;
+    } catch (error) {
+      this.recordStatusError = error?.message || 'Failed to check record status on Tower.';
+    } finally {
+      this.recordStatusBusy = false;
+    }
+  },
+
+  async forcePushRecordStatusTarget() {
+    const familyId = String(this.recordStatusFamilyId || '').trim();
+    const recordId = String(this.recordStatusTargetId || '').trim();
+    const rawLocalRecord = this.getLocalStatusRecord(familyId, recordId);
+    const localRecord = this.buildRecordStatusLocalRecord(rawLocalRecord, familyId, { bootstrap: true });
+    if (!familyId || !recordId) {
+      this.recordStatusError = 'Select a record first.';
+      return;
+    }
+    if (!rawLocalRecord || !localRecord) {
+      this.recordStatusError = 'No local record is available to push.';
+      return;
+    }
+    if (this.recordStatusTowerVersionCount > 0) {
+      this.recordStatusError = 'Tower already has this record. A force push is only for records missing on Tower.';
+      return;
+    }
+    if (!this.workspaceOwnerNpub || !this.session?.npub) {
+      this.recordStatusError = 'Configure workspace sync first.';
+      return;
+    }
+
+    const familyLabel = this.getRecordStatusFamilyLabel(familyId);
+    this.recordStatusSyncBusy = true;
+    this.recordStatusError = null;
+    try {
+      const targetFamilyHash = getSyncFamily(familyId)?.hash || null;
+      const relatedComments = targetFamilyHash
+        ? await this.getRecordStatusRelatedComments(recordId, targetFamilyHash)
+        : [];
+      const relevantRecordIds = new Set([recordId, ...relatedComments.map((comment) => comment.record_id)]);
+      const pendingWrites = (await this.getRecordStatusPendingWrites())
+        .filter((row) => relevantRecordIds.has(row.record_id));
+      const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, { bootstrap: true });
+      const commentEnvelopes = [];
+      const targetGroupIds = Array.isArray(localRecord.group_ids) ? [...localRecord.group_ids] : [];
+
+      for (const comment of relatedComments
+        .slice()
+        .sort((left, right) => {
+          if (left.parent_comment_id && !right.parent_comment_id) return 1;
+          if (!left.parent_comment_id && right.parent_comment_id) return -1;
+          return String(left.created_at || left.updated_at || '').localeCompare(String(right.created_at || right.updated_at || ''));
+        })) {
+        commentEnvelopes.push(await this.buildRecordStatusCommentEnvelope(comment, { targetGroupIds }));
+      }
+
+      await syncRecords({
+        owner_npub: this.workspaceOwnerNpub,
+        records: [envelope, ...commentEnvelopes],
+      });
+      for (const row of pendingWrites) {
+        if (row?.row_id != null) await this.removeRecordStatusPendingWrite(row.row_id);
+      }
+
+      await this.markRecordStatusLocalRecordSynced(familyId, localRecord, { version: 1 });
+      await this.markRecordStatusCommentsSynced(relatedComments);
+      await this.checkRecordStatusOnTower();
+      if (!this.recordStatusError) {
+        const commentSuffix = relatedComments.length > 0
+          ? ` Recreated ${relatedComments.length} local ${relatedComments.length === 1 ? 'comment' : 'comments'} too.`
+          : '';
+        this.recordStatusNotice = pendingWrites.length > 0
+          ? `Force-pushed the current local snapshot as a new ${familyLabel} version 1 and cleared ${pendingWrites.length} stale pending ${pendingWrites.length === 1 ? 'write' : 'writes'}.${commentSuffix}`
+          : `Force-pushed the current local snapshot as a new ${familyLabel} version 1.${commentSuffix}`;
+      }
+    } catch (error) {
+      this.recordStatusError = error?.message || 'Failed to force push this record to Tower.';
+    } finally {
+      await this.refreshRecordStatusLocalContext();
+      this.recordStatusSyncBusy = false;
+    }
   },
 
   // --- sync quarantine ---
