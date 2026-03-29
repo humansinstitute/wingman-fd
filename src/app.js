@@ -2538,6 +2538,7 @@ export function initApp() {
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
+        references: [],
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -2692,6 +2693,7 @@ export function initApp() {
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
+        references: [],
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -2869,6 +2871,13 @@ export function initApp() {
       this.activeTaskId = taskId;
       const task = this.tasks.find(t => t.record_id === taskId);
       this.editingTask = task ? toRaw(task) : null;
+      if (this.editingTask) {
+        // Hydrate references from description for tasks that predate the feature
+        const hasStoredRefs = Array.isArray(this.editingTask.references) && this.editingTask.references.length > 0;
+        if (!hasStoredRefs && this.editingTask.description) {
+          this.editingTask.references = parseReferencesFromDescription(this.editingTask.description);
+        }
+      }
       if (this.editingTask?.assigned_to_npub) {
         this.resolveChatProfile(this.editingTask.assigned_to_npub);
       }
