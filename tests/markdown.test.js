@@ -42,6 +42,14 @@ describe('renderMarkdownToHtml', () => {
     expect(html).toContain('src="https://example.com/demo.png"');
   });
 
+  it('rendered images have md-storage-image class for modal click targeting', () => {
+    const storageHtml = renderMarkdownToHtml('![pic](storage://img-42)');
+    expect(storageHtml).toContain('class="md-storage-image');
+
+    const remoteHtml = renderMarkdownToHtml('![pic](https://example.com/photo.jpg)');
+    expect(remoteHtml).toContain('class="md-storage-image"');
+  });
+
   it('escapes raw html and strips unsafe javascript links', () => {
     const html = renderMarkdownToHtml([
       '<script>alert(1)</script>',
