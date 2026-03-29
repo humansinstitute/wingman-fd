@@ -43,6 +43,20 @@ import { APP_NPUB } from './app-identity.js';
 // ---------------------------------------------------------------------------
 
 /**
+ * Filter channels to only those the viewer should see.
+ * The workspace owner sees all channels. Guest viewers only see channels
+ * where they are listed in participant_npubs.
+ */
+export function filterChannelsForViewer(channels, viewerNpub, workspaceOwnerNpub) {
+  if (!viewerNpub || viewerNpub === workspaceOwnerNpub) return channels;
+  return channels.filter((ch) => {
+    const participants = ch.participant_npubs;
+    if (!Array.isArray(participants) || participants.length === 0) return true;
+    return participants.includes(viewerNpub);
+  });
+}
+
+/**
  * Normalize a raw group object from the API into a consistent shape.
  */
 export function mapGroupEntry(group) {
@@ -271,7 +285,8 @@ export const channelsManagerMixin = {
   },
 
   async applyChannels(channels = [], options = {}) {
-    const nextChannels = Array.isArray(channels) ? channels : [];
+    const allChannels = Array.isArray(channels) ? channels : [];
+    const nextChannels = filterChannelsForViewer(allChannels, this.session?.npub, this.workspaceOwnerNpub);
     if (!sameListBySignature(this.channels, nextChannels, (channel) => [
       String(channel?.record_id || ''),
       String(channel?.updated_at || ''),

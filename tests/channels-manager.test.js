@@ -6,6 +6,7 @@ import {
   deduplicateMembers,
   computeGroupMemberDiff,
   parseGroupMemberQueryNpubs,
+  filterChannelsForViewer,
 } from '../src/channels-manager.js';
 
 describe('channels-manager pure utilities', () => {
@@ -277,6 +278,53 @@ describe('channels-manager pure utilities', () => {
     it('deduplicates entries', () => {
       const result = parseGroupMemberQueryNpubs(`${fakeNpub},${fakeNpub}`);
       expect(result).toEqual([fakeNpub]);
+    });
+  });
+
+  // --- filterChannelsForViewer ---
+  describe('filterChannelsForViewer', () => {
+    const OWNER = 'npub1owner';
+    const VIEWER = 'npub1viewer';
+    const OTHER = 'npub1other';
+
+    const channels = [
+      { record_id: 'ch1', title: 'Team Channel', participant_npubs: [OWNER, VIEWER, OTHER] },
+      { record_id: 'ch2', title: 'DM: Pete', participant_npubs: [OWNER, OTHER] },
+      { record_id: 'ch3', title: 'WM21', participant_npubs: [OWNER, OTHER] },
+      { record_id: 'ch4', title: 'Open', participant_npubs: [] },
+      { record_id: 'ch5', title: 'Legacy', participant_npubs: undefined },
+    ];
+
+    it('workspace owner sees all channels', () => {
+      const result = filterChannelsForViewer(channels, OWNER, OWNER);
+      expect(result).toHaveLength(5);
+    });
+
+    it('guest viewer only sees channels where they are a participant', () => {
+      const result = filterChannelsForViewer(channels, VIEWER, OWNER);
+      expect(result.map(c => c.record_id)).toEqual(['ch1', 'ch4', 'ch5']);
+    });
+
+    it('filters out channels where viewer is not in participant_npubs', () => {
+      const result = filterChannelsForViewer(channels, VIEWER, OWNER);
+      expect(result.map(c => c.record_id)).not.toContain('ch2');
+      expect(result.map(c => c.record_id)).not.toContain('ch3');
+    });
+
+    it('channels without participant_npubs are always visible', () => {
+      const result = filterChannelsForViewer(channels, VIEWER, OWNER);
+      expect(result.map(c => c.record_id)).toContain('ch4');
+      expect(result.map(c => c.record_id)).toContain('ch5');
+    });
+
+    it('returns all channels when viewerNpub is null', () => {
+      const result = filterChannelsForViewer(channels, null, OWNER);
+      expect(result).toHaveLength(5);
+    });
+
+    it('returns all channels when viewerNpub is undefined', () => {
+      const result = filterChannelsForViewer(channels, undefined, OWNER);
+      expect(result).toHaveLength(5);
     });
   });
 });
