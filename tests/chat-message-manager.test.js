@@ -33,6 +33,7 @@ function createStore(overrides = {}) {
     threadRepliesScrollFrame: null,
     chatPreviewMeasureFrame: null,
     showChannelSettingsModal: false,
+    messageActionsMenuId: null,
     error: null,
     session: null,
     botNpub: '',
@@ -56,6 +57,7 @@ function createStore(overrides = {}) {
     materializeAudioDrafts: vi.fn().mockResolvedValue({ attachments: [] }),
     containsInlineImageUploadToken: vi.fn().mockReturnValue(false),
     _fireMentionTriggers: vi.fn(),
+    openRecordStatusModal: vi.fn(),
     workspaceOwnerNpub: 'npub1owner',
     ...overrides,
   };
@@ -526,5 +528,120 @@ describe('deleteSelectedChannel', () => {
     });
     await fn();
     expect(store.error).toBe('Select a channel first');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chat message actions menu
+// ---------------------------------------------------------------------------
+describe('chat message actions menu', () => {
+  it('openMessageActionsMenu sets the active menu record id', () => {
+    const { fn, store } = bindMethod('openMessageActionsMenu');
+    fn('msg-1');
+    expect(store.messageActionsMenuId).toBe('msg-1');
+  });
+
+  it('openMessageActionsMenu replaces previous menu id', () => {
+    const { fn, store } = bindMethod('openMessageActionsMenu', {
+      messageActionsMenuId: 'msg-old',
+    });
+    fn('msg-2');
+    expect(store.messageActionsMenuId).toBe('msg-2');
+  });
+
+  it('closeMessageActionsMenu clears the active menu', () => {
+    const { fn, store } = bindMethod('closeMessageActionsMenu', {
+      messageActionsMenuId: 'msg-1',
+    });
+    fn();
+    expect(store.messageActionsMenuId).toBeNull();
+  });
+
+  it('isMessageActionsMenuOpen returns true for matching id', () => {
+    const { fn } = bindMethod('isMessageActionsMenuOpen', {
+      messageActionsMenuId: 'msg-1',
+    });
+    expect(fn('msg-1')).toBe(true);
+    expect(fn('msg-2')).toBe(false);
+  });
+
+  it('isMessageActionsMenuOpen returns false when no menu open', () => {
+    const { fn } = bindMethod('isMessageActionsMenuOpen', {
+      messageActionsMenuId: null,
+    });
+    expect(fn('msg-1')).toBe(false);
+  });
+
+  it('toggleMessageActionsMenu opens when closed', () => {
+    const { fn, store } = bindMethod('toggleMessageActionsMenu', {
+      messageActionsMenuId: null,
+    });
+    fn('msg-1');
+    expect(store.messageActionsMenuId).toBe('msg-1');
+  });
+
+  it('toggleMessageActionsMenu closes when same id is open', () => {
+    const { fn, store } = bindMethod('toggleMessageActionsMenu', {
+      messageActionsMenuId: 'msg-1',
+    });
+    fn('msg-1');
+    expect(store.messageActionsMenuId).toBeNull();
+  });
+
+  it('toggleMessageActionsMenu switches to new id when different id is open', () => {
+    const { fn, store } = bindMethod('toggleMessageActionsMenu', {
+      messageActionsMenuId: 'msg-1',
+    });
+    fn('msg-2');
+    expect(store.messageActionsMenuId).toBe('msg-2');
+  });
+
+  it('inspectMessageSyncStatus calls openRecordStatusModal with chat_message family', () => {
+    const openRecordStatusModal = vi.fn();
+    const { fn, store } = bindMethod('inspectMessageSyncStatus', {
+      openRecordStatusModal,
+      messages: [
+        { record_id: 'msg-1', body: 'Hello world', parent_message_id: null, updated_at: '2024-01-01T00:00:00Z' },
+      ],
+      messageActionsMenuId: 'msg-1',
+    });
+    fn('msg-1');
+    expect(openRecordStatusModal).toHaveBeenCalledWith({
+      familyId: 'chat_message',
+      recordId: 'msg-1',
+      label: 'Hello world',
+    });
+    expect(store.messageActionsMenuId).toBeNull();
+  });
+
+  it('inspectMessageSyncStatus truncates long message body for label', () => {
+    const openRecordStatusModal = vi.fn();
+    const longBody = 'A'.repeat(60);
+    const { fn } = bindMethod('inspectMessageSyncStatus', {
+      openRecordStatusModal,
+      messages: [
+        { record_id: 'msg-1', body: longBody, parent_message_id: null, updated_at: '2024-01-01T00:00:00Z' },
+      ],
+      messageActionsMenuId: 'msg-1',
+    });
+    fn('msg-1');
+    const label = openRecordStatusModal.mock.calls[0][0].label;
+    expect(label.length).toBeLessThanOrEqual(53);
+    expect(label.endsWith('...')).toBe(true);
+  });
+
+  it('inspectMessageSyncStatus uses fallback label when message not found', () => {
+    const openRecordStatusModal = vi.fn();
+    const { fn } = bindMethod('inspectMessageSyncStatus', {
+      openRecordStatusModal,
+      messages: [],
+      messageActionsMenuId: null,
+    });
+    fn('msg-unknown');
+    expect(openRecordStatusModal).toHaveBeenCalledWith({
+      familyId: 'chat_message',
+      recordId: 'msg-unknown',
+      label: 'Chat message',
+    });
   });
 });

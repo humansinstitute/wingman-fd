@@ -1519,6 +1519,18 @@
 
                 <template x-for="msg in $store.chat.mainFeedMessages" :key="msg.record_id">
                   <div class="chat-post" :class="{ 'chat-post-focused': $store.chat.isFocusedMessage(msg.record_id) }" :data-message-id="msg.record_id">
+                    <div class="chat-msg-actions-menu" @click.outside="$store.chat.isMessageActionsMenuOpen(msg.record_id) && $store.chat.closeMessageActionsMenu()">
+                      <button type="button" class="chat-msg-actions-toggle" title="Message actions" aria-label="Message actions" @click.stop="$store.chat.toggleMessageActionsMenu(msg.record_id)">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                          <circle cx="12" cy="5" r="1.8"></circle>
+                          <circle cx="12" cy="12" r="1.8"></circle>
+                          <circle cx="12" cy="19" r="1.8"></circle>
+                        </svg>
+                      </button>
+                      <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen(msg.record_id)" x-cloak x-transition>
+                        <button type="button" @click="$store.chat.inspectMessageSyncStatus(msg.record_id)">Check sync status</button>
+                      </div>
+                    </div>
                     <span
                       class="chat-status-dot"
                       :class="msg.sync_status === 'synced' ? 'chat-status-dot-synced' : msg.sync_status === 'failed' ? 'chat-status-dot-failed' : 'chat-status-dot-pending'"
@@ -1633,6 +1645,18 @@
                 ></button>
                 <template x-if="$store.chat.getThreadParentMessage()">
                   <div class="thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage($store.chat.getThreadParentMessage()?.record_id) }" :data-thread-message-id="$store.chat.getThreadParentMessage()?.record_id || ''">
+                    <div class="chat-msg-actions-menu" @click.outside="$store.chat.isMessageActionsMenuOpen($store.chat.getThreadParentMessage()?.record_id) && $store.chat.closeMessageActionsMenu()">
+                      <button type="button" class="chat-msg-actions-toggle" title="Message actions" aria-label="Message actions" @click.stop="$store.chat.toggleMessageActionsMenu($store.chat.getThreadParentMessage()?.record_id)">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                          <circle cx="12" cy="5" r="1.8"></circle>
+                          <circle cx="12" cy="12" r="1.8"></circle>
+                          <circle cx="12" cy="19" r="1.8"></circle>
+                        </svg>
+                      </button>
+                      <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen($store.chat.getThreadParentMessage()?.record_id)" x-cloak x-transition>
+                        <button type="button" @click="$store.chat.inspectMessageSyncStatus($store.chat.getThreadParentMessage()?.record_id)">Check sync status</button>
+                      </div>
+                    </div>
                     <span
                       class="thread-status-dot"
                       :class="$store.chat.getThreadParentMessage()?.sync_status === 'synced' ? 'thread-status-dot-synced' : $store.chat.getThreadParentMessage()?.sync_status === 'failed' ? 'thread-status-dot-failed' : 'thread-status-dot-pending'"
@@ -1672,6 +1696,18 @@
 
                 <template x-for="reply in $store.chat.visibleThreadMessages" :key="reply.record_id">
                   <div class="thread-message" :class="{ 'thread-message-focused': $store.chat.isFocusedMessage(reply.record_id) }" :data-thread-message-id="reply.record_id">
+                    <div class="chat-msg-actions-menu" @click.outside="$store.chat.isMessageActionsMenuOpen(reply.record_id) && $store.chat.closeMessageActionsMenu()">
+                      <button type="button" class="chat-msg-actions-toggle" title="Message actions" aria-label="Message actions" @click.stop="$store.chat.toggleMessageActionsMenu(reply.record_id)">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                          <circle cx="12" cy="5" r="1.8"></circle>
+                          <circle cx="12" cy="12" r="1.8"></circle>
+                          <circle cx="12" cy="19" r="1.8"></circle>
+                        </svg>
+                      </button>
+                      <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen(reply.record_id)" x-cloak x-transition>
+                        <button type="button" @click="$store.chat.inspectMessageSyncStatus(reply.record_id)">Check sync status</button>
+                      </div>
+                    </div>
                     <span
                       class="thread-status-dot"
                       :class="reply.sync_status === 'synced' ? 'thread-status-dot-synced' : reply.sync_status === 'failed' ? 'thread-status-dot-failed' : 'thread-status-dot-pending'"

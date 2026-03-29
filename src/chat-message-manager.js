@@ -584,6 +584,40 @@ export const chatMessageManagerMixin = {
     }
   },
 
+  // --- message actions menu ---
+
+  openMessageActionsMenu(recordId) {
+    this.messageActionsMenuId = recordId;
+  },
+
+  closeMessageActionsMenu() {
+    this.messageActionsMenuId = null;
+  },
+
+  isMessageActionsMenuOpen(recordId) {
+    return this.messageActionsMenuId === recordId;
+  },
+
+  toggleMessageActionsMenu(recordId) {
+    if (this.messageActionsMenuId === recordId) {
+      this.messageActionsMenuId = null;
+    } else {
+      this.messageActionsMenuId = recordId;
+    }
+  },
+
+  inspectMessageSyncStatus(recordId) {
+    const message = this.messages.find((m) => m.record_id === recordId);
+    const body = message?.body || '';
+    const label = body.length > 50 ? body.slice(0, 50) + '...' : (body || 'Chat message');
+    this.messageActionsMenuId = null;
+    this.openRecordStatusModal({
+      familyId: 'chat_message',
+      recordId,
+      label,
+    });
+  },
+
   async deleteActiveThread() {
     this.error = null;
     const parent = this.getThreadParentMessage();

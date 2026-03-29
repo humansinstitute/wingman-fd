@@ -258,6 +258,7 @@ export function initApp() {
     focusMessageId: null,
     expandedChatMessageIds: [],
     truncatedChatMessageIds: [],
+    messageActionsMenuId: null,
     chatProfiles: {},
     statusTimeRange: '1h',
     statusRecentChanges: [],
