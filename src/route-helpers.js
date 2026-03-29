@@ -1,29 +1,29 @@
 export const KNOWN_PAGES = new Set([
-  'notifications', 'status', 'tasks', 'calendar', 'schedules',
-  'chat', 'docs', 'people', 'scopes', 'jobs', 'settings',
+  'flight-deck', 'notifications', 'status', 'tasks', 'calendar', 'schedules',
+  'chat', 'docs', 'reports', 'people', 'scopes', 'jobs', 'settings',
 ]);
 
 export function pageToSection(page) {
-  if (page === 'notifications' || page === 'status') return 'status';
+  if (page === 'flight-deck' || page === 'notifications' || page === 'status') return 'status';
   if (KNOWN_PAGES.has(page)) return page;
   return null;
 }
 
 export function parseRouteLocation(href) {
   if (typeof window === 'undefined' && !href) {
-    return { section: 'chat', params: {}, workspaceSlug: null };
+    return { section: 'status', params: {}, workspaceSlug: null };
   }
 
   const url = new URL(href || window.location.href);
   const segments = url.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
 
   let workspaceSlug = null;
-  let section = 'chat';
+  let section = 'status';
 
   if (segments.length === 0) {
     // Root path: /
   } else if (segments.length === 1) {
-    // Either /<page> (backward compat) or /<slug> (workspace root)
+    // Either /<page> (canonical or backward compat) or /<slug> (workspace root)
     const mapped = pageToSection(segments[0]);
     if (mapped) {
       section = mapped;
@@ -50,8 +50,10 @@ export function parseRouteLocation(href) {
       scopeid: url.searchParams.get('scopeid') || null,
       descendants: url.searchParams.get('descendants') || null,
       groupid: url.searchParams.get('groups') || url.searchParams.get('groupid') || null,
+      reportid: url.searchParams.get('reportid') || null,
       taskid: url.searchParams.get('taskid') || null,
       view: url.searchParams.get('view') || null,
+      token: url.searchParams.get('token') || null,
     },
   };
 }

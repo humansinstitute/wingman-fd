@@ -136,6 +136,7 @@ import {
 } from './crypto/group-keys.js';
 import { mergeWorkspaceEntries, workspaceFromToken, findWorkspaceBySlug } from './workspaces.js';
 import { parseRouteLocation } from './route-helpers.js';
+import { extractInviteToken } from './invite-link.js';
 import {
   buildStoragePrepareBody,
 } from './storage-payloads.js';
@@ -494,6 +495,7 @@ export function initApp() {
     workspaceBootstrapSubmitting: false,
     agentConnectJson: '',
     agentConfigCopied: false,
+    pendingInviteToken: null,
     useCvmSync: localStorage.getItem('use_cvm_sync') === 'true',
     extensionSignerAvailable: false,
     extensionSignerPollTimer: null,
@@ -894,23 +896,23 @@ export function initApp() {
         this.knownWorkspaces = mergeWorkspaceEntries([], settings.knownWorkspaces ?? []);
         this.knownHosts = Array.isArray(settings.knownHosts) ? settings.knownHosts : [];
       }
-      // Extract ?token= from URL (e.g. share link) and use it to bootstrap workspace
+      // Extract ?token= from URL (e.g. invite/share link) and bootstrap workspace
       if (typeof window !== 'undefined') {
-        const urlParams = new URLSearchParams(window.location.search);
-        const urlToken = urlParams.get('token');
-        if (urlToken) {
-          const urlConfig = parseSuperBasedToken(urlToken);
-          if (urlConfig.isValid) {
-            this.superbasedTokenInput = urlToken;
+        const invite = extractInviteToken(window.location.href);
+        if (invite) {
+          this.pendingInviteToken = invite;
+          this.superbasedTokenInput = invite.token;
+          this.backendUrl = invite.backendUrl;
+          this.mergeKnownWorkspaces([invite.workspace]);
+          if (invite.workspaceOwnerNpub) {
+            // Force-select the invited workspace — overrides any previously saved selection
+            this.currentWorkspaceOwnerNpub = invite.workspaceOwnerNpub;
+            this.ownerNpub = invite.workspaceOwnerNpub;
           }
-          // Clean token from URL so it doesn't persist in browser history
-          urlParams.delete('token');
-          const cleanSearch = urlParams.toString();
-          const cleanUrl = window.location.pathname + (cleanSearch ? '?' + cleanSearch : '') + window.location.hash;
-          window.history.replaceState(null, '', cleanUrl);
+          window.history.replaceState(null, '', invite.cleanUrl);
         }
       }
-      if (this.superbasedTokenInput) {
+      if (!this.pendingInviteToken && this.superbasedTokenInput) {
         const config = parseSuperBasedToken(this.superbasedTokenInput);
         if (config.isValid && config.directHttpsUrl) {
           this.backendUrl = normalizeBackendUrl(config.directHttpsUrl);
@@ -964,6 +966,7 @@ export function initApp() {
         await this.refreshStatusRecentChanges();
         if (this.defaultAgentNpub) this.resolveChatProfile(this.defaultAgentNpub);
       }
+      this.pendingInviteToken = null; // invite bootstrap complete
       this.routeSyncPaused = false; // unpause route sync after init (no-op if applyRouteFromLocation already unpaused)
     },
 
