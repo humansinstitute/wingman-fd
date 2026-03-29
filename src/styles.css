@@ -5664,6 +5664,16 @@ button:disabled {
     width: 100%;
   }
 
+  /* --- Mobile thread panel: full-width overlay when open --- */
+  .chat-layout-thread-open .chat-main {
+    display: none;
+  }
+
+  .chat-thread-panel {
+    width: 100%;
+    border-left: none;
+  }
+
   .docs-layout,
   .settings-section {
     grid-template-columns: 1fr;

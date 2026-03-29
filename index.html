@@ -1506,7 +1506,7 @@
             </details>
           </div>
 
-          <div class="chat-layout" :class="{ 'chat-layout-thread-full': $store.chat.activeThreadId && $store.chat.threadSize === 'full' }">
+          <div class="chat-layout" :class="{ 'chat-layout-thread-full': $store.chat.activeThreadId && $store.chat.threadSize === 'full', 'chat-layout-thread-open': !!$store.chat.activeThreadId }">
             <div class="chat-main">
               <div class="chat-feed" data-chat-feed>
                 <template x-if="!$store.chat.selectedChannelId">
@@ -1750,6 +1750,19 @@
               <button
                 type="button"
                 class="btn-add-folder"
+                :class="{ 'doc-toolbar-btn-active': $store.chat.docSelectionMode }"
+                @click="$store.chat.toggleDocSelectionMode()"
+                :title="$store.chat.docSelectionMode ? 'Exit select mode' : 'Select documents'"
+                :aria-label="$store.chat.docSelectionMode ? 'Exit select mode' : 'Select documents'"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 11l3 3L22 4"></path>
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="btn-add-folder"
                 x-show="$store.chat.currentFolder"
                 @click="$store.chat.openDocShareModal('current-folder')"
                 title="Folder sharing"
@@ -1787,6 +1800,7 @@
                   </svg>
                 </button>
                 <div class="doc-actions-popover" x-show="open" x-cloak x-transition>
+                  <button type="button" @click="$store.chat.openDocScopeModal('current-folder'); open = false">Scope</button>
                   <button
                     type="button"
                     @click="$store.chat.openRecordStatusModal({ familyId: 'directory', recordId: $store.chat.currentFolder.record_id, label: $store.chat.currentFolder.title || 'Folder' }); open = false"
@@ -1796,77 +1810,48 @@
               </div>
             </div>
 
-            <!-- Directory scope picker -->
-            <div class="doc-scope-row folder-scope-row" x-show="$store.chat.currentFolder && !$store.chat.docsEditorOpen" @click.outside="$store.chat.closeScopePicker()">
-              <span class="task-field-label">Scope</span>
-              <div class="scope-picker-wrapper">
-                <template x-if="$store.chat.currentFolder?.scope_id">
-                  <div class="scope-picker-selected">
-                    <span class="scope-level-badge" :class="{
-                      'scope-badge-product': $store.chat.scopesMap.get($store.chat.currentFolder.scope_id)?.level === 'product',
-                      'scope-badge-project': $store.chat.scopesMap.get($store.chat.currentFolder.scope_id)?.level === 'project',
-                      'scope-badge-deliverable': $store.chat.scopesMap.get($store.chat.currentFolder.scope_id)?.level === 'deliverable'
-                    }" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.currentFolder.scope_id)?.level)"></span>
-                    <span x-text="$store.chat.getScopeBreadcrumb($store.chat.currentFolder.scope_id)"></span>
-                    <button type="button" class="scope-clear-btn" @click="$store.chat.clearDirectoryScope()" title="Remove scope">x</button>
-                  </div>
-                </template>
-                <button type="button" class="scope-picker-toggle" @click="$store.chat.openScopePicker()"
-                  x-text="$store.chat.currentFolder?.scope_id ? 'Change' : 'Set scope...'"></button>
-                <div class="scope-picker-popover" x-show="$store.chat.showScopePicker" x-cloak>
-                  <input type="text" class="scope-picker-input" x-model="$store.chat.scopePickerQuery" placeholder="Search scopes..." @keydown.escape="$store.chat.closeScopePicker()" />
-                  <div class="scope-picker-results">
-                    <template x-if="$store.chat.scopePickerResults.product.length > 0">
-                      <div class="scope-picker-group">
-                        <div class="scope-picker-group-label">Product</div>
-                        <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
-                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDirectory(item.record_id)">
-                            <span class="scope-level-badge scope-badge-product">Product</span>
-                            <span x-text="item.title"></span>
-                          </button>
-                        </template>
-                      </div>
-                    </template>
-                    <template x-if="$store.chat.scopePickerResults.project.length > 0">
-                      <div class="scope-picker-group">
-                        <div class="scope-picker-group-label">Project</div>
-                        <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
-                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDirectory(item.record_id)">
-                            <span class="scope-level-badge scope-badge-project">Project</span>
-                            <span x-text="item.title"></span>
-                            <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
-                          </button>
-                        </template>
-                      </div>
-                    </template>
-                    <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
-                      <div class="scope-picker-group">
-                        <div class="scope-picker-group-label">Deliverable</div>
-                        <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
-                          <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDirectory(item.record_id)">
-                            <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
-                            <span x-text="item.title"></span>
-                            <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
-                          </button>
-                        </template>
-                      </div>
-                    </template>
-                    <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">No scopes found.</div>
-                  </div>
-                </div>
+            <div class="task-bulk-bar doc-bulk-bar" x-show="!$store.chat.docsEditorOpen && $store.chat.docSelectionMode">
+              <span class="task-bulk-count" x-text="$store.chat.selectedDocCount + ' selected'"></span>
+              <div class="task-bulk-actions">
+                <button type="button" class="task-bulk-btn" @click="$store.chat.selectVisibleDocs()" :disabled="$store.chat.bulkDocBusy">Select visible</button>
+                <button type="button" class="task-bulk-btn" @click="$store.chat.clearSelectedDocs()" :disabled="$store.chat.bulkDocBusy || $store.chat.selectedDocCount === 0">Clear</button>
+                <button type="button" class="task-bulk-btn" @click="$store.chat.openBulkDocScopeModal()" :disabled="$store.chat.bulkDocBusy || $store.chat.selectedDocCount === 0">Scope</button>
+                <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkDocAction('move')" :disabled="$store.chat.bulkDocBusy || $store.chat.selectedDocCount === 0">Move</button>
+                <button type="button" class="task-bulk-btn" @click="$store.chat.applyBulkDocAction('delete')" :disabled="$store.chat.bulkDocBusy || $store.chat.selectedDocCount === 0" x-text="$store.chat.bulkDocBusy ? 'Working...' : 'Delete'"></button>
+                <button type="button" class="task-bulk-btn" @click="$store.chat.setDocSelectionMode(false)" :disabled="$store.chat.bulkDocBusy">Done</button>
               </div>
             </div>
 
             <template x-if="!$store.chat.docsEditorOpen">
               <div class="docs-browser-shell">
-                <div class="folder-breadcrumbs">
-                  <span class="breadcrumb-item breadcrumb-link" @click="$store.chat.navigateToFolder(null)">Docs</span>
-                  <template x-for="folder in $store.chat.currentFolderBreadcrumbs" :key="folder.record_id">
-                    <span>
-                      <span class="breadcrumb-sep">/</span>
-                      <span class="breadcrumb-item breadcrumb-link" x-text="folder.title" @click="$store.chat.navigateToFolder(folder.record_id)"></span>
-                    </span>
-                  </template>
+                <div class="folder-breadcrumb-row">
+                  <div class="folder-breadcrumbs">
+                    <span class="breadcrumb-item breadcrumb-link" @click="$store.chat.navigateToFolder(null)">Docs</span>
+                    <template x-for="folder in $store.chat.currentFolderBreadcrumbs" :key="folder.record_id">
+                      <span>
+                        <span class="breadcrumb-sep">/</span>
+                        <span class="breadcrumb-item breadcrumb-link" x-text="folder.title" @click="$store.chat.navigateToFolder(folder.record_id)"></span>
+                      </span>
+                    </template>
+                  </div>
+                  <div
+                    class="folder-breadcrumb-scope"
+                    x-show="$store.chat.currentFolder?.scope_id"
+                  >
+                    <span class="doc-scope-prefix">Default Scope:</span>
+                    <button
+                      type="button"
+                      class="doc-scope-pill-btn"
+                      @click="$store.chat.openDocScopeModal('current-folder')"
+                    >
+                      <span
+                        class="doc-scope-pill"
+                        :class="`doc-scope-pill-${$store.chat.getScopePillLevel($store.chat.currentFolder) || 'none'}`"
+                        :title="$store.chat.getScopePillTitle($store.chat.currentFolder)"
+                        x-text="$store.chat.getScopePillLabel($store.chat.currentFolder)"
+                      ></span>
+                    </button>
+                  </div>
                 </div>
 
                 <div
@@ -1887,16 +1872,26 @@
                       class="doc-item"
                       :class="{
                         'doc-item-folder': row.type === 'directory',
+                        'doc-item-selecting': $store.chat.docSelectionMode && row.type === 'document',
+                        'doc-item-selected': $store.chat.isDocSelected(row.item.record_id),
                         'doc-item-drop-active': $store.chat.docBrowserDropTarget === `folder:${row.item.record_id}`
                       }"
-                      draggable="true"
+                      :draggable="!$store.chat.docSelectionMode"
                       @click="$store.chat.handleDocBrowserRowClick(row.type, row.item.record_id)"
-                      @dragstart="$store.chat.handleDocItemDragStart($event, row.type, row.item.record_id)"
-                      @dragend="$store.chat.handleDocItemDragEnd($event)"
-                      @dragover.prevent="row.type === 'directory' && $store.chat.handleDocItemDragOver($event, row.item.record_id, `folder:${row.item.record_id}`)"
-                      @dragleave="row.type === 'directory' && $store.chat.handleDocItemDragLeave($event, `folder:${row.item.record_id}`)"
-                      @drop.prevent="row.type === 'directory' && $store.chat.handleDocItemDrop($event, row.item.record_id, `folder:${row.item.record_id}`)"
+                      @dragstart="!$store.chat.docSelectionMode && $store.chat.handleDocItemDragStart($event, row.type, row.item.record_id)"
+                      @dragend="!$store.chat.docSelectionMode && $store.chat.handleDocItemDragEnd($event)"
+                      @dragover.prevent="!$store.chat.docSelectionMode && row.type === 'directory' && $store.chat.handleDocItemDragOver($event, row.item.record_id, `folder:${row.item.record_id}`)"
+                      @dragleave="!$store.chat.docSelectionMode && row.type === 'directory' && $store.chat.handleDocItemDragLeave($event, `folder:${row.item.record_id}`)"
+                      @drop.prevent="!$store.chat.docSelectionMode && row.type === 'directory' && $store.chat.handleDocItemDrop($event, row.item.record_id, `folder:${row.item.record_id}`)"
                     >
+                      <input
+                        type="checkbox"
+                        class="doc-item-checkbox"
+                        x-show="$store.chat.docSelectionMode && row.type === 'document'"
+                        :checked="$store.chat.isDocSelected(row.item.record_id)"
+                        @click.stop
+                        @change="$store.chat.toggleDocSelection(row.item.record_id)"
+                      />
                       <span class="doc-item-icon">
                         <template x-if="row.type === 'directory'">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -1912,7 +1907,26 @@
                       </span>
                       <span class="doc-item-title" x-text="row.item.title || (row.type === 'directory' ? 'Untitled folder' : 'Untitled document')"></span>
                       <div class="doc-item-meta">
-                        <span class="doc-shared-pill" x-show="(row.item.shares || []).length > 0">Shared</span>
+                        <button
+                          type="button"
+                          class="doc-scope-pill-btn"
+                          x-show="row.type === 'document' && !row.item.scope_id"
+                          title="No scope assigned"
+                          @click.stop="$store.chat.openDocScopeModal({ type: row.type, item: row.item })"
+                        ><span class="doc-scope-pill doc-scope-pill-compact doc-scope-pill-unscoped">Unscoped</span></button>
+                        <button
+                          type="button"
+                          class="doc-scope-pill-btn"
+                          x-show="row.item.scope_id && !$store.chat.hasSameScopeAssignment(row.item, $store.chat.getDirectoryDefaultScopeAssignment($store.chat.currentFolder))"
+                          @click.stop="$store.chat.openDocScopeModal({ type: row.type, item: row.item })"
+                        >
+                          <span
+                            class="doc-scope-pill doc-scope-pill-compact"
+                            :class="`doc-scope-pill-${$store.chat.getScopePillLevel(row.item) || 'none'}`"
+                            :title="$store.chat.getScopePillTitle(row.item)"
+                            x-text="$store.chat.getScopePillLabel(row.item)"
+                          ></span>
+                        </button>
                       </div>
                     </li>
                   </template>
@@ -1976,6 +1990,8 @@
                         </svg>
                       </button>
                       <div class="doc-actions-popover" x-show="open" x-cloak x-transition>
+                        <button type="button" @click="$store.chat.openDocScopeModal(); open = false">Scope</button>
+                        <button type="button" @click="$store.chat.openDocMoveModal([$store.chat.selectedDocId]); open = false">Move doc</button>
                         <button
                           type="button"
                           @click="$store.chat.openRecordStatusModal({ familyId: 'document', recordId: $store.chat.selectedDocId, label: $store.chat.docEditorTitle || 'Document' }); open = false"
@@ -1993,75 +2009,34 @@
                 </div>
 
                 <div class="doc-title-block">
-                  <template x-if="!$store.chat.docEditingTitle">
-                    <h1 class="doc-title-display" x-text="$store.chat.docEditorTitle || 'Untitled document'" @click="$store.chat.startDocTitleEdit()"></h1>
-                  </template>
-                  <template x-if="$store.chat.docEditingTitle">
-                    <input class="doc-title-input" type="text" x-model="$store.chat.docEditorTitle" @blur="$store.chat.finishDocTitleEdit()" @keydown.enter.prevent="$store.chat.finishDocTitleEdit()" />
-                  </template>
-                </div>
-
-                <!-- Doc scope picker -->
-                <div class="doc-scope-row" @click.outside="$store.chat.closeScopePicker()">
-                  <span class="task-field-label">Scope</span>
-                  <div class="scope-picker-wrapper">
-                    <template x-if="$store.chat.selectedDocument?.scope_id">
-                      <div class="scope-picker-selected">
-                        <span class="scope-level-badge" :class="{
-                          'scope-badge-product': $store.chat.scopesMap.get($store.chat.selectedDocument.scope_id)?.level === 'product',
-                          'scope-badge-project': $store.chat.scopesMap.get($store.chat.selectedDocument.scope_id)?.level === 'project',
-                          'scope-badge-deliverable': $store.chat.scopesMap.get($store.chat.selectedDocument.scope_id)?.level === 'deliverable'
-                        }" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.selectedDocument.scope_id)?.level)"></span>
-                        <span x-text="$store.chat.getScopeBreadcrumb($store.chat.selectedDocument.scope_id)"></span>
-                        <button type="button" class="scope-clear-btn" @click="$store.chat.clearDocScope()" title="Remove scope">x</button>
-                      </div>
+                  <div class="doc-title-main">
+                    <template x-if="!$store.chat.docEditingTitle">
+                      <h1 class="doc-title-display" x-text="$store.chat.docEditorTitle || 'Untitled document'" @click="$store.chat.startDocTitleEdit()"></h1>
                     </template>
-                    <button type="button" class="scope-picker-toggle" @click="$store.chat.openScopePicker()"
-                      x-text="$store.chat.selectedDocument?.scope_id ? 'Change' : 'Set scope...'"></button>
-                    <div class="scope-picker-popover" x-show="$store.chat.showScopePicker" x-cloak>
-                      <input type="text" class="scope-picker-input" x-model="$store.chat.scopePickerQuery" placeholder="Search scopes..." @keydown.escape="$store.chat.closeScopePicker()" />
-                      <div class="scope-picker-results">
-                        <template x-if="$store.chat.scopePickerResults.product.length > 0">
-                          <div class="scope-picker-group">
-                            <div class="scope-picker-group-label">Product</div>
-                            <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
-                              <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDoc(item.record_id)">
-                                <span class="scope-level-badge scope-badge-product">Product</span>
-                                <span x-text="item.title"></span>
-                              </button>
-                            </template>
-                          </div>
-                        </template>
-                        <template x-if="$store.chat.scopePickerResults.project.length > 0">
-                          <div class="scope-picker-group">
-                            <div class="scope-picker-group-label">Project</div>
-                            <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
-                              <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDoc(item.record_id)">
-                                <span class="scope-level-badge scope-badge-project">Project</span>
-                                <span x-text="item.title"></span>
-                                <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
-                              </button>
-                            </template>
-                          </div>
-                        </template>
-                        <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
-                          <div class="scope-picker-group">
-                            <div class="scope-picker-group-label">Deliverable</div>
-                            <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
-                              <button type="button" class="scope-picker-option" @click="$store.chat.selectScopeForDoc(item.record_id)">
-                                <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
-                                <span x-text="item.title"></span>
-                                <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
-                              </button>
-                            </template>
-                          </div>
-                        </template>
-                      </div>
-                      <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">
-                        <p>No scopes found. <a href="/scopes" @click.prevent="$store.chat.navigateTo('scopes')">Create scopes</a> first.</p>
-                      </div>
-                    </div>
+                    <template x-if="$store.chat.docEditingTitle">
+                      <input class="doc-title-input" type="text" x-model="$store.chat.docEditorTitle" @blur="$store.chat.finishDocTitleEdit()" @keydown.enter.prevent="$store.chat.finishDocTitleEdit()" />
+                    </template>
                   </div>
+                  <button
+                    type="button"
+                    class="doc-scope-pill-btn"
+                    x-show="$store.chat.selectedDocument?.scope_id"
+                    @click="$store.chat.openDocScopeModal()"
+                  >
+                    <span
+                      class="doc-scope-pill doc-scope-pill-title"
+                      :class="`doc-scope-pill-${$store.chat.getScopePillLevel($store.chat.selectedDocument) || 'none'}`"
+                      :title="$store.chat.getScopePillTitle($store.chat.selectedDocument)"
+                      x-text="$store.chat.getScopePillLabel($store.chat.selectedDocument)"
+                    ></span>
+                  </button>
+                  <button
+                    type="button"
+                    class="doc-scope-pill-btn"
+                    x-show="$store.chat.selectedDocument && !$store.chat.selectedDocument.scope_id"
+                    title="No scope assigned"
+                    @click="$store.chat.openDocScopeModal()"
+                  ><span class="doc-scope-pill doc-scope-pill-title doc-scope-pill-unscoped">Unscoped</span></button>
                 </div>
 
                 <div class="doc-content-block">
@@ -2353,53 +2328,6 @@
             </div>
           </div>
 
-          <div class="doc-modal-backdrop" x-show="$store.chat.recordStatusModalOpen" x-cloak @click.self="$store.chat.closeRecordStatusModal()">
-            <div class="doc-modal-card record-status-modal">
-              <div class="record-status-header">
-                <div>
-                  <h3>Record Status</h3>
-                  <p x-text="$store.chat.recordStatusTargetLabel || $store.chat.recordStatusTargetId || 'Record'"></p>
-                </div>
-                <button class="modal-close" type="button" @click="$store.chat.closeRecordStatusModal()">&times;</button>
-              </div>
-
-              <div class="record-status-body">
-                <div class="record-status-grid">
-                  <div class="record-status-metric">
-                    <span class="record-status-label">Family</span>
-                    <strong x-text="$store.chat.getRecordStatusFamilyLabel($store.chat.recordStatusFamilyId)"></strong>
-                  </div>
-                  <div class="record-status-metric">
-                    <span class="record-status-label">Tower versions</span>
-                    <strong x-text="$store.chat.recordStatusTowerVersionCount"></strong>
-                  </div>
-                  <div class="record-status-metric">
-                    <span class="record-status-label">Local copy</span>
-                    <strong x-text="$store.chat.recordStatusLocalPresent ? 'Present' : 'Missing'"></strong>
-                  </div>
-                  <div class="record-status-metric">
-                    <span class="record-status-label">Last Tower update</span>
-                    <strong x-text="$store.chat.recordStatusTowerUpdatedAt ? $store.chat.formatRelativeTime($store.chat.recordStatusTowerUpdatedAt) : 'Unknown'"></strong>
-                  </div>
-                </div>
-
-                <p class="error-text" x-show="$store.chat.recordStatusError" x-text="$store.chat.recordStatusError"></p>
-                <p class="settings-success" x-show="$store.chat.recordStatusNotice" x-text="$store.chat.recordStatusNotice"></p>
-              </div>
-
-              <div class="record-status-actions">
-                <button type="button" class="btn-cancel" @click="$store.chat.checkRecordStatusOnTower()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy">
-                  <span x-show="!$store.chat.recordStatusBusy">Check again</span>
-                  <span x-show="$store.chat.recordStatusBusy">Checking...</span>
-                </button>
-                <button type="button" class="btn-confirm" @click="$store.chat.forceSyncRecordStatusTarget()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy">
-                  <span x-show="!$store.chat.recordStatusSyncBusy">Force sync</span>
-                  <span x-show="$store.chat.recordStatusSyncBusy">Syncing...</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
           <div class="doc-modal-backdrop" x-show="$store.chat.showDocShareModal" x-cloak @click.self="$store.chat.closeDocShareModal()">
             <div class="doc-modal-card doc-share-modal">
               <button class="modal-close" type="button" @click="$store.chat.closeDocShareModal()">&times;</button>
@@ -2462,6 +2390,170 @@
               <div class="new-doc-modal-actions">
                 <button type="button" class="btn-cancel" @click="$store.chat.closeDocShareModal()">Cancel</button>
                 <button type="button" class="btn-confirm" :disabled="!$store.chat.docEditorSharesDirty" @click="$store.chat.saveDocShareTarget()">Save sharing</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="doc-modal-backdrop" x-show="$store.chat.showDocScopeModal" x-cloak @click.self="$store.chat.closeDocScopeModal()">
+            <div class="doc-modal-card doc-scope-modal">
+              <button class="modal-close" type="button" @click="$store.chat.closeDocScopeModal()">&times;</button>
+              <h3 x-text="$store.chat.activeDocScopeTargetTypeLabel"></h3>
+              <p class="docs-browser-empty" x-show="$store.chat.activeDocScopeTargetName" x-text="$store.chat.activeDocScopeTargetName"></p>
+              <p class="docs-browser-empty" x-show="$store.chat.docScopeTargetType === 'directory'">
+                New documents created here will use this scope by default, and moved items can adopt it when you drop them into this folder.
+              </p>
+              <p class="docs-browser-empty" x-show="$store.chat.docScopeTargetType === 'bulk-documents'">
+                This scope will be applied to every selected document.
+              </p>
+              <div class="doc-scope-modal-current">
+                <span class="docs-field-label">Selected scope</span>
+                <template x-if="$store.chat.activeDocScopeModalSelection">
+                  <div class="doc-scope-modal-selection">
+                    <span
+                      class="doc-scope-pill"
+                      :class="`doc-scope-pill-${$store.chat.activeDocScopeModalSelection.level || 'none'}`"
+                      :title="$store.chat.getScopeBreadcrumb($store.chat.activeDocScopeModalSelection.record_id)"
+                      x-text="$store.chat.activeDocScopeModalSelection.title"
+                    ></span>
+                    <small x-text="$store.chat.getScopeBreadcrumb($store.chat.activeDocScopeModalSelection.record_id)"></small>
+                  </div>
+                </template>
+                <p class="docs-browser-empty" x-show="!$store.chat.activeDocScopeModalSelection">No scope selected.</p>
+              </div>
+              <input
+                class="docs-share-input"
+                type="text"
+                placeholder="Search scopes"
+                x-model="$store.chat.scopePickerQuery"
+                @keydown.escape="$store.chat.closeDocScopeModal()"
+              />
+              <div class="scope-picker-results doc-scope-modal-results">
+                <template x-if="$store.chat.scopePickerResults.product.length > 0">
+                  <div class="scope-picker-group">
+                    <div class="scope-picker-group-label">Product</div>
+                    <template x-for="item in $store.chat.scopePickerResults.product" :key="item.record_id">
+                      <button
+                        type="button"
+                        class="scope-picker-option"
+                        :class="{ 'scope-picker-option-selected': $store.chat.docScopeModalSelectedId === item.record_id }"
+                        @click="$store.chat.docScopeModalSelectedId = item.record_id"
+                      >
+                        <span class="scope-level-badge scope-badge-product">Product</span>
+                        <span x-text="item.title"></span>
+                      </button>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="$store.chat.scopePickerResults.project.length > 0">
+                  <div class="scope-picker-group">
+                    <div class="scope-picker-group-label">Project</div>
+                    <template x-for="item in $store.chat.scopePickerResults.project" :key="item.record_id">
+                      <button
+                        type="button"
+                        class="scope-picker-option"
+                        :class="{ 'scope-picker-option-selected': $store.chat.docScopeModalSelectedId === item.record_id }"
+                        @click="$store.chat.docScopeModalSelectedId = item.record_id"
+                      >
+                        <span class="scope-level-badge scope-badge-project">Project</span>
+                        <span x-text="item.title"></span>
+                        <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                      </button>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="$store.chat.scopePickerResults.deliverable.length > 0">
+                  <div class="scope-picker-group">
+                    <div class="scope-picker-group-label">Deliverable</div>
+                    <template x-for="item in $store.chat.scopePickerResults.deliverable" :key="item.record_id">
+                      <button
+                        type="button"
+                        class="scope-picker-option"
+                        :class="{ 'scope-picker-option-selected': $store.chat.docScopeModalSelectedId === item.record_id }"
+                        @click="$store.chat.docScopeModalSelectedId = item.record_id"
+                      >
+                        <span class="scope-level-badge scope-badge-deliverable">Deliverable</span>
+                        <span x-text="item.title"></span>
+                        <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                      </button>
+                    </template>
+                  </div>
+                </template>
+                <div class="scope-picker-empty" x-show="$store.chat.scopePickerResults.product.length === 0 && $store.chat.scopePickerResults.project.length === 0 && $store.chat.scopePickerResults.deliverable.length === 0">
+                  <p>No scopes found. <a href="/scopes" @click.prevent="$store.chat.navigateTo('scopes')">Create scopes</a> first.</p>
+                </div>
+              </div>
+              <div class="new-doc-modal-actions">
+                <button type="button" class="btn-cancel" :disabled="$store.chat.docScopeModalSubmitting" @click="$store.chat.closeDocScopeModal()">Cancel</button>
+                <button
+                  type="button"
+                  class="btn-cancel"
+                  :disabled="$store.chat.docScopeModalSubmitting || ($store.chat.docScopeTargetType === 'bulk-documents' ? !$store.chat.activeDocScopeTargets.some(item => item.scope_id) : !$store.chat.activeDocScopeTarget?.scope_id)"
+                  @click="$store.chat.docScopeModalSelectedId = null"
+                >Remove scope</button>
+                <button
+                  type="button"
+                  class="btn-confirm"
+                  :disabled="$store.chat.docScopeModalSubmitting || !$store.chat.docScopeModalHasChanges"
+                  @click="$store.chat.saveDocScopeModal()"
+                  x-text="$store.chat.docScopeModalSubmitting ? 'Saving…' : 'Save scope'"
+                ></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="doc-modal-backdrop" x-show="$store.chat.docMoveScopePrompt" x-cloak @click.self="$store.chat.closeDocMoveScopePrompt()">
+            <div class="doc-modal-card doc-scope-confirm-modal">
+              <h3>Apply folder scope?</h3>
+              <p class="docs-browser-empty">
+                This folder has a default scope.
+              </p>
+              <template x-if="$store.chat.docMoveScopePrompt?.scopeId">
+                <div class="doc-scope-modal-selection">
+                  <span
+                    class="doc-scope-pill"
+                    :class="`doc-scope-pill-${$store.chat.scopesMap.get($store.chat.docMoveScopePrompt.scopeId)?.level || 'none'}`"
+                    :title="$store.chat.getScopeBreadcrumb($store.chat.docMoveScopePrompt.scopeId)"
+                    x-text="$store.chat.getScopeLabel($store.chat.docMoveScopePrompt.scopeId)"
+                  ></span>
+                  <small x-text="$store.chat.getScopeBreadcrumb($store.chat.docMoveScopePrompt.scopeId)"></small>
+                </div>
+              </template>
+              <p class="docs-browser-empty" x-text="`Apply this scope while moving into ${$store.chat.docMoveScopePrompt?.targetFolderTitle || 'the folder'}?`"></p>
+              <div class="new-doc-modal-actions">
+                <button type="button" class="btn-cancel" @click="$store.chat.closeDocMoveScopePrompt()">Cancel</button>
+                <button type="button" class="btn-cancel" @click="$store.chat.confirmDocMoveScopePrompt(false)">Keep current scope</button>
+                <button type="button" class="btn-confirm" @click="$store.chat.confirmDocMoveScopePrompt(true)">Apply default scope</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="doc-modal-backdrop" x-show="$store.chat.showDocMoveModal" x-cloak @click.self="$store.chat.closeDocMoveModal()">
+            <div class="doc-modal-card doc-move-modal">
+              <button class="modal-close" type="button" @click="$store.chat.closeDocMoveModal()">&times;</button>
+              <h3 x-text="$store.chat.docMoveRecordIds.length > 1 ? 'Move documents' : 'Move document'"></h3>
+              <p class="docs-browser-empty" x-text="$store.chat.docMoveRecordIds.length > 1 ? `${$store.chat.docMoveRecordIds.length} documents selected` : ($store.chat.activeDocMoveItems[0]?.title || 'Untitled document')"></p>
+              <input
+                class="docs-share-input"
+                type="text"
+                placeholder="Browse folders"
+                x-model="$store.chat.docMoveDirectoryQuery"
+                @keydown.escape="$store.chat.closeDocMoveModal()"
+              />
+              <div class="doc-move-list">
+                <template x-for="option in $store.chat.docMoveDirectoryOptions" :key="option.record_id ?? '__root__'">
+                  <button
+                    type="button"
+                    class="doc-move-option"
+                    :disabled="!$store.chat.canMoveActiveDocsToFolder(option.record_id) || $store.chat.docMoveModalSubmitting"
+                    @click="$store.chat.moveActiveDocsToFolder(option.record_id)"
+                  >
+                    <div class="doc-move-option-copy" :style="`padding-left: ${option.depth * 1.1}rem`">
+                      <span class="doc-move-option-title" x-text="option.title"></span>
+                      <small x-text="option.breadcrumb"></small>
+                    </div>
+                    <span class="doc-move-option-meta" x-text="$store.chat.canMoveActiveDocsToFolder(option.record_id) ? 'Move here' : 'Current folder'"></span>
+                  </button>
+                </template>
               </div>
             </div>
           </div>
@@ -4431,6 +4523,65 @@
                 @click="$store.chat.newChannelMode === 'dm' ? $store.chat.createDmChannel() : $store.chat.createNamedChannel()"
                 :disabled="$store.chat.newChannelMode === 'dm' ? !($store.chat.newChannelDmNpub.startsWith('npub1') && $store.chat.newChannelDmNpub.length >= 63) : !$store.chat.newChannelName.trim() || !$store.chat.newChannelGroupId">
                 Create
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.recordStatusModalOpen" x-cloak @click.self="$store.chat.closeRecordStatusModal()">
+          <div class="doc-modal-card record-status-modal">
+            <div class="record-status-header">
+              <div>
+                <h3>Record Status</h3>
+                <p x-text="$store.chat.recordStatusTargetLabel || $store.chat.recordStatusTargetId || 'Record'"></p>
+              </div>
+              <button class="modal-close" type="button" @click="$store.chat.closeRecordStatusModal()">&times;</button>
+            </div>
+
+            <div class="record-status-body">
+                <div class="record-status-grid">
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Family</span>
+                    <strong x-text="$store.chat.getRecordStatusFamilyLabel($store.chat.recordStatusFamilyId)"></strong>
+                  </div>
+                <div class="record-status-metric">
+                  <span class="record-status-label">Tower versions</span>
+                  <strong x-text="$store.chat.recordStatusTowerVersionCount"></strong>
+                </div>
+                <div class="record-status-metric">
+                  <span class="record-status-label">Local copy</span>
+                  <strong x-text="$store.chat.recordStatusLocalPresent ? 'Present' : 'Missing'"></strong>
+                </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Last Tower update</span>
+                    <strong x-text="$store.chat.recordStatusTowerUpdatedAt ? $store.chat.formatRelativeTime($store.chat.recordStatusTowerUpdatedAt) : 'Unknown'"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Write group</span>
+                    <strong x-text="$store.chat.recordStatusWriteGroupLabel || 'Unassigned'"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Group key</span>
+                    <strong x-text="$store.chat.recordStatusWriteGroupRef ? ($store.chat.recordStatusWriteGroupKeyLoaded ? 'Loaded' : 'Missing') : 'Not needed'"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Pending writes</span>
+                    <strong x-text="$store.chat.recordStatusPendingWriteCount"></strong>
+                  </div>
+                </div>
+
+              <p class="error-text" x-show="$store.chat.recordStatusError" x-text="$store.chat.recordStatusError"></p>
+              <p class="settings-success" x-show="$store.chat.recordStatusNotice" x-text="$store.chat.recordStatusNotice"></p>
+            </div>
+
+            <div class="record-status-actions">
+              <button type="button" class="btn-cancel" @click="$store.chat.checkRecordStatusOnTower()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy">
+                <span x-show="!$store.chat.recordStatusBusy">Check again</span>
+                <span x-show="$store.chat.recordStatusBusy">Checking...</span>
+              </button>
+              <button type="button" class="btn-confirm" @click="$store.chat.forcePushRecordStatusTarget()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canForcePushRecordStatusTarget()">
+                <span x-show="!$store.chat.recordStatusSyncBusy">Force push</span>
+                <span x-show="$store.chat.recordStatusSyncBusy">Pushing...</span>
               </button>
             </div>
           </div>
