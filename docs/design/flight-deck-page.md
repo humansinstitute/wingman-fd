@@ -96,7 +96,7 @@ Purpose: answer "what needs my action right now?"
 
 | Item type | Query | Display |
 |---|---|---|
-| Assigned tasks (open) | `tasks` where `assignee_npub === myNpub` and state not `done`/`archived` | Count + "N tasks assigned to you" |
+| Assigned tasks (open) | `tasks` where `assigned_to_npub === myNpub` and state not `done`/`archived` | Count + "N tasks assigned to you" |
 | Overdue tasks | Assigned tasks where `due_date < today` | Count + "N overdue" |
 | Unread chat mentions | From `unreadStoreMixin` channel/thread unread state | Count + "N unread replies" |
 | Pending scope approvals | (Future — not available yet) | Placeholder text |
@@ -375,7 +375,7 @@ flightDeckScopeCards: [
 
 4. **Should the hero scope picker expand/collapse the scope cards section?** If the user picks a specific scope, should we show only that scope's card (expanded with more detail) vs. all sibling cards? Recommend: highlight the selected scope card and show its children.
 
-5. **New mixin or inline in app.js?** If the computed getters are ~100 lines, a dedicated `src/flight-deck-manager.js` mixin keeps `app.js` clean. If <50 lines, inline is fine. Recommend creating the mixin to follow the existing pattern (`docsManagerMixin`, `scopesManagerMixin`, etc.).
+5. ~~New mixin or inline in app.js?~~ **Resolved:** Use a dedicated `src/flight-deck-manager.js` mixin, following the established codebase pattern (`docsManagerMixin`, `scopesManagerMixin`, `jobsManagerMixin`, etc.).
 
 ## Files to Modify (summary)
 
