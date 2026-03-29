@@ -4178,6 +4178,7 @@ button:disabled {
   border: none;
   border-radius: var(--radius-md);
   background: #f8fafc;
+  color: var(--text);
   cursor: pointer;
 }
 
