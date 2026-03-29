@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   findDirectoryByParentAndTitle,
   getAvailableParents,
+  readScopeAssignment,
+  sameScopeAssignment,
 } from '../src/scopes-manager.js';
 
 describe('scopes-manager pure utilities', () => {
@@ -93,6 +95,67 @@ describe('scopes-manager pure utilities', () => {
 
     it('returns empty array for unknown level', () => {
       expect(getAvailableParents(scopes, 'unknown')).toEqual([]);
+    });
+  });
+
+  // --- readScopeAssignment / sameScopeAssignment ---
+  describe('scope assignment helpers', () => {
+    it('normalizes missing scope fields to null', () => {
+      expect(readScopeAssignment({})).toEqual({
+        scope_id: null,
+        scope_l1_id: null,
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+      });
+    });
+
+    it('reads scope assignment fields from a scoped record', () => {
+      expect(readScopeAssignment({
+        scope_id: 'scope-project',
+        scope_l1_id: 'scope-product',
+        scope_l2_id: 'scope-project',
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+      })).toEqual({
+        scope_id: 'scope-project',
+        scope_l1_id: 'scope-product',
+        scope_l2_id: 'scope-project',
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+      });
+    });
+
+    it('detects equal scope assignments even across different record shapes', () => {
+      expect(sameScopeAssignment(
+        {
+          scope_id: 'scope-project',
+          scope_l1_id: 'scope-product',
+          scope_l2_id: 'scope-project',
+          scope_l3_id: null,
+          scope_l4_id: null,
+          scope_l5_id: null,
+        },
+        {
+          record_id: 'doc-1',
+          scope_id: 'scope-project',
+          scope_l1_id: 'scope-product',
+          scope_l2_id: 'scope-project',
+          scope_l3_id: null,
+          scope_l4_id: null,
+          scope_l5_id: null,
+        },
+      )).toBe(true);
+    });
+
+    it('detects when scope assignments differ', () => {
+      expect(sameScopeAssignment(
+        { scope_id: 'scope-project', scope_l1_id: 'scope-product', scope_l2_id: 'scope-project' },
+        { scope_id: 'scope-deliverable', scope_l1_id: 'scope-product', scope_l2_id: 'scope-project', scope_l3_id: 'scope-deliverable' },
+      )).toBe(false);
     });
   });
 });

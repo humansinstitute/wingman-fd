@@ -18,23 +18,31 @@ describe('scope delivery helpers', () => {
   });
 
   it('derives project and deliverable hierarchy from parents', () => {
-    const product = { record_id: 'product-1', level: 'product', parent_id: null, product_id: null, project_id: null };
-    const project = { record_id: 'project-1', level: 'project', parent_id: 'product-1', product_id: 'product-1', project_id: null };
+    const product = { record_id: 'product-1', level: 'product', parent_id: null, l1_id: null, l2_id: null };
+    const project = { record_id: 'project-1', level: 'project', parent_id: 'product-1', l1_id: 'product-1', l2_id: null };
     const scopesMap = new Map([
       [product.record_id, product],
       [project.record_id, project],
     ]);
 
-    expect(deriveScopeHierarchy({ level: 'project', parentId: 'product-1', scopesMap })).toEqual({
+    expect(deriveScopeHierarchy({ parentId: 'product-1', scopesMap })).toEqual({
       parent_id: 'product-1',
-      product_id: 'product-1',
-      project_id: null,
+      level: 'l2',
+      l1_id: 'product-1',
+      l2_id: null,
+      l3_id: null,
+      l4_id: null,
+      l5_id: null,
     });
 
-    expect(deriveScopeHierarchy({ level: 'deliverable', parentId: 'project-1', scopesMap })).toEqual({
+    expect(deriveScopeHierarchy({ parentId: 'project-1', scopesMap })).toEqual({
       parent_id: 'project-1',
-      product_id: 'product-1',
-      project_id: 'project-1',
+      level: 'l3',
+      l1_id: 'product-1',
+      l2_id: 'project-1',
+      l3_id: null,
+      l4_id: null,
+      l5_id: null,
     });
   });
 
@@ -79,21 +87,25 @@ describe('scope delivery helpers', () => {
   it('builds scope tags for directories', () => {
     expect(buildScopeTags({ record_id: 'product-1', level: 'product' })).toEqual({
       scope_id: 'product-1',
-      scope_product_id: 'product-1',
-      scope_project_id: null,
-      scope_deliverable_id: null,
+      scope_l1_id: 'product-1',
+      scope_l2_id: null,
+      scope_l3_id: null,
+      scope_l4_id: null,
+      scope_l5_id: null,
     });
 
     expect(buildScopeTags({
       record_id: 'deliverable-1',
       level: 'deliverable',
-      product_id: 'product-1',
-      project_id: 'project-1',
+      l1_id: 'product-1',
+      l2_id: 'project-1',
     })).toEqual({
       scope_id: 'deliverable-1',
-      scope_product_id: 'product-1',
-      scope_project_id: 'project-1',
-      scope_deliverable_id: 'deliverable-1',
+      scope_l1_id: 'product-1',
+      scope_l2_id: 'project-1',
+      scope_l3_id: 'deliverable-1',
+      scope_l4_id: null,
+      scope_l5_id: null,
     });
   });
 

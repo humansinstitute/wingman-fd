@@ -18,10 +18,13 @@ export async function inboundScope(record) {
     owner_npub:   record.owner_npub,
     title:        data.title ?? '',
     description:  data.description ?? '',
-    level:        data.level ?? 'product',
+    level:        normalizeScopeLevel(data.level) || 'l1',
     parent_id:    data.parent_id ?? null,
-    product_id:   data.product_id ?? null,
-    project_id:   data.project_id ?? null,
+    l1_id:        data.l1_id ?? null,
+    l2_id:        data.l2_id ?? null,
+    l3_id:        data.l3_id ?? null,
+    l4_id:        data.l4_id ?? null,
+    l5_id:        data.l5_id ?? null,
     group_ids:    groupIds,
     sync_status:  'synced',
     record_state: data.record_state ?? 'active',
@@ -38,10 +41,13 @@ export async function outboundScope({
   owner_npub,
   title,
   description = '',
-  level = 'product',
+  level = 'l1',
   parent_id = null,
-  product_id = null,
-  project_id = null,
+  l1_id = null,
+  l2_id = null,
+  l3_id = null,
+  l4_id = null,
+  l5_id = null,
   group_ids = [],
   version = 1,
   previous_version = 0,
@@ -59,8 +65,11 @@ export async function outboundScope({
       description,
       level,
       parent_id,
-      product_id,
-      project_id,
+      l1_id,
+      l2_id,
+      l3_id,
+      l4_id,
+      l5_id,
       record_state,
     },
   };
@@ -80,11 +89,50 @@ export async function outboundScope({
 
 // --- helpers ---
 
-export const SCOPE_LEVELS = ['product', 'project', 'deliverable'];
+/** Canonical scope levels (generic hierarchy). */
+export const SCOPE_LEVELS = ['l1', 'l2', 'l3', 'l4', 'l5'];
 
+/** Map legacy semantic names to canonical levels for read compatibility. */
+export const LEGACY_LEVEL_MAP = {
+  product: 'l1',
+  project: 'l2',
+  deliverable: 'l3',
+};
+
+const DEPTH_BY_LEVEL = { l1: 1, l2: 2, l3: 3, l4: 4, l5: 5 };
+
+/**
+ * Normalize any scope level (legacy or canonical) to the canonical l1-l5 form.
+ * Returns null for unknown / falsy input.
+ */
+export function normalizeScopeLevel(level) {
+  if (!level) return null;
+  if (DEPTH_BY_LEVEL[level] !== undefined) return level;
+  return LEGACY_LEVEL_MAP[level] ?? null;
+}
+
+/**
+ * Return the numeric depth (1-5) for a scope level. Returns 0 for unknown.
+ */
+export function scopeDepth(level) {
+  const canonical = normalizeScopeLevel(level);
+  return canonical ? DEPTH_BY_LEVEL[canonical] : 0;
+}
+
+/**
+ * Return the user-facing label for a scope level: "L1" through "L5".
+ */
+export function scopeLevelLabel(level) {
+  const canonical = normalizeScopeLevel(level);
+  if (!canonical) return '';
+  return canonical.toUpperCase();
+}
+
+/**
+ * Backward-compatible label helper. Now delegates to scopeLevelLabel.
+ */
 export function levelLabel(level) {
-  if (!level) return '';
-  return level.charAt(0).toUpperCase() + level.slice(1);
+  return scopeLevelLabel(level);
 }
 
 /**
@@ -100,30 +148,23 @@ export function scopeBreadcrumb(scopeId, scopesMap) {
   return parts.join(' > ');
 }
 
-/**
- * Resolve the full scope chain for a scope_id.
- * Returns { scope_product_id, scope_project_id, scope_deliverable_id }.
- */
 export function resolveScopeChain(scopeId, scopesMap) {
   const scope = scopesMap.get(scopeId);
-  if (!scope) return { scope_product_id: null, scope_project_id: null, scope_deliverable_id: null };
-
-  if (scope.level === 'product') {
-    return { scope_product_id: scope.record_id, scope_project_id: null, scope_deliverable_id: null };
-  }
-  if (scope.level === 'project') {
-    return { scope_product_id: scope.product_id || scope.parent_id, scope_project_id: scope.record_id, scope_deliverable_id: null };
-  }
-  // deliverable
-  return {
-    scope_product_id: scope.product_id,
-    scope_project_id: scope.project_id || scope.parent_id,
-    scope_deliverable_id: scope.record_id,
+  if (!scope) return { scope_l1_id: null, scope_l2_id: null, scope_l3_id: null, scope_l4_id: null, scope_l5_id: null };
+  const depth = scopeDepth(scope.level);
+  const result = {
+    scope_l1_id: scope.l1_id ?? null,
+    scope_l2_id: scope.l2_id ?? null,
+    scope_l3_id: scope.l3_id ?? null,
+    scope_l4_id: scope.l4_id ?? null,
+    scope_l5_id: scope.l5_id ?? null,
   };
+  if (depth >= 1 && depth <= 5) result[`scope_l${depth}_id`] = scope.record_id;
+  return result;
 }
 
 /**
- * Fuzzy search scopes, grouped by level.
+ * Fuzzy search scopes, grouped by canonical level (l1-l5).
  */
 export function searchScopes(query, scopes, scopesMap) {
   const needle = (query || '').trim().toLowerCase();
@@ -139,14 +180,15 @@ export function searchScopes(query, scopes, scopesMap) {
 }
 
 function groupByLevel(scopes, scopesMap) {
-  const groups = { product: [], project: [], deliverable: [] };
+  const groups = { l1: [], l2: [], l3: [], l4: [], l5: [] };
   for (const s of scopes) {
-    if (groups[s.level]) {
+    const canonical = normalizeScopeLevel(s.level);
+    if (canonical && groups[canonical]) {
       const entry = { ...s };
-      if (scopesMap && s.level !== 'product') {
+      if (scopesMap && scopeDepth(s.level) > 1) {
         entry.breadcrumb = scopeBreadcrumb(s.record_id, scopesMap);
       }
-      groups[s.level].push(entry);
+      groups[canonical].push(entry);
     }
   }
   return groups;

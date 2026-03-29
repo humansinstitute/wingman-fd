@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-B4ItjUG2.js"></script>
+  <script type="module" crossorigin src="/assets/index-CDFH4OTe.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-D8JmT_m8.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -893,34 +893,6 @@
                 </template>
               </div>
             </template>
-
-            <div class="board-selector board-selector-inline" x-data="{ bpIdx: 0 }" @click.outside="$store.chat.closeBoardPicker()">
-              <div class="board-picker-typeahead-wrapper">
-                <input
-                  class="board-picker-typeahead-input"
-                  type="text"
-                  x-model="$store.chat.boardPickerQuery"
-                  :placeholder="$store.chat.selectedBoardLabel || 'Select scope...'"
-                  @focus="$store.chat.showBoardPicker = true; bpIdx = 0"
-                  @keydown.escape="$store.chat.closeBoardPicker(); $el.blur()"
-                  @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filteredTaskBoards.length - 1)"
-                  @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
-                  @keydown.enter.prevent="if ($store.chat.filteredTaskBoards[bpIdx]) { $store.chat.selectBoard($store.chat.filteredTaskBoards[bpIdx].id); $el.blur() }"
-                />
-                <ul class="board-picker-typeahead-results" x-show="$store.chat.showBoardPicker && $store.chat.filteredTaskBoards.length > 0" x-cloak>
-                  <template x-for="(board, idx) in $store.chat.filteredTaskBoards" :key="board.id ?? '__personal'">
-                    <li
-                      class="board-picker-typeahead-option"
-                      :class="{ 'board-picker-typeahead-active': $store.chat.selectedBoardId === board.id, 'board-picker-typeahead-highlight': idx === bpIdx }"
-                      @click="$store.chat.selectBoard(board.id)"
-                      @mouseenter="bpIdx = idx"
-                      x-text="board.label"
-                    ></li>
-                  </template>
-                </ul>
-                <div class="board-picker-typeahead-empty" x-show="$store.chat.showBoardPicker && $store.chat.filteredTaskBoards.length === 0">No scopes match.</div>
-              </div>
-            </div>
 
             <button
               type="button"

@@ -24,16 +24,17 @@ let _currentWorkspaceOwnerNpub = null;
 
 const WORKSPACE_STORES = {
   workspace_settings: '&workspace_owner_npub, record_id, updated_at',
-  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  channels:           'record_id, owner_npub, *group_ids, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
   chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
   groups:             'group_id, owner_npub, *member_npubs',
-  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
   directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
-  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  reports:            'record_id, owner_npub, declaration_type, surface, generated_at, updated_at, *group_ids, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
+  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
   schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
   comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
   audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
-  scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+  scopes:             'record_id, owner_npub, level, parent_id, l1_id, l2_id, l3_id, l4_id, l5_id, updated_at',
   sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
   pending_writes:     '++row_id, record_id, record_family_hash, created_at',
   sync_state:         'key',
@@ -42,6 +43,23 @@ const WORKSPACE_STORES = {
 
 function createWorkspaceDb(ownerNpub) {
   const db = new Dexie(`wingman-fd-ws-${ownerNpub}`);
+  const WORKSPACE_STORES_V2 = {
+    workspace_settings: '&workspace_owner_npub, record_id, updated_at',
+    channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    chat_messages:      'record_id, channel_id, parent_message_id, sync_status, updated_at',
+    groups:             'group_id, owner_npub, *member_npubs',
+    documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
+    tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+    schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
+    comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+    audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
+    scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
+    sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
+    pending_writes:     '++row_id, record_id, record_family_hash, created_at',
+    sync_state:         'key',
+    read_cursors:       '&record_id, cursor_key, viewer_npub, read_until',
+  };
   // v1: original schema (without read_cursors)
   db.version(1).stores({
     workspace_settings: '&workspace_owner_npub, record_id, updated_at',
@@ -60,7 +78,14 @@ function createWorkspaceDb(ownerNpub) {
     sync_state:         'key',
   });
   // v2: add read_cursors for unread indicators
-  db.version(2).stores(WORKSPACE_STORES);
+  db.version(2).stores(WORKSPACE_STORES_V2);
+  // v3: add reports table
+  db.version(3).stores({
+    ...WORKSPACE_STORES_V2,
+    reports: 'record_id, owner_npub, declaration_type, surface, generated_at, updated_at, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
+  });
+  // v4: canonical scope indexes (l1–l5 replacing product/project/deliverable)
+  db.version(4).stores(WORKSPACE_STORES);
   return db;
 }
 
@@ -360,6 +385,30 @@ export async function getRecentDirectoryChangesSince(sinceIso) {
 }
 
 // ---------------------------------------------------------------------------
+// reports — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function getReportsByOwner(ownerNpub) {
+  const rows = await wsDb().reports.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function getRecentReportChangesSince(sinceIso) {
+  const rows = await wsDb().reports.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  return rows
+    .filter((row) => row.record_state !== 'deleted')
+    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+}
+
+export async function upsertReport(report) {
+  return wsDb().reports.put(sanitizeForStorage(report));
+}
+
+export async function getReportById(recordId) {
+  return wsDb().reports.get(recordId);
+}
+
+// ---------------------------------------------------------------------------
 // groups — workspace DB
 // ---------------------------------------------------------------------------
 
@@ -646,6 +695,7 @@ export async function clearRuntimeData() {
     db.chat_messages.clear(),
     db.documents.clear(),
     db.directories.clear(),
+    db.reports.clear(),
     db.tasks.clear(),
     db.schedules.clear(),
     db.comments.clear(),

@@ -120,9 +120,11 @@ describe('docs translator', () => {
             title: 'Projects',
             parent_directory_id: null,
             scope_id: 'product-1',
-            scope_product_id: 'product-1',
-            scope_project_id: null,
-            scope_deliverable_id: null,
+            scope_l1_id: 'product-1',
+            scope_l2_id: null,
+            scope_l3_id: null,
+            scope_l4_id: null,
+            scope_l5_id: null,
           },
         }),
       },
@@ -134,7 +136,7 @@ describe('docs translator', () => {
     expect(row.title).toBe('Projects');
     expect(row.parent_directory_id).toBeNull();
     expect(row.scope_id).toBe('product-1');
-    expect(row.scope_product_id).toBe('product-1');
+    expect(row.scope_l1_id).toBe('product-1');
     expect(row.shares).toEqual([]);
   });
 
@@ -145,9 +147,11 @@ describe('docs translator', () => {
       title: 'Archive',
       parent_directory_id: null,
       scope_id: 'deliverable-1',
-      scope_product_id: 'product-1',
-      scope_project_id: 'project-1',
-      scope_deliverable_id: 'deliverable-1',
+      scope_l1_id: 'product-1',
+      scope_l2_id: 'project-1',
+      scope_l3_id: 'deliverable-1',
+      scope_l4_id: null,
+      scope_l5_id: null,
       shares: [],
       version: 3,
       previous_version: 2,

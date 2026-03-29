@@ -7589,18 +7589,18 @@ button:disabled {
   background: var(--bg);
 }
 
-.scope-card-product {
+.scope-card[data-level="l1"] {
   background: var(--bg-elevated);
   border-left: 3px solid #3b82f6;
 }
 
-.scope-card-project {
+.scope-card[data-level="l2"] {
   margin-top: 0.75rem;
   border-left: 3px solid #7c3aed;
   background: var(--bg);
 }
 
-.scope-card-deliverable {
+.scope-card[data-level="l3"] {
   margin-top: 0.5rem;
   border-left: 3px solid #10b981;
   background: var(--bg);
@@ -7626,7 +7626,7 @@ button:disabled {
   word-break: break-word;
 }
 
-.scope-card-product > .scope-card-title {
+.scope-card[data-level="l1"] > .scope-card-title {
   font-size: 1.1rem;
 }
 

@@ -21,7 +21,7 @@ describe('task board scopes', () => {
     title: 'Launch',
     level: 'project',
     parent_id: 'scope-product',
-    product_id: 'scope-product',
+    l1_id: 'scope-product',
     record_state: 'active',
   };
 
@@ -30,8 +30,8 @@ describe('task board scopes', () => {
     title: 'Website',
     level: 'deliverable',
     parent_id: 'scope-project',
-    product_id: 'scope-product',
-    project_id: 'scope-project',
+    l1_id: 'scope-product',
+    l2_id: 'scope-project',
     record_state: 'active',
   };
 
@@ -42,9 +42,9 @@ describe('task board scopes', () => {
   ]);
 
   it('infers task level from scope lineage fields', () => {
-    expect(inferTaskScopeLevel({ scope_product_id: 'scope-product' }, scopesMap)).toBe('product');
-    expect(inferTaskScopeLevel({ scope_project_id: 'scope-project' }, scopesMap)).toBe('project');
-    expect(inferTaskScopeLevel({ scope_deliverable_id: 'scope-deliverable' }, scopesMap)).toBe('deliverable');
+    expect(inferTaskScopeLevel({ scope_l1_id: 'scope-product' }, scopesMap)).toBe('l1');
+    expect(inferTaskScopeLevel({ scope_l2_id: 'scope-project' }, scopesMap)).toBe('l2');
+    expect(inferTaskScopeLevel({ scope_l3_id: 'scope-deliverable' }, scopesMap)).toBe('l3');
   });
 
   it('builds board labels from scope hierarchy', () => {
@@ -63,23 +63,24 @@ describe('task board scopes', () => {
   });
 
   it('matches product boards to product and project tasks by default', () => {
-    const productTask = { scope_id: 'scope-product', scope_product_id: 'scope-product', record_state: 'active' };
+    const productTask = { scope_id: 'scope-product', scope_l1_id: 'scope-product', record_state: 'active' };
     const projectTask = {
       scope_id: 'scope-project',
-      scope_product_id: 'scope-product',
-      scope_project_id: 'scope-project',
+      scope_l1_id: 'scope-product',
+      scope_l2_id: 'scope-project',
       record_state: 'active',
     };
     const deliverableTask = {
       scope_id: 'scope-deliverable',
-      scope_product_id: 'scope-product',
-      scope_project_id: 'scope-project',
-      scope_deliverable_id: 'scope-deliverable',
+      scope_l1_id: 'scope-product',
+      scope_l2_id: 'scope-project',
+      scope_l3_id: 'scope-deliverable',
       record_state: 'active',
     };
 
     expect(matchesTaskBoardScope(productTask, product, scopesMap)).toBe(true);
-    expect(matchesTaskBoardScope(projectTask, product, scopesMap)).toBe(true);
+    expect(matchesTaskBoardScope(projectTask, product, scopesMap)).toBe(false);
+    expect(matchesTaskBoardScope(projectTask, product, scopesMap, { includeDescendants: true })).toBe(true);
     expect(matchesTaskBoardScope(deliverableTask, product, scopesMap)).toBe(false);
     expect(matchesTaskBoardScope(deliverableTask, product, scopesMap, { includeDescendants: true })).toBe(true);
   });
@@ -94,7 +95,8 @@ describe('task board scopes', () => {
       record_state: 'active',
     };
 
-    expect(matchesTaskBoardScope(legacyProjectTask, product, scopesMap)).toBe(true);
+    expect(matchesTaskBoardScope(legacyProjectTask, product, scopesMap, { includeDescendants: true })).toBe(true);
+    expect(matchesTaskBoardScope(legacyProjectTask, product, scopesMap)).toBe(false);
     expect(matchesTaskBoardScope(legacyProjectTask, project, scopesMap)).toBe(true);
     expect(matchesTaskBoardScope(legacyDeliverableTask, project, scopesMap)).toBe(false);
     expect(matchesTaskBoardScope(legacyDeliverableTask, project, scopesMap, { includeDescendants: true })).toBe(true);
@@ -103,21 +105,21 @@ describe('task board scopes', () => {
   it('detects truly unscoped tasks', () => {
     expect(isTaskUnscoped({ record_state: 'active' }, scopesMap)).toBe(true);
     expect(isTaskUnscoped({ scope_id: 'scope-project', record_state: 'active' }, scopesMap)).toBe(false);
-    expect(isTaskUnscoped({ scope_project_id: 'scope-project', record_state: 'active' }, scopesMap)).toBe(false);
+    expect(isTaskUnscoped({ scope_l2_id: 'scope-project', record_state: 'active' }, scopesMap)).toBe(false);
   });
 
   it('matches project boards to project tasks and optionally deliverables', () => {
     const projectTask = {
       scope_id: 'scope-project',
-      scope_product_id: 'scope-product',
-      scope_project_id: 'scope-project',
+      scope_l1_id: 'scope-product',
+      scope_l2_id: 'scope-project',
       record_state: 'active',
     };
     const deliverableTask = {
       scope_id: 'scope-deliverable',
-      scope_product_id: 'scope-product',
-      scope_project_id: 'scope-project',
-      scope_deliverable_id: 'scope-deliverable',
+      scope_l1_id: 'scope-product',
+      scope_l2_id: 'scope-project',
+      scope_l3_id: 'scope-deliverable',
       record_state: 'active',
     };
 
@@ -129,15 +131,15 @@ describe('task board scopes', () => {
   it('matches deliverable boards only to deliverable tasks', () => {
     const deliverableTask = {
       scope_id: 'scope-deliverable',
-      scope_product_id: 'scope-product',
-      scope_project_id: 'scope-project',
-      scope_deliverable_id: 'scope-deliverable',
+      scope_l1_id: 'scope-product',
+      scope_l2_id: 'scope-project',
+      scope_l3_id: 'scope-deliverable',
       record_state: 'active',
     };
     const projectTask = {
       scope_id: 'scope-project',
-      scope_product_id: 'scope-product',
-      scope_project_id: 'scope-project',
+      scope_l1_id: 'scope-product',
+      scope_l2_id: 'scope-project',
       record_state: 'active',
     };
 

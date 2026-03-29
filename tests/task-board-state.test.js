@@ -41,6 +41,7 @@ const project = {
   title: 'Project Y',
   level: 'project',
   parent_id: 'scope-product',
+  l1_id: 'scope-product',
   record_state: 'active',
 };
 
@@ -49,8 +50,8 @@ const deliverable = {
   title: 'Deliverable Z',
   level: 'deliverable',
   parent_id: 'scope-project',
-  product_id: 'scope-product',
-  project_id: 'scope-project',
+  l1_id: 'scope-product',
+  l2_id: 'scope-project',
   record_state: 'active',
 };
 
@@ -282,11 +283,11 @@ describe('normalizeTaskRowScopeRefs', () => {
   });
 
   it('fills in scope hierarchy fields for known scope', () => {
-    const task = { scope_id: 'scope-deliverable', scope_product_id: null, scope_project_id: null, scope_deliverable_id: null };
+    const task = { scope_id: 'scope-deliverable', scope_l1_id: null, scope_l2_id: null, scope_l3_id: null };
     const result = normalizeTaskRowScopeRefs(task, scopesMap);
-    expect(result.scope_deliverable_id).toBe('scope-deliverable');
-    expect(result.scope_project_id).toBe('scope-project');
-    expect(result.scope_product_id).toBe('scope-product');
+    expect(result.scope_l3_id).toBe('scope-deliverable');
+    expect(result.scope_l2_id).toBe('scope-project');
+    expect(result.scope_l1_id).toBe('scope-product');
   });
 });
 
@@ -337,7 +338,7 @@ describe('computeBoardScopedTasks', () => {
     { record_id: 't1', record_state: 'active', scope_id: 'scope-product' },
     { record_id: 't2', record_state: 'active', scope_id: null },
     { record_id: 't3', record_state: 'deleted', scope_id: null },
-    { record_id: 't4', record_state: 'active', scope_id: 'scope-project', scope_product_id: 'scope-product' },
+    { record_id: 't4', record_state: 'active', scope_id: 'scope-project', scope_l1_id: 'scope-product' },
   ];
 
   it('filters deleted tasks', () => {

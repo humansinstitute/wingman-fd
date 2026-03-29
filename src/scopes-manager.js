@@ -19,6 +19,8 @@ import {
   resolveScopeChain,
   searchScopes,
   scopeBreadcrumb,
+  scopeDepth,
+  normalizeScopeLevel,
 } from './translators/scopes.js';
 import { outboundDocument, outboundDirectory } from './translators/docs.js';
 import { outboundChannel } from './translators/chat.js';
@@ -52,10 +54,32 @@ export function findDirectoryByParentAndTitle(directories, parentDirectoryId, ti
 }
 
 export function getAvailableParents(scopes, level) {
-  if (level === 'product') return [];
-  if (level === 'project') return scopes.filter(s => s.level === 'product' && s.record_state !== 'deleted');
-  if (level === 'deliverable') return scopes.filter(s => s.level === 'project' && s.record_state !== 'deleted');
-  return [];
+  const targetDepth = scopeDepth(level);
+  if (targetDepth <= 1) return [];
+  const parentDepth = targetDepth - 1;
+  return scopes.filter(s => scopeDepth(s.level) === parentDepth && s.record_state !== 'deleted');
+}
+
+export function readScopeAssignment(record = null) {
+  return {
+    scope_id: record?.scope_id ?? null,
+    scope_l1_id: record?.scope_l1_id ?? null,
+    scope_l2_id: record?.scope_l2_id ?? null,
+    scope_l3_id: record?.scope_l3_id ?? null,
+    scope_l4_id: record?.scope_l4_id ?? null,
+    scope_l5_id: record?.scope_l5_id ?? null,
+  };
+}
+
+export function sameScopeAssignment(left = null, right = null) {
+  const a = readScopeAssignment(left);
+  const b = readScopeAssignment(right);
+  return a.scope_id === b.scope_id
+    && a.scope_l1_id === b.scope_l1_id
+    && a.scope_l2_id === b.scope_l2_id
+    && a.scope_l3_id === b.scope_l3_id
+    && a.scope_l4_id === b.scope_l4_id
+    && a.scope_l5_id === b.scope_l5_id;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +118,7 @@ export const scopesManagerMixin = {
 
   get scopePickerFlat() {
     const r = this.scopePickerResults;
-    return [...(r.product || []), ...(r.project || []), ...(r.deliverable || [])];
+    return [...(r.l1 || []), ...(r.l2 || []), ...(r.l3 || []), ...(r.l4 || []), ...(r.l5 || [])];
   },
 
   getScopeBreadcrumb(scopeId) {
@@ -104,6 +128,173 @@ export const scopesManagerMixin = {
   getScopeLabel(scopeId) {
     const scope = this.scopesMap.get(scopeId);
     return scope ? scope.title : '';
+  },
+
+  getScopeForItem(item) {
+    if (!item?.scope_id) return null;
+    return this.scopesMap.get(item.scope_id) || null;
+  },
+
+  getScopePillLabel(item) {
+    return this.getScopeForItem(item)?.title || '';
+  },
+
+  getScopePillLevel(item) {
+    return this.getScopeForItem(item)?.level || '';
+  },
+
+  getScopePillTitle(item) {
+    const scope = this.getScopeForItem(item);
+    if (!scope) return '';
+    const breadcrumb = this.getScopeBreadcrumb(scope.record_id);
+    return breadcrumb || scope.title || '';
+  },
+
+  buildScopeAssignment(scopeId) {
+    if (!scopeId) return readScopeAssignment(null);
+    const chain = resolveScopeChain(scopeId, this.scopesMap);
+    return {
+      scope_id: scopeId,
+      scope_l1_id: chain.scope_l1_id,
+      scope_l2_id: chain.scope_l2_id,
+      scope_l3_id: chain.scope_l3_id,
+      scope_l4_id: chain.scope_l4_id,
+      scope_l5_id: chain.scope_l5_id,
+    };
+  },
+
+  getDirectoryDefaultScopeAssignment(directoryOrId = null) {
+    if (!directoryOrId) return readScopeAssignment(null);
+    const directory = typeof directoryOrId === 'string'
+      ? this.directories.find((item) => item.record_id === directoryOrId)
+      : directoryOrId;
+    return readScopeAssignment(directory);
+  },
+
+  hasSameScopeAssignment(left = null, right = null) {
+    return sameScopeAssignment(left, right);
+  },
+
+  resolveDocScopeTarget(target = null) {
+    if (target === 'current-folder') {
+      return this.currentFolder
+        ? { type: 'directory', item: this.currentFolder }
+        : { type: null, item: null };
+    }
+    if (target?.type === 'bulk-documents') {
+      const ids = [...new Set((target.ids || []).filter(Boolean))];
+      return ids.length > 0
+        ? { type: 'bulk-documents', item: null, ids }
+        : { type: null, item: null };
+    }
+    if (target?.type === 'document' || target?.type === 'directory') {
+      return { type: target.type, item: target.item || null };
+    }
+    if (this.selectedDocument) return { type: 'document', item: this.selectedDocument };
+    if (this.currentFolder) return { type: 'directory', item: this.currentFolder };
+    if (this.selectedDirectory) return { type: 'directory', item: this.selectedDirectory };
+    return { type: null, item: null };
+  },
+
+  get activeDocScopeTarget() {
+    if (this.docScopeTargetType === 'document') {
+      return this.documents.find((item) => item.record_id === this.docScopeTargetId) ?? this.selectedDocument ?? null;
+    }
+    if (this.docScopeTargetType === 'directory') {
+      return this.directories.find((item) => item.record_id === this.docScopeTargetId) ?? null;
+    }
+    return null;
+  },
+
+  get activeDocScopeTargets() {
+    if (this.docScopeTargetType !== 'bulk-documents') return [];
+    const selectedIds = new Set(this.docScopeTargetIds);
+    return this.documents.filter((item) => selectedIds.has(item.record_id) && item.record_state !== 'deleted');
+  },
+
+  get activeDocScopeTargetTypeLabel() {
+    if (this.docScopeTargetType === 'bulk-documents') return 'Document scope';
+    return this.docScopeTargetType === 'directory' ? 'Folder default scope' : 'Document scope';
+  },
+
+  get activeDocScopeTargetName() {
+    if (this.docScopeTargetType === 'bulk-documents') {
+      const count = this.activeDocScopeTargets.length;
+      if (count === 0) return '';
+      return `${count} document${count === 1 ? '' : 's'} selected`;
+    }
+    const target = this.activeDocScopeTarget;
+    if (!target) return '';
+    return target.title || (this.docScopeTargetType === 'directory' ? 'Untitled folder' : 'Untitled document');
+  },
+
+  get activeDocScopeModalSelection() {
+    if (!this.docScopeModalSelectedId) return null;
+    return this.scopesMap.get(this.docScopeModalSelectedId) || null;
+  },
+
+  get docScopeModalHasChanges() {
+    if (this.docScopeTargetType === 'bulk-documents') {
+      return this.activeDocScopeTargets.some((item) => (item.scope_id || null) !== (this.docScopeModalSelectedId || null));
+    }
+    return (this.docScopeModalSelectedId || null) !== (this.activeDocScopeTarget?.scope_id || null);
+  },
+
+  openDocScopeModal(target = null) {
+    const resolved = this.resolveDocScopeTarget(target);
+    if (!resolved.item && resolved.type !== 'bulk-documents') {
+      this.error = 'Select a document or folder first';
+      return;
+    }
+    this.closeScopePicker();
+    this.docScopeTargetType = resolved.type;
+    this.docScopeTargetId = resolved.item?.record_id || '';
+    this.docScopeTargetIds = resolved.ids || [];
+    if (resolved.type === 'bulk-documents') {
+      const docs = this.documents.filter((item) => (resolved.ids || []).includes(item.record_id) && item.record_state !== 'deleted');
+      const firstScopeId = docs[0]?.scope_id || null;
+      this.docScopeModalSelectedId = docs.every((item) => (item.scope_id || null) === firstScopeId)
+        ? firstScopeId
+        : null;
+    } else {
+      this.docScopeModalSelectedId = resolved.item.scope_id || null;
+    }
+    this.docScopeModalSubmitting = false;
+    this.scopePickerQuery = '';
+    this.showDocScopeModal = true;
+  },
+
+  closeDocScopeModal() {
+    this.showDocScopeModal = false;
+    this.docScopeTargetType = '';
+    this.docScopeTargetId = '';
+    this.docScopeTargetIds = [];
+    this.docScopeModalSelectedId = null;
+    this.docScopeModalSubmitting = false;
+    this.scopePickerQuery = '';
+  },
+
+  async saveDocScopeModal() {
+    const target = this.activeDocScopeTarget;
+    if (this.docScopeModalSubmitting) return;
+    if (this.docScopeTargetType === 'bulk-documents' && this.activeDocScopeTargets.length === 0) return;
+    if (this.docScopeTargetType !== 'bulk-documents' && !target) return;
+    this.docScopeModalSubmitting = true;
+    try {
+      if (this.docScopeTargetType === 'bulk-documents') {
+        for (const item of this.activeDocScopeTargets) {
+          await this.updateDocScope(item, this.docScopeModalSelectedId, { sync: false });
+        }
+        await this.performSync({ silent: true });
+      } else if (this.docScopeTargetType === 'directory') {
+        await this.updateDirectoryScope(target, this.docScopeModalSelectedId);
+      } else {
+        await this.updateDocScope(target, this.docScopeModalSelectedId);
+      }
+      this.closeDocScopeModal();
+    } finally {
+      this.docScopeModalSubmitting = false;
+    }
   },
 
   openScopePicker() {
@@ -131,9 +322,11 @@ export const scopesManagerMixin = {
     if (!this.editingTask || !this.session?.npub) return;
     Object.assign(this.editingTask, {
       scope_id: null,
-      scope_product_id: null,
-      scope_project_id: null,
-      scope_deliverable_id: null,
+      scope_l1_id: null,
+      scope_l2_id: null,
+      scope_l3_id: null,
+      scope_l4_id: null,
+      scope_l5_id: null,
     });
     this.closeScopePicker();
     await this.saveEditingTask();
@@ -142,37 +335,29 @@ export const scopesManagerMixin = {
   async selectScopeForDoc(scopeId) {
     const doc = this.selectedDocument;
     if (!doc || !this.session?.npub) return;
-    const chain = resolveScopeChain(scopeId, this.scopesMap);
-    const updated = {
-      ...doc,
-      scope_id: scopeId,
-      scope_product_id: chain.scope_product_id,
-      scope_project_id: chain.scope_project_id,
-      scope_deliverable_id: chain.scope_deliverable_id,
-    };
-    this.patchDocumentLocal(updated);
-    await upsertDocument(updated);
+    await this.updateDocScope(doc, scopeId);
     this.closeScopePicker();
-    await this._pushDocScopeUpdate(updated);
   },
 
   async clearDocScope() {
     const doc = this.selectedDocument;
     if (!doc || !this.session?.npub) return;
+    await this.updateDocScope(doc, null);
+    this.closeScopePicker();
+  },
+
+  async updateDocScope(doc, scopeId, options = {}) {
+    if (!doc || !this.session?.npub) return;
     const updated = {
       ...doc,
-      scope_id: null,
-      scope_product_id: null,
-      scope_project_id: null,
-      scope_deliverable_id: null,
+      ...this.buildScopeAssignment(scopeId),
     };
     this.patchDocumentLocal(updated);
     await upsertDocument(updated);
-    this.closeScopePicker();
-    await this._pushDocScopeUpdate(updated);
+    await this._pushDocScopeUpdate(updated, options);
   },
 
-  async _pushDocScopeUpdate(doc) {
+  async _pushDocScopeUpdate(doc, options = {}) {
     const ownerNpub = this.workspaceOwnerNpub;
     const nextVersion = (doc.version ?? 1) + 1;
     const updated = toRaw({
@@ -194,43 +379,35 @@ export const scopesManagerMixin = {
       record_family_hash: envelope.record_family_hash,
       envelope,
     });
-    await this.performSync({ silent: true });
+    if (options.sync !== false) {
+      await this.performSync({ silent: true });
+    }
   },
 
   async selectScopeForDirectory(scopeId) {
     const dir = this.currentFolder;
     if (!dir || !this.session?.npub) return;
-    const chain = resolveScopeChain(scopeId, this.scopesMap);
-    const updated = toRaw({
-      ...dir,
-      scope_id: scopeId,
-      scope_product_id: chain.scope_product_id,
-      scope_project_id: chain.scope_project_id,
-      scope_deliverable_id: chain.scope_deliverable_id,
-      version: (dir.version ?? 1) + 1,
-      sync_status: 'pending',
-      updated_at: new Date().toISOString(),
-    });
-    await this.queueDirectoryRecord(updated, dir);
+    await this.updateDirectoryScope(dir, scopeId);
     this.closeScopePicker();
-    await this.performSync({ silent: true });
   },
 
   async clearDirectoryScope() {
     const dir = this.currentFolder;
     if (!dir || !this.session?.npub) return;
+    await this.updateDirectoryScope(dir, null);
+    this.closeScopePicker();
+  },
+
+  async updateDirectoryScope(dir, scopeId) {
+    if (!dir || !this.session?.npub) return;
     const updated = toRaw({
       ...dir,
-      scope_id: null,
-      scope_product_id: null,
-      scope_project_id: null,
-      scope_deliverable_id: null,
+      ...this.buildScopeAssignment(scopeId),
       version: (dir.version ?? 1) + 1,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
     });
     await this.queueDirectoryRecord(updated, dir);
-    this.closeScopePicker();
     await this.performSync({ silent: true });
   },
 
@@ -241,9 +418,11 @@ export const scopesManagerMixin = {
     const updated = toRaw({
       ...ch,
       scope_id: scopeId,
-      scope_product_id: chain.scope_product_id,
-      scope_project_id: chain.scope_project_id,
-      scope_deliverable_id: chain.scope_deliverable_id,
+      scope_l1_id: chain.scope_l1_id,
+      scope_l2_id: chain.scope_l2_id,
+      scope_l3_id: chain.scope_l3_id,
+      scope_l4_id: chain.scope_l4_id,
+      scope_l5_id: chain.scope_l5_id,
     });
     await upsertChannel(updated);
     this.channels = this.channels.map(c => c.record_id === updated.record_id ? updated : c);
@@ -257,9 +436,11 @@ export const scopesManagerMixin = {
     const updated = toRaw({
       ...ch,
       scope_id: null,
-      scope_product_id: null,
-      scope_project_id: null,
-      scope_deliverable_id: null,
+      scope_l1_id: null,
+      scope_l2_id: null,
+      scope_l3_id: null,
+      scope_l4_id: null,
+      scope_l5_id: null,
     });
     await upsertChannel(updated);
     this.channels = this.channels.map(c => c.record_id === updated.record_id ? updated : c);
@@ -362,9 +543,11 @@ export const scopesManagerMixin = {
       title: 'Products',
       parent_directory_id: null,
       scope_id: null,
-      scope_product_id: null,
-      scope_project_id: null,
-      scope_deliverable_id: null,
+      scope_l1_id: null,
+      scope_l2_id: null,
+      scope_l3_id: null,
+      scope_l4_id: null,
+      scope_l5_id: null,
       shares,
       group_ids: this.getShareGroupIds(shares),
       sync_status: 'pending',
@@ -397,9 +580,11 @@ export const scopesManagerMixin = {
         || JSON.stringify(this.getStoredDocShares(existing)) !== JSON.stringify(nextShares)
         || JSON.stringify(existing.group_ids || []) !== JSON.stringify(nextGroupIds)
         || (existing.scope_id || null) !== (tags.scope_id || null)
-        || (existing.scope_product_id || null) !== (tags.scope_product_id || null)
-        || (existing.scope_project_id || null) !== (tags.scope_project_id || null)
-        || (existing.scope_deliverable_id || null) !== (tags.scope_deliverable_id || null);
+        || (existing.scope_l1_id || null) !== (tags.scope_l1_id || null)
+        || (existing.scope_l2_id || null) !== (tags.scope_l2_id || null)
+        || (existing.scope_l3_id || null) !== (tags.scope_l3_id || null)
+        || (existing.scope_l4_id || null) !== (tags.scope_l4_id || null)
+        || (existing.scope_l5_id || null) !== (tags.scope_l5_id || null);
       if (!hasChanges) return existing;
 
       const updated = toRaw({
@@ -461,13 +646,12 @@ export const scopesManagerMixin = {
     const now = new Date().toISOString();
     const recordId = crypto.randomUUID();
     const ownerNpub = this.workspaceOwnerNpub;
-    const level = this.newScopeLevel;
     const parentId = this.newScopeParentId || null;
     const hierarchy = deriveScopeHierarchy({
-      level,
       parentId,
       scopesMap: this.scopesMap,
     });
+    const level = hierarchy?.level ?? 'l1';
     const groupIds = normalizeGroupIds(this.newScopeAssignedGroupIds)
       .map((groupId) => this.resolveGroupId(groupId))
       .filter(Boolean);
@@ -483,21 +667,27 @@ export const scopesManagerMixin = {
       description: this.newScopeDescription || '',
       level,
       parent_id: hierarchy.parent_id,
-      product_id: hierarchy.product_id,
-      project_id: hierarchy.project_id,
+      l1_id: hierarchy.l1_id,
+      l2_id: hierarchy.l2_id,
+      l3_id: hierarchy.l3_id,
+      l4_id: hierarchy.l4_id,
+      l5_id: hierarchy.l5_id,
+    };
+    localRow[`${level}_id`] = recordId;
+    Object.assign(localRow, {
       group_ids: groupIds,
       sync_status: 'pending',
       record_state: 'active',
       version: 1,
       created_at: now,
       updated_at: now,
-    };
+    });
 
     await upsertScope(localRow);
     this.scopes = [...this.scopes, localRow];
     this.newScopeTitle = '';
     this.newScopeDescription = '';
-    this.newScopeLevel = 'product';
+    this.newScopeLevel = 'l1';
     this.newScopeParentId = null;
     this.newScopeAssignedGroupIds = [];
     this.newScopeGroupQuery = '';
@@ -519,7 +709,7 @@ export const scopesManagerMixin = {
     await this.refreshScopes();
   },
 
-  startNewScope(level = 'product', parentId = null) {
+  startNewScope(level = 'l1', parentId = null) {
     this.newScopeLevel = level;
     this.newScopeParentId = parentId;
     this.newScopeTitle = '';
@@ -654,7 +844,7 @@ export const scopesManagerMixin = {
 
   handleNewScopeLevelChange(level) {
     this.newScopeLevel = level;
-    if (level === 'product') this.newScopeParentId = null;
+    if (level === 'l1') this.newScopeParentId = null;
     this.syncNewScopePermissionDefaults();
   },
 

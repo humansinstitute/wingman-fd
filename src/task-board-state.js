@@ -15,6 +15,7 @@ import {
 import {
   resolveScopeChain,
   levelLabel,
+  scopeDepth,
 } from './translators/scopes.js';
 import {
   buildScopeTags,
@@ -145,17 +146,21 @@ export function normalizeTaskRowScopeRefs(task, scopesMap) {
   if (!task.scope_id || !scopesMap.has(task.scope_id)) return task;
 
   const chain = resolveScopeChain(task.scope_id, scopesMap);
-  const changed = (task.scope_product_id ?? null) !== (chain.scope_product_id ?? null)
-    || (task.scope_project_id ?? null) !== (chain.scope_project_id ?? null)
-    || (task.scope_deliverable_id ?? null) !== (chain.scope_deliverable_id ?? null);
+  const changed = (task.scope_l1_id ?? null) !== (chain.scope_l1_id ?? null)
+    || (task.scope_l2_id ?? null) !== (chain.scope_l2_id ?? null)
+    || (task.scope_l3_id ?? null) !== (chain.scope_l3_id ?? null)
+    || (task.scope_l4_id ?? null) !== (chain.scope_l4_id ?? null)
+    || (task.scope_l5_id ?? null) !== (chain.scope_l5_id ?? null);
 
   if (!changed) return task;
 
   return {
     ...task,
-    scope_product_id: chain.scope_product_id,
-    scope_project_id: chain.scope_project_id,
-    scope_deliverable_id: chain.scope_deliverable_id,
+    scope_l1_id: chain.scope_l1_id,
+    scope_l2_id: chain.scope_l2_id,
+    scope_l3_id: chain.scope_l3_id,
+    scope_l4_id: chain.scope_l4_id,
+    scope_l5_id: chain.scope_l5_id,
   };
 }
 
@@ -420,12 +425,13 @@ export const taskBoardStateMixin = {
 
   get canToggleBoardDescendants() {
     if (this.selectedBoardId === ALL_TASK_BOARD_ID || this.selectedBoardId === RECENT_TASK_BOARD_ID || this.selectedBoardId === UNSCOPED_TASK_BOARD_ID) return false;
-    return this.selectedBoardScope?.level === 'product' || this.selectedBoardScope?.level === 'project';
+    const depth = scopeDepth(this.selectedBoardScope?.level);
+    return depth >= 1 && depth < 5;
   },
 
   get boardDescendantToggleTitle() {
     if (!this.canToggleBoardDescendants) return '';
-    return this.showBoardDescendantTasks ? 'Hide deliverables' : 'Show deliverables';
+    return this.showBoardDescendantTasks ? 'Hide lower levels' : 'Show lower levels';
   },
 
   get preferredTaskBoardId() {
@@ -497,9 +503,11 @@ export const taskBoardStateMixin = {
       const shares = groupId ? this.buildScopeDefaultShares([groupId]) : this.getDefaultPrivateShares();
       return {
         scope_id: null,
-        scope_product_id: null,
-        scope_project_id: null,
-        scope_deliverable_id: null,
+        scope_l1_id: null,
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
         board_group_id: groupId || fallbackTask?.board_group_id || null,
         group_ids: this.getShareGroupIds(shares),
         shares: toRaw(shares),
@@ -509,9 +517,11 @@ export const taskBoardStateMixin = {
     if (!scope) {
       return {
         scope_id: fallbackTask?.scope_id ?? null,
-        scope_product_id: fallbackTask?.scope_product_id ?? null,
-        scope_project_id: fallbackTask?.scope_project_id ?? null,
-        scope_deliverable_id: fallbackTask?.scope_deliverable_id ?? null,
+        scope_l1_id: fallbackTask?.scope_l1_id ?? null,
+        scope_l2_id: fallbackTask?.scope_l2_id ?? null,
+        scope_l3_id: fallbackTask?.scope_l3_id ?? null,
+        scope_l4_id: fallbackTask?.scope_l4_id ?? null,
+        scope_l5_id: fallbackTask?.scope_l5_id ?? null,
         board_group_id: fallbackTask?.board_group_id ?? null,
         group_ids: toRaw(fallbackTask?.group_ids ?? []),
         shares: toRaw(fallbackTask?.shares ?? []),
@@ -530,9 +540,9 @@ export const taskBoardStateMixin = {
   getTaskBoardScopeFromTask(task) {
     if (!task) return null;
     if (task.scope_id && this.scopesMap.has(task.scope_id)) return this.scopesMap.get(task.scope_id) || null;
-    if (task.scope_deliverable_id && this.scopesMap.has(task.scope_deliverable_id)) return this.scopesMap.get(task.scope_deliverable_id) || null;
-    if (task.scope_project_id && this.scopesMap.has(task.scope_project_id)) return this.scopesMap.get(task.scope_project_id) || null;
-    if (task.scope_product_id && this.scopesMap.has(task.scope_product_id)) return this.scopesMap.get(task.scope_product_id) || null;
+    for (const key of ['scope_l5_id', 'scope_l4_id', 'scope_l3_id', 'scope_l2_id', 'scope_l1_id']) {
+      if (task[key] && this.scopesMap.has(task[key])) return this.scopesMap.get(task[key]) || null;
+    }
     return null;
   },
 
@@ -887,16 +897,15 @@ export const taskBoardStateMixin = {
   },
 
   get scopeTree() {
-    const products = this.scopes.filter(s => s.level === 'product' && s.record_state !== 'deleted');
-    return products.map(p => ({
-      ...p,
-      projects: this.scopes
-        .filter(s => s.level === 'project' && s.parent_id === p.record_id && s.record_state !== 'deleted')
-        .map(proj => ({
-          ...proj,
-          deliverables: this.scopes.filter(s => s.level === 'deliverable' && s.parent_id === proj.record_id && s.record_state !== 'deleted'),
-        })),
-    }));
+    const active = this.scopes.filter(s => s.record_state !== 'deleted');
+    const buildChildren = (parentId) =>
+      active
+        .filter(s => (s.parent_id || null) === (parentId || null) && scopeDepth(s.level) > (parentId ? scopeDepth(this.scopesMap.get(parentId)?.level) : 0))
+        .map(s => ({ ...s, children: buildChildren(s.record_id) }));
+    // Root nodes are depth-1 scopes with no parent
+    return active
+      .filter(s => scopeDepth(s.level) === 1 && !s.parent_id)
+      .map(s => ({ ...s, children: buildChildren(s.record_id) }));
   },
 
   scopeLevelLabel(level) {
