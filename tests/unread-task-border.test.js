@@ -10,8 +10,17 @@ const T2 = '2026-03-25T11:00:00.000Z';
 const T3 = '2026-03-25T12:00:00.000Z';
 const T4 = '2026-03-25T13:00:00.000Z';
 
-function task(id, updatedAt, state = 'active') {
-  return { record_id: id, updated_at: updatedAt, record_state: state };
+const VIEWER = 'npub_viewer';
+const OTHER = 'npub_other';
+
+function task(id, updatedAt, state = 'active', opts = {}) {
+  return {
+    record_id: id,
+    updated_at: updatedAt,
+    record_state: state,
+    owner_npub: opts.owner_npub ?? OTHER,
+    created_at: opts.created_at ?? updatedAt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +173,60 @@ describe('computeUnreadTaskMap', () => {
       t1: true,
       t2: true,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Self-created tasks — viewer should not see red border on own creations
+// ---------------------------------------------------------------------------
+
+describe('self-created task unread suppression', () => {
+  it('does not mark a self-created task as unread when updated_at equals created_at', () => {
+    // Pete creates a task — created_at === updated_at, owner_npub === viewer
+    const tasks = [task('t1', T3, 'active', { owner_npub: VIEWER, created_at: T3 })];
+    const cursorMap = { 'tasks:nav': T2 };
+    expect(computeUnreadTaskMap(tasks, cursorMap, VIEWER)).toEqual({});
+  });
+
+  it('marks a self-created task as unread when someone else updates it', () => {
+    // Pete created the task at T2, but someone updated it at T4
+    const tasks = [task('t1', T4, 'active', { owner_npub: VIEWER, created_at: T2 })];
+    const cursorMap = { 'tasks:nav': T1 };
+    expect(computeUnreadTaskMap(tasks, cursorMap, VIEWER)).toEqual({ t1: true });
+  });
+
+  it('does not suppress unread for tasks created by others', () => {
+    // Task created by OTHER, viewer should see it as unread
+    const tasks = [task('t1', T3, 'active', { owner_npub: OTHER, created_at: T3 })];
+    const cursorMap = { 'tasks:nav': T2 };
+    expect(computeUnreadTaskMap(tasks, cursorMap, VIEWER)).toEqual({ t1: true });
+  });
+
+  it('self-created task with per-task cursor still works normally', () => {
+    // Pete created at T2, updated at T4, but he already opened it (cursor at T4)
+    const tasks = [task('t1', T4, 'active', { owner_npub: VIEWER, created_at: T2 })];
+    const cursorMap = { 'tasks:nav': T1, 'tasks:item:t1': T4 };
+    expect(computeUnreadTaskMap(tasks, cursorMap, VIEWER)).toEqual({});
+  });
+
+  it('mixed self-created and other-created tasks', () => {
+    const tasks = [
+      task('t1', T3, 'active', { owner_npub: VIEWER, created_at: T3 }), // self-created, no update → read
+      task('t2', T3, 'active', { owner_npub: OTHER, created_at: T3 }),   // other-created → unread
+      task('t3', T4, 'active', { owner_npub: VIEWER, created_at: T2 }), // self-created but updated → unread
+    ];
+    const cursorMap = { 'tasks:nav': T1 };
+    expect(computeUnreadTaskMap(tasks, cursorMap, VIEWER)).toEqual({
+      t2: true,
+      t3: true,
+    });
+  });
+
+  it('works without viewerNpub (backwards compat, all tasks eligible)', () => {
+    // When no viewerNpub is passed, no suppression happens
+    const tasks = [task('t1', T3, 'active', { owner_npub: VIEWER, created_at: T3 })];
+    const cursorMap = { 'tasks:nav': T2 };
+    expect(computeUnreadTaskMap(tasks, cursorMap)).toEqual({ t1: true });
   });
 });
 

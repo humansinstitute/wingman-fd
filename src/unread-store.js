@@ -50,7 +50,7 @@ async function cursorRecordId(viewerNpub, cursorKey) {
  * If no tasks:nav cursor exists yet the user has never visited the section,
  * so nothing can be unread (avoids a wall of red on first load).
  */
-export function computeUnreadTaskMap(tasks, cursorMap) {
+export function computeUnreadTaskMap(tasks, cursorMap, viewerNpub) {
   const navReadUntil = cursorMap['tasks:nav'] || null;
   if (!navReadUntil) return {};
 
@@ -59,10 +59,25 @@ export function computeUnreadTaskMap(tasks, cursorMap) {
     if (task.record_state === 'deleted') continue;
     const taskKey = `tasks:item:${task.record_id}`;
     const taskReadUntil = cursorMap[taskKey] || null;
-    const effectiveReadUntil =
+    let effectiveReadUntil =
       taskReadUntil && taskReadUntil > navReadUntil
         ? taskReadUntil
         : navReadUntil;
+
+    // Self-created tasks are implicitly "read" at creation time.
+    // The creator already knows about the task they made, so treat
+    // created_at as a floor for the read cursor.  If someone else
+    // later updates the task (updated_at > created_at), it will
+    // surface as unread again.
+    if (
+      viewerNpub &&
+      task.owner_npub === viewerNpub &&
+      task.created_at &&
+      task.created_at > effectiveReadUntil
+    ) {
+      effectiveReadUntil = task.created_at;
+    }
+
     if (task.updated_at > effectiveReadUntil) {
       result[task.record_id] = true;
     }
@@ -203,7 +218,7 @@ export const unreadStoreMixin = {
         cursorMap[cursorKey] = seedTime;
       }
 
-      this._unreadTaskItems = computeUnreadTaskMap(allTasks, cursorMap);
+      this._unreadTaskItems = computeUnreadTaskMap(allTasks, cursorMap, viewerNpub);
       this._unreadTasks = hasUnreadTasks(this._unreadTaskItems);
     } catch (e) {
       // Swallow errors — unread flags are non-critical
