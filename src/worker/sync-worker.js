@@ -24,6 +24,7 @@ import {
   upsertMessage,
   upsertDocument,
   upsertDirectory,
+  upsertReport,
   upsertTask,
   upsertSchedule,
   upsertComment,
@@ -38,6 +39,7 @@ import {
 import { syncRecords, fetchRecords, getBaseUrl, fetchRecordsSummary, fetchHeartbeat } from '../api.js';
 import { inboundChannel, inboundChatMessage, recordFamilyHash } from '../translators/chat.js';
 import { inboundDocument, inboundDirectory } from '../translators/docs.js';
+import { inboundReport, recordFamilyHash as reportFamilyHash } from '../translators/reports.js';
 import { inboundTask } from '../translators/tasks.js';
 import { inboundSchedule, recordFamilyHash as scheduleFamilyHash } from '../translators/schedules.js';
 import { inboundComment } from '../translators/comments.js';
@@ -45,6 +47,7 @@ import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
+import { pruneInaccessibleRecords } from '../access-pruner.js';
 import { flightDeckLog } from '../logging.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
@@ -52,6 +55,7 @@ const CHANNEL_FAMILY = recordFamilyHash('channel');
 const MESSAGE_FAMILY = recordFamilyHash('chat_message');
 const DOCUMENT_FAMILY = recordFamilyHash('document');
 const DIRECTORY_FAMILY = recordFamilyHash('directory');
+const REPORT_FAMILY = reportFamilyHash('report');
 const TASK_FAMILY = recordFamilyHash('task');
 const SCHEDULE_FAMILY = scheduleFamilyHash('schedule');
 const COMMENT_FAMILY = recordFamilyHash('comment');
@@ -76,6 +80,9 @@ async function materializeRecordForFamily(family, record) {
   } else if (family === DOCUMENT_FAMILY) {
     const row = await inboundDocument(record);
     await upsertDocument(row);
+  } else if (family === REPORT_FAMILY) {
+    const row = await inboundReport(record);
+    await upsertReport(row);
   } else if (family === TASK_FAMILY) {
     const row = await inboundTask(record);
     await upsertTask(row);
@@ -268,6 +275,30 @@ export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub) {
 }
 
 /**
+ * Run access pruning after a sync pull, catching errors so sync still succeeds.
+ */
+async function pruneAfterSync(viewerNpub, ownerNpub) {
+  try {
+    const result = await pruneInaccessibleRecords(viewerNpub, ownerNpub);
+    if (result.pruned > 0) {
+      flightDeckLog('info', 'sync', 'pruned inaccessible local records after sync', {
+        viewerNpub,
+        ownerNpub,
+        pruned: result.pruned,
+      });
+    }
+    return { pruned: result.pruned };
+  } catch (error) {
+    flightDeckLog('warn', 'sync', 'access pruning failed after sync', {
+      viewerNpub,
+      ownerNpub,
+      error: error?.message || String(error),
+    });
+    return { pruned: 0 };
+  }
+}
+
+/**
  * Full sync cycle: push then pull.
  * Uses heartbeat-first approach: asks the server which families changed,
  * then only pulls stale families. Falls back to full pull if heartbeat unavailable.
@@ -287,14 +318,16 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress) {
     if (heartbeat.stale_families.length === 0) {
       if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: 0, currentFamily: null, pulled: 0, heartbeat: true });
       if (onProgress) onProgress({ phase: 'applying' });
-      return { ...pushResult, pulled: 0, heartbeatUsed: true, staleFamilies: 0 };
+      const pruneResult = await pruneAfterSync(viewerNpub, ownerNpub);
+      return { ...pushResult, pulled: 0, heartbeatUsed: true, staleFamilies: 0, ...pruneResult };
     }
 
     if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: heartbeat.stale_families.length, currentFamily: null, pulled: 0, heartbeat: true });
     const pullResult = await pullRecordsForFamilies(ownerNpub, viewerNpub, heartbeat.stale_families, {}, onProgress);
 
     if (onProgress) onProgress({ phase: 'applying' });
-    return { ...pushResult, ...pullResult, heartbeatUsed: true, staleFamilies: heartbeat.stale_families.length };
+    const pruneResult = await pruneAfterSync(viewerNpub, ownerNpub);
+    return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: true, staleFamilies: heartbeat.stale_families.length };
   }
 
   // Fallback: heartbeat unavailable, pull all families
@@ -302,7 +335,8 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress) {
   const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress);
 
   if (onProgress) onProgress({ phase: 'applying' });
-  return { ...pushResult, ...pullResult, heartbeatUsed: false };
+  const pruneResult = await pruneAfterSync(viewerNpub, ownerNpub);
+  return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: false };
 }
 
 /**
