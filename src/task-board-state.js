@@ -633,8 +633,13 @@ export const taskBoardStateMixin = {
       this.persistSelectedBoardId(this.selectedBoardId);
       return;
     }
-    const exists = this.selectedBoardId === ALL_TASK_BOARD_ID
+    const isSystemBoard = this.selectedBoardId === ALL_TASK_BOARD_ID
       || this.selectedBoardId === RECENT_TASK_BOARD_ID
+      || this.selectedBoardId === UNSCOPED_TASK_BOARD_ID;
+    // If scopes haven't loaded yet, don't invalidate a scope-based board ID —
+    // it may become valid once scopes arrive from the DB or sync.
+    if (!isSystemBoard && !this.scopesLoaded) return;
+    const exists = isSystemBoard
       || this.taskBoards.some((board) => board.id === this.selectedBoardId);
     if (!exists) {
       this.selectedBoardId = this.preferredTaskBoardId;

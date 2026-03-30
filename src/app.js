@@ -134,7 +134,7 @@ import {
   setActiveSessionNpub,
   wrapKnownGroupKeyForMember,
 } from './crypto/group-keys.js';
-import { mergeWorkspaceEntries, workspaceFromToken, findWorkspaceBySlug } from './workspaces.js';
+import { findWorkspaceByKey, mergeWorkspaceEntries, workspaceFromToken, findWorkspaceBySlug } from './workspaces.js';
 import { parseRouteLocation } from './route-helpers.js';
 import { extractInviteToken } from './invite-link.js';
 import {
@@ -320,6 +320,7 @@ export function initApp() {
 
     // scopes
     scopes: [],
+    scopesLoaded: false,
     scopePickerQuery: '',
     showScopePicker: false,
     scopePickerTarget: null, // 'task' or record family being scoped
@@ -415,9 +416,11 @@ export function initApp() {
     superbasedTokenInput: '',
     superbasedError: null,
     knownWorkspaces: [],
-    workspaceProfileRowsByOwner: {},
+    workspaceProfileRowsByKey: {},
+    selectedWorkspaceKey: '',
     currentWorkspaceOwnerNpub: '',
     showWorkspaceSwitcherMenu: false,
+    workspaceSwitchPendingKey: '',
     workspaceSwitchPendingNpub: '',
     removingWorkspace: false,
     workspaceSettingsRecordId: '',
@@ -536,6 +539,7 @@ export function initApp() {
     loginError: null,
     storageImageUrlCache: {},
     storageImageLoadPromises: {},
+    storageImageFailureCache: {},
     workspaceProfileHydrationPromises: {},
     _storageImageHydrateScheduled: false,
 
@@ -966,6 +970,7 @@ export function initApp() {
         this.defaultAgentNpub = settings.defaultAgentNpub ?? '';
         this.superbasedTokenInput = settings.connectionToken ?? '';
         this.useCvmSync = settings.useCvmSync ?? this.useCvmSync;
+        this.selectedWorkspaceKey = settings.currentWorkspaceKey ?? '';
         this.currentWorkspaceOwnerNpub = settings.currentWorkspaceOwnerNpub ?? '';
         this.knownWorkspaces = mergeWorkspaceEntries([], settings.knownWorkspaces ?? []);
         this.knownHosts = Array.isArray(settings.knownHosts) ? settings.knownHosts : [];
@@ -980,6 +985,7 @@ export function initApp() {
           this.mergeKnownWorkspaces([invite.workspace]);
           if (invite.workspaceOwnerNpub) {
             // Force-select the invited workspace — overrides any previously saved selection
+            this.selectedWorkspaceKey = invite.workspace.workspaceKey || '';
             this.currentWorkspaceOwnerNpub = invite.workspaceOwnerNpub;
             this.ownerNpub = invite.workspaceOwnerNpub;
           }
@@ -991,7 +997,10 @@ export function initApp() {
         if (config.isValid && config.directHttpsUrl) {
           this.backendUrl = normalizeBackendUrl(config.directHttpsUrl);
           const tokenWorkspace = workspaceFromToken(this.superbasedTokenInput);
-          if (tokenWorkspace) this.mergeKnownWorkspaces([tokenWorkspace]);
+          if (tokenWorkspace) {
+            this.mergeKnownWorkspaces([tokenWorkspace]);
+            this.selectedWorkspaceKey = this.selectedWorkspaceKey || tokenWorkspace.workspaceKey || '';
+          }
           if (config.workspaceOwnerNpub) {
             this.currentWorkspaceOwnerNpub = this.currentWorkspaceOwnerNpub || config.workspaceOwnerNpub;
             this.ownerNpub = config.workspaceOwnerNpub;
@@ -1008,17 +1017,22 @@ export function initApp() {
       if (this.knownWorkspaces.length === 0 && this.superbasedConnectionConfig?.workspaceOwnerNpub && this.session?.npub) {
         await this.tryRecoverWorkspace();
       }
-      if (!this.currentWorkspaceOwnerNpub && this.knownWorkspaces.length > 0) {
+      if (!this.selectedWorkspaceKey && this.currentWorkspaceOwnerNpub) {
+        const legacyMatch = this.knownWorkspaces.find((workspace) => workspace.workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) || null;
+        if (legacyMatch) this.selectedWorkspaceKey = legacyMatch.workspaceKey || '';
+      }
+      if (!this.selectedWorkspaceKey && this.knownWorkspaces.length > 0) {
+        this.selectedWorkspaceKey = this.knownWorkspaces[0].workspaceKey || '';
         this.currentWorkspaceOwnerNpub = this.knownWorkspaces[0].workspaceOwnerNpub;
       }
-      if (this.currentWorkspaceOwnerNpub) {
-        await this.selectWorkspace(this.currentWorkspaceOwnerNpub, { refresh: false });
+      if (this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub) {
+        await this.selectWorkspace(this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub, { refresh: false });
       }
       this.updateWorkspaceBootstrapPrompt();
-      if (this.session?.npub && (!this.backendUrl || !this.currentWorkspaceOwnerNpub)) {
+      if (this.session?.npub && (!this.backendUrl || !this.selectedWorkspaceKey)) {
         this.openConnectModal();
       }
-      if (this.currentWorkspaceOwnerNpub) {
+      if (this.selectedWorkspaceKey) {
         await this.refreshGroups();
         this.selectedBoardId = this.readStoredTaskBoardId();
         this.validateSelectedBoardId();
@@ -1332,6 +1346,11 @@ export function initApp() {
       const url = new URL(window.location.href);
       url.pathname = this.getRoutePath();
       url.search = '';
+      if (this.currentWorkspaceKey) url.searchParams.set('workspacekey', this.currentWorkspaceKey);
+
+      // Always preserve scopeid across all sections so browser history
+      // retains the active scope when navigating between tasks/chat/docs/etc.
+      if (this.selectedBoardId) url.searchParams.set('scopeid', this.selectedBoardId);
 
       if (this.navSection === 'chat') {
         if (this.selectedChannelId) url.searchParams.set('channelid', this.selectedChannelId);
@@ -1344,10 +1363,8 @@ export function initApp() {
         if (this.docVersioningOpen) url.searchParams.set('versioning', '1');
         if (this.selectedDocCommentId) url.searchParams.set('commentid', this.selectedDocCommentId);
       } else if (this.navSection === 'reports') {
-        if (this.selectedBoardId) url.searchParams.set('scopeid', this.selectedBoardId);
         if (this.selectedReport?.record_id) url.searchParams.set('reportid', this.selectedReport.record_id);
       } else if (this.navSection === 'tasks' || this.navSection === 'calendar') {
-        if (this.selectedBoardId) url.searchParams.set('scopeid', this.selectedBoardId);
         if (this.showBoardDescendantTasks) url.searchParams.set('descendants', '1');
         if (this.navSection === 'tasks' && this.activeTaskId) url.searchParams.set('taskid', this.activeTaskId);
         if (this.navSection === 'tasks' && this.taskViewMode === 'list') url.searchParams.set('view', 'list');
@@ -1371,22 +1388,42 @@ export function initApp() {
       const route = parseRouteLocation();
       this.routeSyncPaused = true;
       try {
+        if (route.params.workspacekey) {
+          const targetByKey = findWorkspaceByKey(this.knownWorkspaces, route.params.workspacekey);
+          if (targetByKey && targetByKey.workspaceKey !== this.currentWorkspaceKey) {
+            this.routeSyncPaused = false;
+            await this.handleWorkspaceSwitcherSelect(targetByKey.workspaceKey);
+            return;
+          }
+        }
+
         // Handle workspace slug from URL
         if (route.workspaceSlug) {
           const target = findWorkspaceBySlug(this.knownWorkspaces, route.workspaceSlug);
-          if (target && target.workspaceOwnerNpub !== this.currentWorkspaceOwnerNpub) {
+          if (target && target.workspaceKey !== this.currentWorkspaceKey) {
             // Different workspace slug — switch workspace
             this.routeSyncPaused = false;
-            await this.handleWorkspaceSwitcherSelect(target.workspaceOwnerNpub);
+            await this.handleWorkspaceSwitcherSelect(target.workspaceKey || target.workspaceOwnerNpub);
             return;
           }
-        } else if (!route.workspaceSlug && this.currentWorkspaceOwnerNpub) {
+        } else if (!route.workspaceSlug && this.selectedWorkspaceKey) {
           // Bare /<page> URL (no slug) — redirect to /<slug>/<page>
           // This is handled by syncRoute(true) at the bottom
         }
 
         this.navSection = route.section;
         this.mobileNavOpen = false;
+
+        // Restore scopeid from URL for all sections so browser history
+        // preserves the active scope across tasks/chat/docs/calendar/reports.
+        if (route.params.scopeid || route.params.groupid) {
+          this.selectedBoardId = route.params.scopeid
+            || route.params.groupid
+            || this.readStoredTaskBoardId()
+            || this.preferredTaskBoardId;
+          this.validateSelectedBoardId();
+          this.persistSelectedBoardId(this.selectedBoardId);
+        }
 
         if (route.section === 'chat') {
           const channelId = route.params.channelid || this.selectedChannelId || this.channels[0]?.record_id || null;
@@ -1412,24 +1449,18 @@ export function initApp() {
             this.loadDocEditorFromSelection();
           }
         } else if (route.section === 'reports') {
-          this.selectedBoardId = route.params.scopeid
-            || route.params.groupid
-            || this.readStoredTaskBoardId()
-            || this.preferredTaskBoardId;
-          this.validateSelectedBoardId();
-          this.persistSelectedBoardId(this.selectedBoardId);
           this.selectedReportId = route.params.reportid || this.selectedReport?.record_id || null;
         } else if (route.section === 'tasks' || route.section === 'calendar') {
-          this.selectedBoardId = route.params.scopeid
-            || route.params.groupid
-            || this.readStoredTaskBoardId()
-            || this.preferredTaskBoardId;
+          // Scope already restored above; apply task/calendar-specific params
+          if (!route.params.scopeid && !route.params.groupid) {
+            this.selectedBoardId = this.readStoredTaskBoardId() || this.preferredTaskBoardId;
+            this.validateSelectedBoardId();
+            this.persistSelectedBoardId(this.selectedBoardId);
+          }
           this.showBoardDescendantTasks = route.params.descendants === '1';
           if (route.params.view === 'list') this.taskViewMode = 'list';
           else this.taskViewMode = 'kanban';
-          this.validateSelectedBoardId();
           this.normalizeTaskFilterTags();
-          this.persistSelectedBoardId(this.selectedBoardId);
           if (route.section === 'tasks' && route.params.taskid) {
             this.openTaskDetail(route.params.taskid);
           } else {
@@ -1510,17 +1541,22 @@ export function initApp() {
         this.resolveChatProfile(npub);
         await this.rememberPeople([npub], 'self');
         await this.loadRemoteWorkspaces();
-        if (!this.currentWorkspaceOwnerNpub && this.knownWorkspaces.length > 0) {
+        if (!this.selectedWorkspaceKey && this.currentWorkspaceOwnerNpub) {
+          const legacyMatch = this.knownWorkspaces.find((workspace) => workspace.workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) || null;
+          if (legacyMatch) this.selectedWorkspaceKey = legacyMatch.workspaceKey || '';
+        }
+        if (!this.selectedWorkspaceKey && this.knownWorkspaces.length > 0) {
+          this.selectedWorkspaceKey = this.knownWorkspaces[0].workspaceKey || '';
           this.currentWorkspaceOwnerNpub = this.knownWorkspaces[0].workspaceOwnerNpub;
         }
-        if (this.currentWorkspaceOwnerNpub) {
-          await this.selectWorkspace(this.currentWorkspaceOwnerNpub, { refresh: false });
+        if (this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub) {
+          await this.selectWorkspace(this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub, { refresh: false });
           await this.refreshGroups();
           await this.refreshChannels();
           await this.refreshSyncStatus();
         }
         this.updateWorkspaceBootstrapPrompt();
-        if (!this.backendUrl || !this.currentWorkspaceOwnerNpub) {
+        if (!this.backendUrl || !this.selectedWorkspaceKey) {
           this.openConnectModal();
         }
         this.ensureBackgroundSync(true);
@@ -1548,22 +1584,27 @@ export function initApp() {
         this.updateWorkspaceBootstrapPrompt();
 
         await this.loadRemoteWorkspaces();
-        if (!this.currentWorkspaceOwnerNpub && this.knownWorkspaces.length > 0) {
+        if (!this.selectedWorkspaceKey && this.currentWorkspaceOwnerNpub) {
+          const legacyMatch = this.knownWorkspaces.find((workspace) => workspace.workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) || null;
+          if (legacyMatch) this.selectedWorkspaceKey = legacyMatch.workspaceKey || '';
+        }
+        if (!this.selectedWorkspaceKey && this.knownWorkspaces.length > 0) {
+          this.selectedWorkspaceKey = this.knownWorkspaces[0].workspaceKey || '';
           this.currentWorkspaceOwnerNpub = this.knownWorkspaces[0].workspaceOwnerNpub;
         }
-        if (this.currentWorkspaceOwnerNpub) {
-          await this.selectWorkspace(this.currentWorkspaceOwnerNpub, { refresh: false });
+        if (this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub) {
+          await this.selectWorkspace(this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub, { refresh: false });
         }
 
         await this.persistWorkspaceSettings();
 
-        if (this.currentWorkspaceOwnerNpub) {
+        if (this.selectedWorkspaceKey) {
           await this.refreshGroups();
           await this.refreshChannels();
           await this.refreshSyncStatus();
         }
         this.updateWorkspaceBootstrapPrompt();
-        if (!this.backendUrl || !this.currentWorkspaceOwnerNpub) {
+        if (!this.backendUrl || !this.selectedWorkspaceKey) {
           this.openConnectModal();
         }
         this.ensureBackgroundSync(true);
@@ -1610,7 +1651,11 @@ export function initApp() {
       this.newGroupMemberQuery = '';
       this.newGroupMembers = [];
       this.chatProfiles = {};
-      this.workspaceProfileRowsByOwner = {};
+      this.workspaceProfileRowsByKey = {};
+      this.selectedWorkspaceKey = '';
+      this.currentWorkspaceOwnerNpub = '';
+      this.workspaceSwitchPendingKey = '';
+      this.workspaceSwitchPendingNpub = '';
       this.workspaceSettingsRecordId = '';
       this.workspaceSettingsVersion = 0;
       this.workspaceSettingsGroupIds = [];

@@ -28,6 +28,8 @@ import {
   completeStorageObject,
 } from './api.js';
 import {
+  buildWorkspaceKey,
+  findWorkspaceByKey,
   mergeWorkspaceEntries,
   normalizeWorkspaceEntry,
   workspaceFromToken,
@@ -69,8 +71,13 @@ export const workspaceManagerMixin = {
 
   // --- computed getters ---
 
+  get currentWorkspaceKey() {
+    return this.currentWorkspace?.workspaceKey || this.selectedWorkspaceKey || '';
+  },
+
   get workspaceOwnerNpub() {
-    return this.currentWorkspaceOwnerNpub
+    return this.currentWorkspace?.workspaceOwnerNpub
+      || this.currentWorkspaceOwnerNpub
       || this.superbasedConnectionConfig?.workspaceOwnerNpub
       || this.ownerNpub
       || this.session?.npub
@@ -78,7 +85,9 @@ export const workspaceManagerMixin = {
   },
 
   get currentWorkspace() {
-    return this.knownWorkspaces.find((workspace) => workspace.workspaceOwnerNpub === this.workspaceOwnerNpub) || null;
+    return findWorkspaceByKey(this.knownWorkspaces, this.selectedWorkspaceKey)
+      || this.knownWorkspaces.find((workspace) => workspace.workspaceOwnerNpub === this.currentWorkspaceOwnerNpub)
+      || null;
   },
 
   get activeWorkspaceOwnerNpub() {
@@ -86,7 +95,7 @@ export const workspaceManagerMixin = {
   },
 
   get isWorkspaceSwitching() {
-    return Boolean(this.workspaceSwitchPendingNpub);
+    return Boolean(this.workspaceSwitchPendingKey || this.workspaceSwitchPendingNpub);
   },
 
   get currentWorkspaceName() {
@@ -97,8 +106,10 @@ export const workspaceManagerMixin = {
 
   get currentWorkspaceMeta() {
     if (this.isWorkspaceSwitching) {
-      const pendingWorkspace = this.getWorkspaceByOwner(this.workspaceSwitchPendingNpub);
-      return `Switching to ${pendingWorkspace?.name || this.getShortNpub(this.workspaceSwitchPendingNpub) || 'workspace'}...`;
+      const pendingWorkspace = this.getWorkspaceByKey(this.workspaceSwitchPendingKey)
+        || this.getWorkspaceByOwner(this.workspaceSwitchPendingNpub);
+      const fallbackLabel = pendingWorkspace?.workspaceOwnerNpub || this.workspaceSwitchPendingNpub;
+      return `Switching to ${pendingWorkspace?.name || this.getShortNpub(fallbackLabel) || 'workspace'}...`;
     }
     if (this.currentWorkspace?.description) return this.currentWorkspace.description;
     if (this.activeWorkspaceOwnerNpub) return this.activeWorkspaceOwnerNpub;
@@ -169,15 +180,23 @@ export const workspaceManagerMixin = {
     return this.knownWorkspaces.find((entry) => entry.workspaceOwnerNpub === workspaceOwnerNpub) || null;
   },
 
+  getWorkspaceByKey(workspaceKey) {
+    return findWorkspaceByKey(this.knownWorkspaces, workspaceKey);
+  },
+
   getWorkspaceDisplayEntry(workspace) {
-    const workspaceOwnerNpub = typeof workspace === 'string' ? workspace : workspace?.workspaceOwnerNpub;
-    if (!workspaceOwnerNpub) return typeof workspace === 'object' ? workspace : null;
-    const known = this.getWorkspaceByOwner(workspaceOwnerNpub) || (typeof workspace === 'object' ? workspace : null) || {};
-    const profile = this.workspaceProfileRowsByOwner?.[workspaceOwnerNpub] || {};
+    const workspaceKey = typeof workspace === 'string' ? workspace : workspace?.workspaceKey || '';
+    const workspaceOwnerNpub = typeof workspace === 'string' ? '' : workspace?.workspaceOwnerNpub || '';
+    const known = this.getWorkspaceByKey(workspaceKey)
+      || this.getWorkspaceByOwner(workspaceOwnerNpub)
+      || (typeof workspace === 'object' ? workspace : null)
+      || {};
+    const profile = this.workspaceProfileRowsByKey?.[known.workspaceKey || workspaceKey] || {};
     return {
       ...known,
       ...profile,
-      workspaceOwnerNpub,
+      workspaceKey: known.workspaceKey || workspaceKey,
+      workspaceOwnerNpub: known.workspaceOwnerNpub || workspaceOwnerNpub,
     };
   },
 
@@ -195,7 +214,7 @@ export const workspaceManagerMixin = {
     const entry = this.getWorkspaceDisplayEntry(workspace);
     const workspaceOwnerNpub = entry?.workspaceOwnerNpub || '';
     if (entry?.directHttpsUrl) return String(entry.directHttpsUrl).trim();
-    if (workspaceOwnerNpub && workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) {
+    if (entry?.workspaceKey && entry.workspaceKey === this.currentWorkspaceKey) {
       return this.currentWorkspaceBackendUrl;
     }
     return '';
@@ -211,12 +230,15 @@ export const workspaceManagerMixin = {
       const cacheKey = storageImageCacheKey(storedObjectId, backendUrl);
       const resolved = this.storageImageUrlCache?.[cacheKey];
       if (resolved) return resolved;
-      this.resolveStorageImageUrl(storedObjectId, { backendUrl }).catch(() => {});
+      const knownFailure = this.getStorageImageFailure?.(cacheKey);
+      if (!knownFailure) {
+        this.resolveStorageImageUrl(storedObjectId, { backendUrl }).catch(() => {});
+      }
     } else if (storedAvatar) {
       return storedAvatar;
     }
     if (workspaceOwnerNpub) {
-      void this.ensureWorkspaceProfileHydrated(workspaceOwnerNpub);
+      void this.ensureWorkspaceProfileHydrated(entry?.workspaceKey || workspaceOwnerNpub);
     }
     return workspaceOwnerNpub ? this.getSenderAvatar(workspaceOwnerNpub) : null;
   },
@@ -241,20 +263,22 @@ export const workspaceManagerMixin = {
     this.showWorkspaceSwitcherMenu = false;
   },
 
-  async handleWorkspaceSwitcherSelect(workspaceOwnerNpub) {
-    if (!workspaceOwnerNpub || this.isWorkspaceSwitching) return;
-    if (workspaceOwnerNpub === this.currentWorkspaceOwnerNpub) {
+  async handleWorkspaceSwitcherSelect(workspaceKeyOrOwner) {
+    if (!workspaceKeyOrOwner || this.isWorkspaceSwitching) return;
+    const workspace = this.getWorkspaceByKey(workspaceKeyOrOwner) || this.getWorkspaceByOwner(workspaceKeyOrOwner);
+    if (!workspace) return;
+    if (workspace.workspaceKey === this.currentWorkspaceKey) {
       this.closeWorkspaceSwitcherMenu();
       return;
     }
     // Keep the switcher visible during the switch so the user sees progress.
-    this.workspaceSwitchPendingNpub = workspaceOwnerNpub;
+    this.workspaceSwitchPendingKey = workspace.workspaceKey || '';
+    this.workspaceSwitchPendingNpub = workspace.workspaceOwnerNpub || '';
     this.mobileNavOpen = false;
 
     // Persist the new workspace selection, then navigate via slug URL so the
     // browser does a full reload into the new workspace context.
-    const workspace = this.knownWorkspaces.find((w) => w.workspaceOwnerNpub === workspaceOwnerNpub);
-    if (!workspace) return;
+    this.selectedWorkspaceKey = workspace.workspaceKey || '';
     this.currentWorkspaceOwnerNpub = workspace.workspaceOwnerNpub;
     this.superbasedTokenInput = workspace.connectionToken || this.superbasedTokenInput;
     this.backendUrl = normalizeBackendUrl(workspace.directHttpsUrl || this.backendUrl || guessDefaultBackendUrl());
@@ -262,8 +286,11 @@ export const workspaceManagerMixin = {
     setBaseUrl(this.backendUrl);
     await this.persistWorkspaceSettings();
     const slug = workspace.slug || slugify(workspace.name);
-    const page = this.navSection === 'status' ? 'notifications' : (this.navSection || 'chat');
-    window.location.href = `/${slug}/${page}${window.location.search}`;
+    const page = this.navSection === 'status' ? 'flight-deck' : (this.navSection || 'flight-deck');
+    const nextUrl = new URL(window.location.href);
+    nextUrl.pathname = `/${slug}/${page}`;
+    nextUrl.searchParams.set('workspacekey', workspace.workspaceKey || '');
+    window.location.href = `${nextUrl.pathname}${nextUrl.search}`;
   },
 
   // --- workspace list ---
@@ -277,27 +304,29 @@ export const workspaceManagerMixin = {
     if (!Array.isArray(this.knownWorkspaces) || this.knownWorkspaces.length === 0) return;
 
     const patches = [];
-    const overlay = { ...(this.workspaceProfileRowsByOwner || {}) };
+    const overlay = { ...(this.workspaceProfileRowsByKey || {}) };
     for (const workspace of this.knownWorkspaces) {
       const workspaceOwnerNpub = String(workspace?.workspaceOwnerNpub || '').trim();
-      if (!workspaceOwnerNpub) continue;
-      const row = await getWorkspaceSettingsSnapshot(workspaceOwnerNpub);
+      const workspaceKey = String(workspace?.workspaceKey || '').trim();
+      if (!workspaceOwnerNpub || !workspaceKey) continue;
+      const row = await getWorkspaceSettingsSnapshot(workspaceKey, workspaceOwnerNpub);
       if (!row?.workspace_owner_npub) continue;
       const patch = {
+        workspaceKey,
         workspaceOwnerNpub: row.workspace_owner_npub,
       };
       if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) patch.name = row.workspace_name;
       if (Object.prototype.hasOwnProperty.call(row, 'workspace_description')) patch.description = row.workspace_description;
       if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) patch.avatarUrl = row.workspace_avatar_url;
       patches.push(patch);
-      overlay[workspaceOwnerNpub] = {
-        ...(overlay[workspaceOwnerNpub] || {}),
+      overlay[workspaceKey] = {
+        ...(overlay[workspaceKey] || {}),
         ...patch,
       };
     }
 
     if (patches.length === 0) return;
-    this.workspaceProfileRowsByOwner = overlay;
+    this.workspaceProfileRowsByKey = overlay;
     const before = JSON.stringify(this.knownWorkspaces);
     this.mergeKnownWorkspaces(patches);
     if (JSON.stringify(this.knownWorkspaces) !== before) {
@@ -305,38 +334,40 @@ export const workspaceManagerMixin = {
     }
   },
 
-  async ensureWorkspaceProfileHydrated(workspaceOwnerNpub) {
-    const owner = String(workspaceOwnerNpub || '').trim();
-    if (!owner) return;
+  async ensureWorkspaceProfileHydrated(workspaceKeyOrOwner) {
+    const existing = this.getWorkspaceByKey(workspaceKeyOrOwner) || this.getWorkspaceByOwner(workspaceKeyOrOwner);
+    const owner = String(existing?.workspaceOwnerNpub || workspaceKeyOrOwner || '').trim();
+    const workspaceKey = String(existing?.workspaceKey || '').trim();
+    if (!owner || !workspaceKey) return;
 
-    const existing = this.getWorkspaceByOwner(owner);
     if (String(existing?.avatarUrl || '').trim()) return;
 
-    const pending = this.workspaceProfileHydrationPromises?.[owner];
+    const pending = this.workspaceProfileHydrationPromises?.[workspaceKey];
     if (pending) return pending;
 
     const loadPromise = (async () => {
-      const row = await getWorkspaceSettingsSnapshot(owner);
+      const row = await getWorkspaceSettingsSnapshot(workspaceKey, owner);
       if (!row?.workspace_owner_npub) return;
 
       const patch = {
+        workspaceKey,
         workspaceOwnerNpub: row.workspace_owner_npub,
       };
       if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) patch.name = row.workspace_name;
       if (Object.prototype.hasOwnProperty.call(row, 'workspace_description')) patch.description = row.workspace_description;
       if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) patch.avatarUrl = row.workspace_avatar_url;
 
-      this.workspaceProfileRowsByOwner = {
-        ...(this.workspaceProfileRowsByOwner || {}),
-        [owner]: {
-          ...(this.workspaceProfileRowsByOwner?.[owner] || {}),
+      this.workspaceProfileRowsByKey = {
+        ...(this.workspaceProfileRowsByKey || {}),
+        [workspaceKey]: {
+          ...(this.workspaceProfileRowsByKey?.[workspaceKey] || {}),
           ...patch,
         },
       };
 
-      const before = JSON.stringify(this.getWorkspaceByOwner(owner) || {});
+      const before = JSON.stringify(this.getWorkspaceByKey(workspaceKey) || this.getWorkspaceByOwner(owner) || {});
       this.mergeKnownWorkspaces([patch]);
-      const after = JSON.stringify(this.getWorkspaceByOwner(owner) || {});
+      const after = JSON.stringify(this.getWorkspaceByKey(workspaceKey) || this.getWorkspaceByOwner(owner) || {});
       if (after !== before) {
         await this.persistWorkspaceSettings();
       }
@@ -344,14 +375,14 @@ export const workspaceManagerMixin = {
 
     this.workspaceProfileHydrationPromises = {
       ...(this.workspaceProfileHydrationPromises || {}),
-      [owner]: loadPromise,
+      [workspaceKey]: loadPromise,
     };
 
     try {
       await loadPromise;
     } finally {
       const next = { ...(this.workspaceProfileHydrationPromises || {}) };
-      delete next[owner];
+      delete next[workspaceKey];
       this.workspaceProfileHydrationPromises = next;
     }
   },
@@ -448,7 +479,13 @@ export const workspaceManagerMixin = {
     this.workspaceHarnessUrl = String(row?.wingman_harness_url || '').trim();
     this.workspaceTriggers = Array.isArray(row?.triggers) ? [...row.triggers] : [];
     if (row?.workspace_owner_npub) {
+      const workspaceKey = this.currentWorkspaceKey || buildWorkspaceKey({
+        workspaceOwnerNpub: row.workspace_owner_npub,
+        serviceNpub: this.currentWorkspace?.serviceNpub || this.superbasedConnectionConfig?.serviceNpub || null,
+        directHttpsUrl: this.currentWorkspace?.directHttpsUrl || this.backendUrl || '',
+      });
       const workspacePatch = {
+        workspaceKey,
         workspaceOwnerNpub: row.workspace_owner_npub,
       };
       if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) {
@@ -460,10 +497,10 @@ export const workspaceManagerMixin = {
       if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) {
         workspacePatch.avatarUrl = row.workspace_avatar_url;
       }
-      this.workspaceProfileRowsByOwner = {
-        ...(this.workspaceProfileRowsByOwner || {}),
-        [row.workspace_owner_npub]: {
-          ...(this.workspaceProfileRowsByOwner?.[row.workspace_owner_npub] || {}),
+      this.workspaceProfileRowsByKey = {
+        ...(this.workspaceProfileRowsByKey || {}),
+        [workspaceKey]: {
+          ...(this.workspaceProfileRowsByKey?.[workspaceKey] || {}),
           ...workspacePatch,
         },
       };
@@ -513,6 +550,7 @@ export const workspaceManagerMixin = {
       useCvmSync: this.useCvmSync,
       knownWorkspaces: this.knownWorkspaces,
       knownHosts: this.knownHosts,
+      currentWorkspaceKey: this.currentWorkspaceKey || '',
       currentWorkspaceOwnerNpub: this.currentWorkspaceOwnerNpub || '',
       defaultAgentNpub: this.defaultAgentNpub || '',
     });
@@ -753,25 +791,27 @@ export const workspaceManagerMixin = {
 
   // --- workspace CRUD ---
 
-  async selectWorkspace(workspaceOwnerNpub, options = {}) {
-    const workspace = this.knownWorkspaces.find((entry) => entry.workspaceOwnerNpub === workspaceOwnerNpub);
+  async selectWorkspace(workspaceKeyOrOwner, options = {}) {
+    const workspace = this.getWorkspaceByKey(workspaceKeyOrOwner) || this.getWorkspaceByOwner(workspaceKeyOrOwner);
     if (!workspace) return;
 
-    const previousWorkspace = this.currentWorkspaceOwnerNpub;
+    const previousWorkspaceKey = this.currentWorkspaceKey;
+    this.selectedWorkspaceKey = workspace.workspaceKey || '';
     this.workspaceSwitchPendingNpub = workspace.workspaceOwnerNpub;
+    this.workspaceSwitchPendingKey = workspace.workspaceKey || '';
     this.showWorkspaceSwitcherMenu = false;
     try {
       this.startSharedLiveQueries();
       this.stopWorkspaceLiveQueries();
       this.currentWorkspaceOwnerNpub = workspace.workspaceOwnerNpub;
-      openWorkspaceDb(workspace.workspaceOwnerNpub);
+      openWorkspaceDb(workspace.workspaceKey || workspace.workspaceOwnerNpub);
       this.showWorkspaceBootstrapModal = false;
       this.superbasedTokenInput = workspace.connectionToken || this.superbasedTokenInput;
       this.backendUrl = normalizeBackendUrl(workspace.directHttpsUrl || this.backendUrl || guessDefaultBackendUrl());
       this.ownerNpub = workspace.workspaceOwnerNpub;
       setBaseUrl(this.backendUrl);
 
-      if (previousWorkspace && previousWorkspace !== workspace.workspaceOwnerNpub) {
+      if (previousWorkspaceKey && previousWorkspaceKey !== workspace.workspaceKey) {
         await clearRuntimeData();
         evictStorageImageCache().catch(() => {});
         this.revokeStorageImageObjectUrls();
@@ -790,6 +830,7 @@ export const workspaceManagerMixin = {
         this.hasForcedInitialBackfill = false;
         this.hasForcedTaskFamilyBackfill = false;
         this.docCommentBackfillAttemptsByDocId = {};
+        this.scopesLoaded = false;
       }
 
       this.startWorkspaceLiveQueries();
@@ -812,16 +853,20 @@ export const workspaceManagerMixin = {
         await this.refreshStatusRecentChanges();
       }
     } finally {
+      if (this.workspaceSwitchPendingKey === workspace.workspaceKey) {
+        this.workspaceSwitchPendingKey = '';
+      }
       if (this.workspaceSwitchPendingNpub === workspace.workspaceOwnerNpub) {
         this.workspaceSwitchPendingNpub = '';
       }
     }
   },
 
-  async removeWorkspace(workspaceOwnerNpub) {
-    if (!workspaceOwnerNpub || this.removingWorkspace) return;
-    const workspace = this.knownWorkspaces.find((w) => w.workspaceOwnerNpub === workspaceOwnerNpub);
-    const label = workspace?.name || workspaceOwnerNpub;
+  async removeWorkspace(workspaceKeyOrOwner) {
+    if (!workspaceKeyOrOwner || this.removingWorkspace) return;
+    const workspace = this.getWorkspaceByKey(workspaceKeyOrOwner) || this.getWorkspaceByOwner(workspaceKeyOrOwner);
+    if (!workspace) return;
+    const label = workspace?.name || workspace.workspaceOwnerNpub;
     if (!confirm(`Remove workspace "${label}"?\n\nThis will delete all local data for this workspace. The workspace will remain on SuperBased and can be re-added later.`)) {
       return;
     }
@@ -829,15 +874,15 @@ export const workspaceManagerMixin = {
     this.removingWorkspace = true;
     this.stopBackgroundSync();
 
-    const isCurrentWorkspace = this.currentWorkspaceOwnerNpub === workspaceOwnerNpub;
+    const isCurrentWorkspace = this.currentWorkspaceKey === workspace.workspaceKey;
     if (isCurrentWorkspace) this.stopWorkspaceLiveQueries();
 
     // Remove from known workspaces list
-    this.knownWorkspaces = this.knownWorkspaces.filter((w) => w.workspaceOwnerNpub !== workspaceOwnerNpub);
+    this.knownWorkspaces = this.knownWorkspaces.filter((w) => w.workspaceKey !== workspace.workspaceKey);
 
     // Delete the local IndexedDB for this workspace
     try {
-      await deleteWorkspaceDb(workspaceOwnerNpub);
+      await deleteWorkspaceDb(workspace.workspaceKey || workspace.workspaceOwnerNpub);
     } catch (error) {
       console.warn('Failed to delete workspace database:', error?.message || error);
     }
@@ -856,11 +901,12 @@ export const workspaceManagerMixin = {
       this.showNewScheduleModal = false;
       this.hasForcedInitialBackfill = false;
       this.hasForcedTaskFamilyBackfill = false;
+      this.selectedWorkspaceKey = '';
       this.currentWorkspaceOwnerNpub = '';
 
       if (this.knownWorkspaces.length > 0) {
         // Switch to next available workspace and land on home
-        await this.selectWorkspace(this.knownWorkspaces[0].workspaceOwnerNpub);
+        await this.selectWorkspace(this.knownWorkspaces[0].workspaceKey || this.knownWorkspaces[0].workspaceOwnerNpub);
         await this.persistWorkspaceSettings();
         this.navigateTo('status');
         this.ensureBackgroundSync(true);
@@ -883,14 +929,24 @@ export const workspaceManagerMixin = {
     if (!this.session?.npub || !this.backendUrl) return;
     try {
       const serviceNpub = await this.fetchBackendServiceNpub();
-      const backendUrl = normalizeBackendUrl(this.backendUrl);
+      const activeBackendUrl = normalizeBackendUrl(this.backendUrl);
       const result = await getWorkspaces(this.session.npub);
-      const workspaces = (result.workspaces || []).map((entry) => ({
-        ...entry,
-        directHttpsUrl: entry.direct_https_url || entry.directHttpsUrl || backendUrl,
-        serviceNpub,
-        appNpub: this.superbasedConnectionConfig?.appNpub || null,
-      }));
+      const workspaces = (result.workspaces || []).map((entry) => {
+        const workspaceOwnerNpub = entry.workspace_owner_npub || entry.workspaceOwnerNpub || entry.owner_npub || '';
+        const existing = this.knownWorkspaces.find((item) =>
+          item.workspaceOwnerNpub === workspaceOwnerNpub
+          && (
+            (entry.service_npub && item.serviceNpub === entry.service_npub)
+            || (entry.direct_https_url && item.directHttpsUrl === entry.direct_https_url)
+          )
+        ) || null;
+        return {
+          ...entry,
+          directHttpsUrl: entry.direct_https_url || entry.directHttpsUrl || existing?.directHttpsUrl || activeBackendUrl,
+          serviceNpub: entry.service_npub || entry.serviceNpub || existing?.serviceNpub || serviceNpub,
+          appNpub: entry.app_npub || entry.appNpub || existing?.appNpub || this.superbasedConnectionConfig?.appNpub || null,
+        };
+      });
       this.mergeKnownWorkspaces(workspaces);
       await this.hydrateKnownWorkspaceProfiles();
     } catch (error) {
@@ -926,7 +982,7 @@ export const workspaceManagerMixin = {
   },
 
   updateWorkspaceBootstrapPrompt() {
-    const shouldPrompt = Boolean(this.session?.npub) && Boolean(this.backendUrl) && !this.currentWorkspaceOwnerNpub && this.knownWorkspaces.length === 0;
+    const shouldPrompt = Boolean(this.session?.npub) && Boolean(this.backendUrl) && !this.currentWorkspaceKey && this.knownWorkspaces.length === 0;
     this.showWorkspaceBootstrapModal = shouldPrompt;
     return shouldPrompt;
   },
@@ -1007,7 +1063,7 @@ export const workspaceManagerMixin = {
         }),
       });
       this.mergeKnownWorkspaces([workspace]);
-      await this.selectWorkspace(workspace.workspaceOwnerNpub);
+      await this.selectWorkspace(workspace.workspaceKey || workspace.workspaceOwnerNpub);
       this.showWorkspaceBootstrapModal = false;
     } catch (error) {
       this.error = error?.message || 'Failed to create workspace';

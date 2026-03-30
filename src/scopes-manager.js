@@ -102,6 +102,7 @@ export const scopesManagerMixin = {
     if (!sameListBySignature(this.scopes, normalizedScopes)) {
       this.scopes = normalizedScopes;
     }
+    this.scopesLoaded = true;
   },
 
   async refreshScopes() {
