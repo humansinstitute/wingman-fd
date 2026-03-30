@@ -30,7 +30,7 @@ body {
 
 body {
   margin: 0 auto;
-  padding: 0.5rem 2rem;
+  padding: 0.5rem 0;
   max-width: 1400px;
   height: 100dvh;
   overflow: hidden;
@@ -1302,7 +1302,7 @@ button:disabled {
   min-width: 0;
   min-height: 0;
   height: 100%;
-  padding-left: 1.5rem;
+  padding-left: 0;
   background: #ffffff;
   overflow-y: auto;
   overflow-x: hidden;
@@ -1335,7 +1335,7 @@ button:disabled {
 .status-section {
   width: 100%;
   max-width: none;
-  padding: 2.4rem 1.5rem 2rem 0;
+  padding: 2.4rem 0 2rem 0;
 }
 
 .sidebar-focus-panel {
@@ -2092,13 +2092,13 @@ button:disabled {
   }
 
   .status-section {
-    padding-right: 1rem;
+    padding-right: 0;
   }
 }
 
 @media (max-width: 720px) {
   .status-section {
-    padding: 1rem 1rem 1.5rem 0;
+    padding: 1rem 0 1.5rem 0;
   }
 
   .flightdeck-hero h2 {
