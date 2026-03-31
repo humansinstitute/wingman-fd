@@ -493,15 +493,15 @@
                 <span x-text="$store.chat.knownWorkspaces.length + ' available'"></span>
               </div>
               <div class="sidebar-workspace-list" x-show="$store.chat.knownWorkspaces.length > 0">
-                <template x-for="workspace in $store.chat.knownWorkspaces" :key="workspace.workspaceOwnerNpub">
+                <template x-for="workspace in $store.chat.knownWorkspaces" :key="workspace.workspaceKey || workspace.workspaceOwnerNpub">
                   <button
                     type="button"
                     class="sidebar-workspace-option"
                     :class="{
-                      'sidebar-workspace-option-active': $store.chat.currentWorkspaceOwnerNpub === workspace.workspaceOwnerNpub,
-                      'sidebar-workspace-option-pending': $store.chat.workspaceSwitchPendingNpub === workspace.workspaceOwnerNpub
+                      'sidebar-workspace-option-active': $store.chat.currentWorkspaceKey === (workspace.workspaceKey || workspace.workspaceOwnerNpub),
+                      'sidebar-workspace-option-pending': $store.chat.workspaceSwitchPendingKey === (workspace.workspaceKey || '')
                     }"
-                    @click="$store.chat.handleWorkspaceSwitcherSelect(workspace.workspaceOwnerNpub)"
+                    @click="$store.chat.handleWorkspaceSwitcherSelect(workspace.workspaceKey || workspace.workspaceOwnerNpub)"
                     :disabled="$store.chat.isWorkspaceSwitching"
                   >
                     <template x-if="$store.chat.getWorkspaceAvatar(workspace)">
@@ -514,7 +514,7 @@
                       <span class="sidebar-workspace-option-name" x-text="$store.chat.getWorkspaceName(workspace)"></span>
                       <span class="sidebar-workspace-option-meta" x-text="$store.chat.getWorkspaceMeta(workspace)"></span>
                     </span>
-                    <span class="sidebar-workspace-option-state" x-text="$store.chat.workspaceSwitchPendingNpub === workspace.workspaceOwnerNpub ? 'Loading' : ($store.chat.currentWorkspaceOwnerNpub === workspace.workspaceOwnerNpub ? 'Current' : '')"></span>
+                    <span class="sidebar-workspace-option-state" x-text="$store.chat.workspaceSwitchPendingKey === (workspace.workspaceKey || '') ? 'Loading' : ($store.chat.currentWorkspaceKey === (workspace.workspaceKey || workspace.workspaceOwnerNpub) ? 'Current' : '')"></span>
                   </button>
                 </template>
               </div>
@@ -1188,7 +1188,7 @@
                       <select x-model="$store.chat.editingTask.state" @change="$store.chat.saveEditingTask()">
                         <option value="new">New</option>
                         <option value="ready">Ready</option>
-                        <option value="definition">Definition</option>
+
                         <option value="in_progress">In Progress</option>
                         <option value="review">Review</option>
                         <option value="done">Done</option>
@@ -3733,8 +3733,8 @@
               <button
                 type="button"
                 class="btn-danger"
-                @click="$store.chat.removeWorkspace($store.chat.currentWorkspaceOwnerNpub)"
-                :disabled="!$store.chat.currentWorkspaceOwnerNpub || $store.chat.removingWorkspace"
+                @click="$store.chat.removeWorkspace($store.chat.currentWorkspaceKey || $store.chat.currentWorkspaceOwnerNpub)"
+                :disabled="!($store.chat.currentWorkspaceKey || $store.chat.currentWorkspaceOwnerNpub) || $store.chat.removingWorkspace"
                 x-text="$store.chat.removingWorkspace ? 'Removing...' : 'Remove workspace'"
               ></button>
             </div>
@@ -3792,7 +3792,7 @@
                   ></span>
                 </div>
                 <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.workspaceOwnerNpub || $store.chat.workspaceOwnerNpub">
-                  <span class="info-label">Workspace owner</span>
+                  <span class="info-label">Workspace</span>
                   <span class="info-value info-npub" x-text="$store.chat.superbasedConnectionConfig?.workspaceOwnerNpub || $store.chat.workspaceOwnerNpub"></span>
                 </div>
                 <div class="info-row" x-show="$store.chat.superbasedConnectionConfig?.appNpub">
@@ -3808,12 +3808,12 @@
                 <button class="auth-option secondary" type="button" @click="$store.chat.openWorkspaceBootstrapModal()">New workspace</button>
               </div>
               <div class="workspace-selector-list" x-show="$store.chat.knownWorkspaces.length > 0">
-                <template x-for="workspace in $store.chat.knownWorkspaces" :key="workspace.workspaceOwnerNpub">
+                <template x-for="workspace in $store.chat.knownWorkspaces" :key="workspace.workspaceKey || workspace.workspaceOwnerNpub">
                   <button
                     type="button"
                     class="workspace-selector-row"
-                    :class="{ 'workspace-selector-row-active': $store.chat.currentWorkspaceOwnerNpub === workspace.workspaceOwnerNpub }"
-                    @click="$store.chat.selectWorkspace(workspace.workspaceOwnerNpub)"
+                    :class="{ 'workspace-selector-row-active': $store.chat.currentWorkspaceKey === (workspace.workspaceKey || workspace.workspaceOwnerNpub) }"
+                    @click="$store.chat.selectWorkspace(workspace.workspaceKey || workspace.workspaceOwnerNpub)"
                   >
                     <span class="workspace-selector-name" x-text="workspace.name"></span>
                     <span class="workspace-selector-meta" x-text="workspace.description || workspace.workspaceOwnerNpub"></span>

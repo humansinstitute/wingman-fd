@@ -396,6 +396,65 @@ describe('computeFilteredTasks', () => {
   it('returns empty when query matches nothing', () => {
     expect(computeFilteredTasks(tasks, 'nonexistent', [])).toHaveLength(0);
   });
+
+  // --- assignee filtering (filter-to-me) ---
+  const tasksWithAssignee = [
+    { record_id: 't1', title: 'Fix login bug', description: '', tags: 'bug', assigned_to_npub: 'npub1me' },
+    { record_id: 't2', title: 'Add dashboard', description: '', tags: 'feature', assigned_to_npub: 'npub1other' },
+    { record_id: 't3', title: 'Refactor auth', description: '', tags: 'refactor', assigned_to_npub: null },
+    { record_id: 't4', title: 'Write docs', description: '', tags: 'docs', assigned_to_npub: 'npub1me' },
+  ];
+
+  it('filters by assignee npub when provided', () => {
+    const result = computeFilteredTasks(tasksWithAssignee, '', [], 'npub1me');
+    expect(result).toHaveLength(2);
+    expect(result.map(t => t.record_id)).toEqual(['t1', 't4']);
+  });
+
+  it('returns all tasks when assigneeNpub is null', () => {
+    const result = computeFilteredTasks(tasksWithAssignee, '', [], null);
+    expect(result).toHaveLength(4);
+  });
+
+  it('returns all tasks when assigneeNpub is empty string', () => {
+    const result = computeFilteredTasks(tasksWithAssignee, '', [], '');
+    expect(result).toHaveLength(4);
+  });
+
+  it('combines assignee filter with text query', () => {
+    const result = computeFilteredTasks(tasksWithAssignee, 'Fix', [], 'npub1me');
+    expect(result).toHaveLength(1);
+    expect(result[0].record_id).toBe('t1');
+  });
+
+  it('combines assignee filter with tag filter', () => {
+    const result = computeFilteredTasks(tasksWithAssignee, '', ['docs'], 'npub1me');
+    expect(result).toHaveLength(1);
+    expect(result[0].record_id).toBe('t4');
+  });
+
+  it('combines all three filters together', () => {
+    const result = computeFilteredTasks(tasksWithAssignee, 'Write', ['docs'], 'npub1me');
+    expect(result).toHaveLength(1);
+    expect(result[0].record_id).toBe('t4');
+  });
+
+  it('returns empty when assignee matches but text does not', () => {
+    const result = computeFilteredTasks(tasksWithAssignee, 'nonexistent', [], 'npub1me');
+    expect(result).toHaveLength(0);
+  });
+
+  it('returns empty when no tasks match assignee', () => {
+    const result = computeFilteredTasks(tasksWithAssignee, '', [], 'npub1nobody');
+    expect(result).toHaveLength(0);
+  });
+
+  it('existing callers without assignee param still work (backwards compatible)', () => {
+    // Calling with only 3 args should behave identically to before
+    const result = computeFilteredTasks(tasksWithAssignee, 'Fix', []);
+    expect(result).toHaveLength(1);
+    expect(result[0].record_id).toBe('t1');
+  });
 });
 
 // --- computeBoardColumns ---
@@ -403,7 +462,8 @@ describe('computeBoardColumns', () => {
   it('produces standard columns', () => {
     const cols = computeBoardColumns([], [], []);
     const stateNames = cols.map((c) => c.state);
-    expect(stateNames).toEqual(['new', 'ready', 'definition', 'in_progress', 'review', 'done']);
+    expect(stateNames).toEqual(['new', 'ready', 'in_progress', 'review', 'done']);
+    expect(stateNames).not.toContain('definition');
   });
 
   it('prepends summary column when summaryTasks present', () => {

@@ -6621,7 +6621,7 @@ button:disabled {
 .kanban-col-summary .kanban-column-header { border-bottom-color: #a78bfa; }
 .kanban-col-new .kanban-column-header { border-bottom-color: #ccc; }
 .kanban-col-ready .kanban-column-header { border-bottom-color: #ffcfc3; }
-.kanban-col-definition .kanban-column-header { border-bottom-color: #7dd3fc; }
+
 .kanban-col-in_progress .kanban-column-header { border-bottom-color: #cdbdff; }
 .kanban-col-review .kanban-column-header { border-bottom-color: #fcd34d; }
 .kanban-col-done .kanban-column-header { border-bottom-color: #b0e2b8; }
@@ -6685,7 +6685,7 @@ button:disabled {
 .task-list-group-header.task-list-group-summary { border-bottom-color: #a78bfa; }
 .task-list-group-header.task-list-group-new { border-bottom-color: #ccc; }
 .task-list-group-header.task-list-group-ready { border-bottom-color: #ffcfc3; }
-.task-list-group-header.task-list-group-definition { border-bottom-color: #7dd3fc; }
+
 .task-list-group-header.task-list-group-in_progress { border-bottom-color: #cdbdff; }
 .task-list-group-header.task-list-group-review { border-bottom-color: #fcd34d; }
 .task-list-group-header.task-list-group-done { border-bottom-color: #b0e2b8; }
@@ -6761,7 +6761,7 @@ button:disabled {
 
 .state-new { background: #f3f4f6; color: #6b7280; }
 .state-ready { background: #fef2f2; color: #ef4444; }
-.state-definition { background: #ecfeff; color: #0891b2; }
+
 .state-in_progress { background: #f5f3ff; color: #7c3aed; }
 .state-review { background: #fffbeb; color: #d97706; }
 .state-done { background: #ecfdf5; color: #059669; }

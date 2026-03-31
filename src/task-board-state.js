@@ -230,7 +230,7 @@ export function computeBoardScopedTasks(tasks, selectedBoardId, selectedBoardSco
   }));
 }
 
-export function computeFilteredTasks(boardScopedTasks, query, filterTags) {
+export function computeFilteredTasks(boardScopedTasks, query, filterTags, assigneeNpub) {
   let tasks = boardScopedTasks;
 
   const q = String(query || '').trim().toLowerCase();
@@ -247,6 +247,9 @@ export function computeFilteredTasks(boardScopedTasks, query, filterTags) {
       return filterTags.some(ft => tags.includes(ft.toLowerCase()));
     });
   }
+  if (assigneeNpub) {
+    tasks = tasks.filter(t => t.assigned_to_npub === assigneeNpub);
+  }
   return tasks;
 }
 
@@ -255,11 +258,10 @@ export function computeBoardColumns(activeTasks, doneTasks, summaryTasks) {
   if (summaryTasks.length > 0) {
     cols.push({ state: 'summary', label: 'Summary', tasks: summaryTasks });
   }
-  const states = ['new', 'ready', 'definition', 'in_progress', 'review', 'done'];
+  const states = ['new', 'ready', 'in_progress', 'review', 'done'];
   const labels = {
     new: 'New',
     ready: 'Ready',
-    definition: 'Definition',
     in_progress: 'In Progress',
     review: 'Review',
     done: 'Done',
@@ -665,7 +667,7 @@ export const taskBoardStateMixin = {
   },
 
   get filteredTasks() {
-    return computeFilteredTasks(this.boardScopedTasks, this.taskFilter, this.taskFilterTags);
+    return computeFilteredTasks(this.boardScopedTasks, this.taskFilter, this.taskFilterTags, this.taskFilterAssignee);
   },
 
   get activeTasks() {
