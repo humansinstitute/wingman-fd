@@ -125,6 +125,56 @@ export function getDocCommentSummary(comment) {
   return `${words.slice(0, 7).join(' ')}…`;
 }
 
+/**
+ * Convert a Blob into a data: URL string.
+ *
+ * Data URLs are self-contained and work across browsing contexts, unlike
+ * blob: URLs which are tied to the document that created them.
+ */
+export async function blobToDataUrl(blob) {
+  // Use FileReader in browser environments, fall back to arrayBuffer for
+  // Node/Bun where FileReader may not exist.
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+      reader.readAsDataURL(blob);
+    });
+  }
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = btoa(binary);
+  return `data:${blob.type || 'application/octet-stream'};base64,${base64}`;
+}
+
+/**
+ * Build the full HTML document string used for the print/PDF export window.
+ */
+export function buildDocPrintHtml(title, bodyHtml) {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${title}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; color: #222; line-height: 1.6; }
+  h1 { font-size: 1.8rem; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem; }
+  h2 { font-size: 1.4rem; margin-top: 1.5rem; }
+  h3 { font-size: 1.2rem; margin-top: 1.2rem; }
+  pre { background: #f5f5f5; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+  code { background: #f0f0f0; padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.9em; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+  th { background: #f5f5f5; }
+  blockquote { border-left: 3px solid #ddd; margin-left: 0; padding-left: 1rem; color: #555; }
+  img { max-width: 100%; }
+  .md-storage-image-error { opacity: 0.3; min-height: 2rem; background: #f0f0f0; }
+  @media print { body { margin: 0; } }
+</style>
+</head><body><h1>${title}</h1>${bodyHtml}</body></html>`;
+}
+
 // ---------------------------------------------------------------------------
 // Mixin methods — use `this` (the Alpine store). Spread into the store.
 // ---------------------------------------------------------------------------
@@ -1448,8 +1498,20 @@ export const docsManagerMixin = {
     const content = this.docEditorContent || doc.content || '';
     const rendered = this.renderMarkdown(content);
 
-    // Resolve storage-backed images so they appear in the print output
-    const resolverFn = (objectId) => this.resolveStorageImageUrl(objectId);
+    // Resolve storage-backed images to data: URLs so they survive cross-window
+    // transfer into the print popup (blob: URLs are tied to the originating
+    // document and are not accessible from a different browsing context).
+    const resolverFn = async (objectId) => {
+      const blobUrl = await this.resolveStorageImageUrl(objectId);
+      try {
+        const response = await fetch(blobUrl);
+        const blob = await response.blob();
+        return await blobToDataUrl(blob);
+      } catch {
+        // Fall back to the blob URL if data-URL conversion fails
+        return blobUrl;
+      }
+    };
     const hydrated = await hydrateStorageImageMarkup(rendered, resolverFn);
 
     const printWindow = window.open('about:blank', '_blank');
@@ -1457,27 +1519,20 @@ export const docsManagerMixin = {
       this.error = 'Popup blocked — please allow popups for this site and try again.';
       return;
     }
-    printWindow.document.write(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${title}</title>
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; color: #222; line-height: 1.6; }
-  h1 { font-size: 1.8rem; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem; }
-  h2 { font-size: 1.4rem; margin-top: 1.5rem; }
-  h3 { font-size: 1.2rem; margin-top: 1.2rem; }
-  pre { background: #f5f5f5; padding: 1rem; border-radius: 6px; overflow-x: auto; }
-  code { background: #f0f0f0; padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.9em; }
-  pre code { background: none; padding: 0; }
-  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-  th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
-  th { background: #f5f5f5; }
-  blockquote { border-left: 3px solid #ddd; margin-left: 0; padding-left: 1rem; color: #555; }
-  img { max-width: 100%; }
-  .md-storage-image-error { opacity: 0.3; min-height: 2rem; background: #f0f0f0; }
-  @media print { body { margin: 0; } }
-</style>
-</head><body><h1>${title}</h1>${hydrated}</body></html>`);
+    printWindow.document.write(buildDocPrintHtml(title, hydrated));
     printWindow.document.close();
     printWindow.onafterprint = () => printWindow.close();
-    setTimeout(() => printWindow.print(), 300);
+
+    // Wait for all images to finish loading before triggering print, so that
+    // storage-backed and remote images are rasterised into the PDF.
+    const images = [...printWindow.document.querySelectorAll('img[src]')];
+    if (images.length > 0) {
+      await Promise.all(images.map((img) =>
+        img.complete
+          ? Promise.resolve()
+          : new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; }),
+      ));
+    }
+    printWindow.print();
   },
 };
