@@ -1034,6 +1034,7 @@ export function initApp() {
       }
       if (this.selectedWorkspaceKey) {
         await this.refreshGroups();
+        this.runAccessPruneOnLogin().catch(() => {}); // fire-and-forget; non-blocking
         this.selectedBoardId = this.readStoredTaskBoardId();
         this.validateSelectedBoardId();
         await this.refreshAddressBook();

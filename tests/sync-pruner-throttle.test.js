@@ -3,6 +3,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 // ---------------------------------------------------------------------------
 // Stub db.js and api.js so sync-worker can be imported without real backends
 // ---------------------------------------------------------------------------
+
+// In-memory sync_state store for the pruner's IndexedDB-backed cooldown
+const syncStateStore = {};
+
 vi.mock('../src/db.js', () => ({
   openWorkspaceDb: vi.fn(),
   getWorkspaceDb: vi.fn(() => ({})),
@@ -19,8 +23,8 @@ vi.mock('../src/db.js', () => ({
   upsertComment: vi.fn(),
   upsertAudioNote: vi.fn(),
   upsertScope: vi.fn(),
-  getSyncState: vi.fn(async () => null),
-  setSyncState: vi.fn(),
+  getSyncState: vi.fn(async (key) => syncStateStore[key] ?? null),
+  setSyncState: vi.fn(async (key, value) => { syncStateStore[key] = value; }),
   upsertSyncQuarantineEntry: vi.fn(),
   deleteSyncQuarantineEntry: vi.fn(),
   getAllGroups: vi.fn(async () => []),
@@ -44,7 +48,7 @@ vi.mock('../src/logging.js', () => ({
   flightDeckLog: vi.fn(),
 }));
 
-const { runSync, resetPruneThrottle } = await import('../src/worker/sync-worker.js');
+const { runSync, pruneOnLogin } = await import('../src/worker/sync-worker.js');
 const { fetchHeartbeat, fetchRecords } = await import('../src/api.js');
 
 // ---------------------------------------------------------------------------
@@ -55,10 +59,9 @@ describe('sync-worker pruner throttle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    // Set a base time well past the throttle window so the first prune isn't
-    // blocked by the initial lastPruneTime = 0.
     vi.setSystemTime(new Date('2026-03-31T00:00:00Z'));
-    resetPruneThrottle();
+    // Clear persisted prune state
+    for (const key of Object.keys(syncStateStore)) delete syncStateStore[key];
   });
 
   afterEach(() => {
@@ -94,23 +97,23 @@ describe('sync-worker pruner throttle', () => {
     expect(pruneSpy).toHaveBeenCalledWith('viewer', 'owner');
   });
 
-  it('throttles pruning to at most once per 30 seconds', async () => {
-    // First sync with records → prune runs
+  it('throttles sync-triggered pruning to at most once per hour', async () => {
     fetchHeartbeat.mockResolvedValue({ stale_families: ['family-hash-1'] });
     fetchRecords.mockResolvedValue({
       records: [{ record_id: 'r1', updated_at: '2026-03-31T00:00:00Z' }],
     });
 
+    // First sync with records → prune runs
     await runSync('owner', 'viewer', vi.fn());
     expect(pruneSpy).toHaveBeenCalledTimes(1);
 
-    // Second sync 5 seconds later → should be throttled
-    vi.advanceTimersByTime(5000);
+    // Second sync 5 minutes later → should be throttled (< 1 hour)
+    vi.advanceTimersByTime(5 * 60 * 1000);
     await runSync('owner', 'viewer', vi.fn());
     expect(pruneSpy).toHaveBeenCalledTimes(1); // still 1
 
-    // Third sync 30+ seconds after first → should run again
-    vi.advanceTimersByTime(30000);
+    // Third sync 1 hour after first → should run again
+    vi.advanceTimersByTime(60 * 60 * 1000);
     await runSync('owner', 'viewer', vi.fn());
     expect(pruneSpy).toHaveBeenCalledTimes(2);
   });
@@ -134,5 +137,38 @@ describe('sync-worker pruner throttle', () => {
     await runSync('owner', 'viewer', vi.fn());
 
     expect(pruneSpy).not.toHaveBeenCalled();
+  });
+
+  // --- pruneOnLogin ---
+
+  it('pruneOnLogin always runs regardless of cooldown', async () => {
+    // Simulate a recent prune (would block sync-triggered prunes)
+    syncStateStore['access_prune_last'] = Date.now();
+
+    await pruneOnLogin('viewer', 'owner');
+
+    expect(pruneSpy).toHaveBeenCalledOnce();
+    expect(pruneSpy).toHaveBeenCalledWith('viewer', 'owner');
+  });
+
+  it('pruneOnLogin persists last-prune timestamp', async () => {
+    await pruneOnLogin('viewer', 'owner');
+
+    expect(syncStateStore['access_prune_last']).toBeGreaterThan(0);
+  });
+
+  it('sync-triggered prune is skipped after recent pruneOnLogin', async () => {
+    // Login prune
+    await pruneOnLogin('viewer', 'owner');
+    expect(pruneSpy).toHaveBeenCalledTimes(1);
+
+    // Sync shortly after — should be skipped by cooldown
+    fetchHeartbeat.mockResolvedValueOnce({ stale_families: ['family-hash-1'] });
+    fetchRecords.mockResolvedValueOnce({
+      records: [{ record_id: 'r1', updated_at: '2026-03-31T00:00:00Z' }],
+    });
+    await runSync('owner', 'viewer', vi.fn());
+
+    expect(pruneSpy).toHaveBeenCalledTimes(1); // login only, sync skipped
   });
 });

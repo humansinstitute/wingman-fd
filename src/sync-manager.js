@@ -23,7 +23,7 @@ import {
   upsertComment,
 } from './db.js';
 import { fetchRecordHistory, syncRecords } from './api.js';
-import { runSync, pullRecordsForFamilies } from './worker/sync-worker.js';
+import { runSync, pullRecordsForFamilies, pruneOnLogin } from './worker/sync-worker.js';
 import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
 import { outboundTask } from './translators/tasks.js';
@@ -36,6 +36,19 @@ import { outboundComment } from './translators/comments.js';
 // ---------------------------------------------------------------------------
 
 export const syncManagerMixin = {
+
+  get workspaceDbKey() {
+    return this.currentWorkspaceKey || this.workspaceOwnerNpub || '';
+  },
+
+  // --- access pruning on login ---
+
+  async runAccessPruneOnLogin() {
+    if (!this.session?.npub || !this.workspaceOwnerNpub) return;
+    await pruneOnLogin(this.session.npub, this.workspaceOwnerNpub, {
+      workspaceDbKey: this.workspaceDbKey,
+    });
+  },
 
   // --- repair UI ---
 
@@ -733,7 +746,9 @@ export const syncManagerMixin = {
         await clearSyncState();
         this.hasForcedInitialBackfill = true;
       }
-      const result = await runSync(this.workspaceOwnerNpub, this.session.npub, onProgress);
+      const result = await runSync(this.workspaceOwnerNpub, this.session.npub, onProgress, {
+        workspaceDbKey: this.workspaceDbKey,
+      });
       this.updateSyncSession({ phase: 'applying' });
       await this.refreshGroups();
       await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
@@ -879,7 +894,10 @@ export const syncManagerMixin = {
     }
     const hashes = getSyncFamilyHashes(familyIds);
     if (hashes.length === 0) return { pulled: 0 };
-    return pullRecordsForFamilies(this.workspaceOwnerNpub, this.session.npub, hashes, options);
+    return pullRecordsForFamilies(this.workspaceOwnerNpub, this.session.npub, hashes, {
+      ...options,
+      workspaceDbKey: this.workspaceDbKey,
+    });
   },
 
   async refreshStateForFamilies(familyIds = []) {

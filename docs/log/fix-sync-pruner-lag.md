@@ -22,21 +22,24 @@ groups + 8 for group-bearing tables), blocking the event loop ~1x/second.
 
 ## Fix
 
-Two changes in `src/worker/sync-worker.js`:
+Three changes:
 
-1. **Skip pruning when nothing was pulled.** If `pulled === 0`, group membership
-   cannot have changed, so there is nothing new to prune. The pruner is now only
-   called when `pullResult.pulled > 0`.
+1. **Prune on login only.** A new `pruneOnLogin()` export in `sync-worker.js`
+   runs immediately (bypassing cooldown) when a workspace is selected. This is
+   called fire-and-forget from the app init flow after groups are loaded.
+   (`src/sync-manager.js` → `runAccessPruneOnLogin()`, wired in `src/app.js`.)
 
-2. **Throttle pruning to once per 30 seconds.** Even when records are pulled, the
-   pruner now checks `Date.now() - lastPruneTime` against a 30-second minimum
-   interval. This prevents back-to-back full scans during bursts of sync
-   activity.
+2. **1-hour cooldown for sync-triggered pruning.** During normal sync cycles,
+   pruning only fires if records were actually pulled (`pulled > 0`) AND the
+   last prune was more than 1 hour ago. The timestamp is persisted in IndexedDB
+   via `sync_state` (`access_prune_last` key) so it survives page reloads.
+
+3. **Skip pruning entirely when nothing changed.** If the heartbeat reports 0
+   stale families or the pull returns 0 records, pruning is skipped outright.
 
 ## Impact
 
 - Eliminates the per-second IndexedDB scan overhead that caused UI jank.
-- Pruning still fires within 30 seconds of any real data change, which is
-  adequate for the access-revocation use case it was designed for.
-- Existing access-pruner unit tests remain green; new throttle tests added in
-  `tests/sync-pruner-throttle.test.js`.
+- Stale access data is cleaned up at login and re-checked at most once per hour.
+- Existing access-pruner unit tests remain green; new throttle + login tests
+  added in `tests/sync-pruner-throttle.test.js` (9 tests).

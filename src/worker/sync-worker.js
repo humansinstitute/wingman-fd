@@ -280,25 +280,33 @@ export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub, options 
 }
 
 /**
- * Run access pruning after a sync pull, catching errors so sync still succeeds.
- * Throttled: skips if called again within PRUNE_THROTTLE_MS of the last run.
+ * Access pruning — runs at most once per hour, persisted in IndexedDB.
+ *
+ * Pruning only happens:
+ *  1. On login / workspace selection (explicit call to pruneOnLogin)
+ *  2. During sync when records were pulled AND the hourly cooldown has elapsed
+ *
+ * The last-prune timestamp is stored in the workspace sync_state table so it
+ * survives page reloads and is scoped to the active workspace DB.
  */
-const PRUNE_THROTTLE_MS = 30_000;
-let lastPruneTime = 0;
+const PRUNE_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+const PRUNE_STATE_KEY = 'access_prune_last';
 
-/** Reset throttle state (for testing only). */
-export function resetPruneThrottle() { lastPruneTime = 0; }
+async function getLastPruneTime() {
+  const raw = await getSyncState(PRUNE_STATE_KEY);
+  return typeof raw === 'number' ? raw : 0;
+}
 
-async function pruneAfterSync(viewerNpub, ownerNpub) {
-  const now = Date.now();
-  if (now - lastPruneTime < PRUNE_THROTTLE_MS) {
-    return { pruned: 0 };
-  }
+async function setLastPruneTime(ts) {
+  await setSyncState(PRUNE_STATE_KEY, ts);
+}
+
+async function executePrune(viewerNpub, ownerNpub) {
   try {
     const result = await pruneInaccessibleRecords(viewerNpub, ownerNpub);
-    lastPruneTime = Date.now();
+    await setLastPruneTime(Date.now());
     if (result.pruned > 0) {
-      flightDeckLog('info', 'sync', 'pruned inaccessible local records after sync', {
+      flightDeckLog('info', 'sync', 'pruned inaccessible local records', {
         viewerNpub,
         ownerNpub,
         pruned: result.pruned,
@@ -306,7 +314,7 @@ async function pruneAfterSync(viewerNpub, ownerNpub) {
     }
     return { pruned: result.pruned };
   } catch (error) {
-    flightDeckLog('warn', 'sync', 'access pruning failed after sync', {
+    flightDeckLog('warn', 'sync', 'access pruning failed', {
       viewerNpub,
       ownerNpub,
       error: error?.message || String(error),
@@ -316,13 +324,33 @@ async function pruneAfterSync(viewerNpub, ownerNpub) {
 }
 
 /**
+ * Run access pruning immediately — called on login / workspace selection.
+ * Bypasses the hourly cooldown so stale data is cleaned up at session start.
+ */
+export async function pruneOnLogin(viewerNpub, ownerNpub, options = {}) {
+  openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
+  return executePrune(viewerNpub, ownerNpub);
+}
+
+/**
+ * Conditionally prune during a sync cycle if the hourly cooldown has elapsed.
+ */
+async function maybePruneAfterSync(viewerNpub, ownerNpub) {
+  const lastPrune = await getLastPruneTime();
+  if (Date.now() - lastPrune < PRUNE_COOLDOWN_MS) {
+    return { pruned: 0 };
+  }
+  return executePrune(viewerNpub, ownerNpub);
+}
+
+/**
  * Full sync cycle: push then pull.
  * Uses heartbeat-first approach: asks the server which families changed,
  * then only pulls stale families. Falls back to full pull if heartbeat unavailable.
  *
- * Access pruning only runs when records were actually pulled (pulled > 0),
- * and is throttled to at most once per PRUNE_THROTTLE_MS to avoid blocking
- * the main thread with repeated full-table IndexedDB scans.
+ * Access pruning only runs when records were actually pulled (pulled > 0)
+ * AND the hourly cooldown has elapsed. Login pruning is handled separately
+ * via pruneOnLogin().
  */
 export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, options = {}) {
   if (!getBaseUrl()) throw new Error('Backend URL not configured');
@@ -347,9 +375,8 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, opt
     const pullResult = await pullRecordsForFamilies(ownerNpub, viewerNpub, heartbeat.stale_families, options, onProgress);
 
     if (onProgress) onProgress({ phase: 'applying' });
-    // Only prune when records were actually pulled (group membership may have changed)
     const pruneResult = pullResult.pulled > 0
-      ? await pruneAfterSync(viewerNpub, ownerNpub)
+      ? await maybePruneAfterSync(viewerNpub, ownerNpub)
       : { pruned: 0 };
     return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: true, staleFamilies: heartbeat.stale_families.length };
   }
@@ -359,9 +386,8 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, opt
   const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress, options);
 
   if (onProgress) onProgress({ phase: 'applying' });
-  // Only prune when records were actually pulled
   const pruneResult = pullResult.pulled > 0
-    ? await pruneAfterSync(viewerNpub, ownerNpub)
+    ? await maybePruneAfterSync(viewerNpub, ownerNpub)
     : { pruned: 0 };
   return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: false };
 }
