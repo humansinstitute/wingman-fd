@@ -13,6 +13,13 @@ import {
 let activeSessionNpub = null;
 const groupKeysByNpub = new Map();
 const groupKeysById = new Map();
+let lastBootstrapDiagnostics = {
+  attempted: 0,
+  loaded: 0,
+  failures: [],
+  loadedById: [],
+  loadedByNpub: [],
+};
 
 export function setActiveSessionNpub(npub) {
   activeSessionNpub = npub || null;
@@ -66,6 +73,27 @@ function rememberGroupKey(groupEntry) {
   }
 }
 
+function buildLoadedGroupKeyDiagnostics() {
+  const loadedById = Array.from(groupKeysById.entries()).map(([group_id, keyring]) => {
+    const keys = Array.from(keyring.values());
+    return {
+      group_id,
+      key_versions: Array.from(new Set(keys.map((key) => key.key_version).filter(Number.isInteger))).sort((a, b) => a - b),
+      group_npubs: Array.from(new Set(keys.map((key) => key.group_npub).filter(Boolean))),
+      names: Array.from(new Set(keys.map((key) => key.name).filter(Boolean))),
+    };
+  });
+
+  const loadedByNpub = Array.from(groupKeysByNpub.values()).map((key) => ({
+    group_npub: key.group_npub,
+    group_id: key.group_id || null,
+    key_version: key.key_version ?? null,
+    name: key.name || '',
+  }));
+
+  return { loadedById, loadedByNpub };
+}
+
 export async function bootstrapWrappedGroupKeys(entries = []) {
   clearGroupKeyCache();
   for (const entry of entries) {
@@ -82,15 +110,52 @@ export async function bootstrapWrappedGroupKeys(entries = []) {
       });
     } catch (error) {
       failures.push({
+        group_id: entry.group_id || null,
         group_npub: entry.group_npub,
+        key_version: entry.key_version ?? null,
+        wrapped_by_npub: entry.wrapped_by_npub || null,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  return {
+  const loadedDiagnostics = buildLoadedGroupKeyDiagnostics();
+  lastBootstrapDiagnostics = {
+    attempted: entries.length,
     loaded: groupKeysByNpub.size,
     failures,
+    loadedById: loadedDiagnostics.loadedById,
+    loadedByNpub: loadedDiagnostics.loadedByNpub,
+  };
+
+  return {
+    attempted: entries.length,
+    loaded: groupKeysByNpub.size,
+    failures,
+    loadedById: loadedDiagnostics.loadedById,
+    loadedByNpub: loadedDiagnostics.loadedByNpub,
+  };
+}
+
+export function getLoadedGroupKeyDiagnostics(options = {}) {
+  const limit = Number.isInteger(options.limit) ? Math.max(options.limit, 1) : 50;
+  const diagnostics = buildLoadedGroupKeyDiagnostics();
+  return {
+    active_session_npub: activeSessionNpub,
+    loaded_count: groupKeysByNpub.size,
+    loaded_by_id: diagnostics.loadedById.slice(0, limit),
+    loaded_by_npub: diagnostics.loadedByNpub.slice(0, limit),
+  };
+}
+
+export function getLastGroupKeyBootstrapDiagnostics(options = {}) {
+  const limit = Number.isInteger(options.limit) ? Math.max(options.limit, 1) : 50;
+  return {
+    attempted: lastBootstrapDiagnostics.attempted,
+    loaded: lastBootstrapDiagnostics.loaded,
+    failures: (lastBootstrapDiagnostics.failures || []).slice(0, limit),
+    loadedById: (lastBootstrapDiagnostics.loadedById || []).slice(0, limit),
+    loadedByNpub: (lastBootstrapDiagnostics.loadedByNpub || []).slice(0, limit),
   };
 }
 

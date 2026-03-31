@@ -58,6 +58,19 @@ export function filterChannelsForViewer(channels, viewerNpub, workspaceOwnerNpub
   });
 }
 
+function groupSignature(group) {
+  return [
+    String(group?.group_id || ''),
+    String(group?.group_npub || ''),
+    String(group?.owner_npub || ''),
+    String(group?.name || ''),
+    String(group?.group_kind || ''),
+    String(group?.private_member_npub || ''),
+    String(group?.current_epoch || ''),
+    [...(group?.member_npubs || [])].map(String).join(','),
+  ].join('|');
+}
+
 /**
  * Normalize a raw group object from the API into a consistent shape.
  */
@@ -154,9 +167,21 @@ export const channelsManagerMixin = {
     await this.applyChannels(await getChannelsByOwner(ownerNpub));
   },
 
-  async refreshGroups() {
+  async refreshGroups(options = {}) {
     const viewerNpub = this.session?.npub;
     if (!viewerNpub || !this.backendUrl) return;
+    const force = options.force === true;
+    const minIntervalMs = Number(options.minIntervalMs);
+    if (
+      !force
+      && Number.isFinite(minIntervalMs)
+      && minIntervalMs > 0
+      && this.lastGroupsRefreshAt > 0
+      && this.groups.length > 0
+      && (Date.now() - this.lastGroupsRefreshAt) < minIntervalMs
+    ) {
+      return this.groups;
+    }
     try {
       const [result, keyResult] = await Promise.all([
         getGroups(viewerNpub),
@@ -189,16 +214,27 @@ export const channelsManagerMixin = {
           loadedKeyCount: bootstrapResult.loaded || 0,
         });
       }
-      this.groups = mappedGroups;
-      for (const group of mappedGroups) {
-        await upsertGroup({
-          ...group,
-          member_npubs: [...(group.member_npubs ?? [])],
-        });
-        await this.rememberPeople(group.member_npubs ?? [], 'group');
+      const groupsChanged = !sameListBySignature(this.groups, mappedGroups, groupSignature);
+      if (groupsChanged) {
+        this.groups = mappedGroups;
+        const memberNpubs = new Set();
+        for (const group of mappedGroups) {
+          await upsertGroup({
+            ...group,
+            member_npubs: [...(group.member_npubs ?? [])],
+          });
+          for (const memberNpub of group.member_npubs ?? []) {
+            if (memberNpub) memberNpubs.add(String(memberNpub));
+          }
+        }
+        if (memberNpubs.size > 0) {
+          await this.rememberPeople([...memberNpubs], 'group');
+        }
       }
+      this.lastGroupsRefreshAt = Date.now();
       this.validateSelectedBoardId();
       this.normalizeTaskFilterTags();
+      return this.groups;
     } catch (error) {
       flightDeckLog('error', 'groups', 'refreshGroups failed', {
         viewerNpub,
@@ -206,6 +242,7 @@ export const channelsManagerMixin = {
         error: error?.message || String(error),
       });
       console.debug('refreshGroups failed:', error?.message || error);
+      return this.groups;
     }
   },
 
@@ -326,8 +363,14 @@ export const channelsManagerMixin = {
       this.channels = nextChannels;
     }
 
+    const participantNpubs = new Set();
     for (const channel of nextChannels) {
-      await this.rememberPeople(this.getChannelParticipants(channel), 'chat');
+      for (const participantNpub of this.getChannelParticipants(channel)) {
+        if (participantNpub) participantNpubs.add(String(participantNpub));
+      }
+    }
+    if (participantNpubs.size > 0) {
+      await this.rememberPeople([...participantNpubs], 'chat');
     }
 
     let nextSelectedChannelId = this.selectedChannelId;
@@ -340,6 +383,7 @@ export const channelsManagerMixin = {
 
     if (nextSelectedChannelId !== this.selectedChannelId) {
       this.selectedChannelId = nextSelectedChannelId;
+      this.mainFeedVisibleCount = this.MAIN_FEED_PAGE_SIZE;
       this.expandedChatMessageIds = [];
       this.truncatedChatMessageIds = [];
       this.closeThread({ syncRoute: false });
@@ -357,6 +401,7 @@ export const channelsManagerMixin = {
 
   async selectChannel(recordId, options = {}) {
     this.selectedChannelId = recordId;
+    this.mainFeedVisibleCount = this.MAIN_FEED_PAGE_SIZE;
     this.expandedChatMessageIds = [];
     this.truncatedChatMessageIds = [];
     this.closeThread({ syncRoute: false });

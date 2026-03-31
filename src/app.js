@@ -156,6 +156,33 @@ function applyMixins(target, ...mixins) {
   return target;
 }
 
+const NUMBER_FORMATTER = new Intl.NumberFormat();
+const MAX_STATUS_RECENT_CHANGES = 50;
+const scopedReportsCache = new WeakMap();
+const reportTimeseriesCache = new WeakMap();
+const reportTableColumnsCache = new WeakMap();
+
+function getScopedReportsCacheEntry(store) {
+  const existing = scopedReportsCache.get(store);
+  if (existing) return existing;
+  const created = {
+    reports: null,
+    selectedBoardId: '',
+    selectedBoardScopeId: '',
+    value: [],
+  };
+  scopedReportsCache.set(store, created);
+  return created;
+}
+
+function getReportDerivedCache(cacheStore, store) {
+  const existing = cacheStore.get(store);
+  if (existing) return existing;
+  const created = new Map();
+  cacheStore.set(store, created);
+  return created;
+}
+
 export function initApp() {
   const initialRoute = typeof window === 'undefined'
     ? { section: 'status' }
@@ -163,6 +190,8 @@ export function initApp() {
   const storeObj = {
     FAST_SYNC_MS: 1000,
     IDLE_SYNC_MS: 10000,
+    BACKGROUND_GROUP_REFRESH_MS: 5 * 60 * 1000,
+    MAIN_FEED_PAGE_SIZE: 80,
     MESSAGE_PREVIEW_MAX_LINES: 15,
     COMPOSER_MAX_LINES: 12,
     THREAD_REPLY_PAGE_SIZE: 6,
@@ -225,6 +254,7 @@ export function initApp() {
     backgroundSyncInFlight: false,
     syncBackoffMs: 0,
     visibilityHandler: null,
+    lastGroupsRefreshAt: 0,
     docConnectorFrame: null,
     docConnectorScrollHandler: null,
     docConnectorResizeHandler: null,
@@ -526,6 +556,7 @@ export function initApp() {
     messageInput: '',
     messageAudioDrafts: [],
     messageImageUploadCount: 0,
+    mainFeedVisibleCount: 80,
     syncing: false,
     isLoggingIn: false,
     error: null,
@@ -559,6 +590,17 @@ export function initApp() {
     },
 
     get scopedReports() {
+      const cache = getScopedReportsCacheEntry(this);
+      const selectedBoardId = String(this.selectedBoardId || '');
+      const selectedBoardScopeId = String(this.selectedBoardScope?.record_id || '');
+      if (
+        cache.reports === this.reports
+        && cache.selectedBoardId === selectedBoardId
+        && cache.selectedBoardScopeId === selectedBoardScopeId
+      ) {
+        return cache.value;
+      }
+
       const visible = this.reports.filter((report) => {
         if (!report || report.record_state === 'deleted') return false;
         const surface = String(report.surface || report.metadata?.surface || '').trim().toLowerCase();
@@ -572,11 +614,16 @@ export function initApp() {
         return true;
       });
 
-      return visible.sort((left, right) => {
+      const sorted = visible.sort((left, right) => {
         const leftTs = Date.parse(left.generated_at || left.updated_at || 0) || 0;
         const rightTs = Date.parse(right.generated_at || right.updated_at || 0) || 0;
         return rightTs - leftTs;
       });
+      cache.reports = this.reports;
+      cache.selectedBoardId = selectedBoardId;
+      cache.selectedBoardScopeId = selectedBoardScopeId;
+      cache.value = sorted;
+      return sorted;
     },
 
     get flightDeckReports() {
@@ -1929,7 +1976,7 @@ export function initApp() {
     formatReportMetricValue(report) {
       const value = this.getReportMetricPayload(report)?.value;
       if (typeof value === 'number' && Number.isFinite(value)) {
-        return new Intl.NumberFormat().format(value);
+        return NUMBER_FORMATTER.format(value);
       }
       return String(value ?? '—');
     },
@@ -1953,7 +2000,7 @@ export function initApp() {
       if (!trend) return '';
       if (typeof trend.value === 'number' && Number.isFinite(trend.value)) {
         const prefix = trend.value > 0 ? '+' : '';
-        return `${prefix}${new Intl.NumberFormat().format(trend.value)}`;
+        return `${prefix}${NUMBER_FORMATTER.format(trend.value)}`;
       }
       return String(trend.value ?? '');
     },
@@ -1965,8 +2012,12 @@ export function initApp() {
 
     getReportTimeseriesSeries(report) {
       if (report?.declaration_type !== 'timeseries') return [];
+      const cache = getReportDerivedCache(reportTimeseriesCache, this);
+      const cacheKey = `${String(report?.record_id || '')}:${String(report?.version ?? '')}:${String(report?.updated_at || '')}`;
+      const cached = cache.get(cacheKey);
+      if (cached) return cached;
       const series = Array.isArray(report?.payload?.series) ? report.payload.series : [];
-      return series
+      const computed = series
         .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
         .map((entry, index) => {
           const points = Array.isArray(entry.points) ? entry.points : [];
@@ -1985,7 +2036,7 @@ export function initApp() {
               label,
               value: rawValue,
               heightPct,
-              tooltip: rawValue == null ? `${label}: no value` : `${label}: ${new Intl.NumberFormat().format(rawValue)}`,
+              tooltip: rawValue == null ? `${label}: no value` : `${label}: ${NUMBER_FORMATTER.format(rawValue)}`,
             };
           });
           return {
@@ -1996,12 +2047,22 @@ export function initApp() {
             lastLabel: bars[bars.length - 1]?.label || '',
           };
         });
+      cache.set(cacheKey, computed);
+      if (cache.size > 100) {
+        const firstKey = cache.keys().next().value;
+        if (firstKey) cache.delete(firstKey);
+      }
+      return computed;
     },
 
     getReportTableColumns(report) {
       if (report?.declaration_type !== 'table') return [];
+      const cache = getReportDerivedCache(reportTableColumnsCache, this);
+      const cacheKey = `${String(report?.record_id || '')}:${String(report?.version ?? '')}:${String(report?.updated_at || '')}`;
+      const cached = cache.get(cacheKey);
+      if (cached) return cached;
       const columns = Array.isArray(report?.payload?.columns) ? report.payload.columns : [];
-      return columns
+      const computed = columns
         .filter((column) => column && typeof column === 'object' && !Array.isArray(column))
         .map((column) => ({
           key: String(column.key || ''),
@@ -2009,6 +2070,12 @@ export function initApp() {
           align: ['left', 'center', 'right'].includes(column.align) ? column.align : 'left',
         }))
         .filter((column) => column.key);
+      cache.set(cacheKey, computed);
+      if (cache.size > 100) {
+        const firstKey = cache.keys().next().value;
+        if (firstKey) cache.delete(firstKey);
+      }
+      return computed;
     },
 
     getReportTableRows(report) {
@@ -2019,7 +2086,7 @@ export function initApp() {
     formatReportTableCell(value) {
       if (value == null) return '';
       if (typeof value === 'number' && Number.isFinite(value)) {
-        return new Intl.NumberFormat().format(value);
+        return NUMBER_FORMATTER.format(value);
       }
       if (typeof value === 'boolean') {
         return value ? 'Yes' : 'No';
@@ -2196,7 +2263,9 @@ export function initApp() {
         });
       }
 
-      this.statusRecentChanges = items.sort((a, b) => b.updatedTs - a.updatedTs);
+      this.statusRecentChanges = items
+        .sort((a, b) => b.updatedTs - a.updatedTs)
+        .slice(0, MAX_STATUS_RECENT_CHANGES);
     },
 
     formatRelativeTime(iso) {
@@ -2320,9 +2389,6 @@ export function initApp() {
         const normalizedGroups = this.normalizeTaskRowGroupRefs(task);
         const normalized = this.normalizeTaskRowScopeRefs(normalizedGroups);
         normalizedTasks.push(normalized);
-        if (normalized !== task) {
-          await upsertTask(normalized);
-        }
       }
       if (!sameListBySignature(this.tasks, normalizedTasks, (task) => [
         String(task?.record_id || ''),
@@ -2431,9 +2497,6 @@ export function initApp() {
       for (const schedule of (Array.isArray(schedules) ? schedules : [])) {
         const normalized = this.normalizeScheduleRowGroupRefs(schedule);
         normalizedSchedules.push(normalized);
-        if (normalized !== schedule) {
-          await upsertSchedule(normalized);
-        }
       }
       if (!sameListBySignature(this.schedules, normalizedSchedules)) {
         this.schedules = normalizedSchedules;

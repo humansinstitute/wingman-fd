@@ -7,14 +7,16 @@ import { guessDefaultBackendUrl, workspaceManagerMixin } from '../src/workspace-
 function bindMethod(methodName, storeOverrides = {}) {
   const store = {
     knownWorkspaces: [],
+    selectedWorkspaceKey: '',
     currentWorkspaceOwnerNpub: '',
     ownerNpub: '',
     session: null,
     backendUrl: '',
     superbasedConnectionConfig: null,
+    workspaceSwitchPendingKey: '',
     workspaceSwitchPendingNpub: '',
     groups: [],
-    workspaceProfileRowsByOwner: {},
+    workspaceProfileRowsByKey: {},
     storageImageUrlCache: {},
     workspaceProfileDirty: false,
     workspaceProfileError: null,
@@ -115,6 +117,25 @@ describe('workspace computed getters', () => {
       currentWorkspaceOwnerNpub: 'npub1unknown',
     });
     expect(store.currentWorkspace).toBeNull();
+  });
+
+  it('currentWorkspace prefers selectedWorkspaceKey when multiple workspaces share an owner', () => {
+    const aiWorkspace = {
+      workspaceKey: 'service:npub1ai::workspace:npub1ws',
+      workspaceOwnerNpub: 'npub1ws',
+      name: 'Other Stuff AI',
+    };
+    const studioWorkspace = {
+      workspaceKey: 'service:npub1studio::workspace:npub1ws',
+      workspaceOwnerNpub: 'npub1ws',
+      name: 'Other Stuff Studio',
+    };
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      knownWorkspaces: [studioWorkspace, aiWorkspace],
+      selectedWorkspaceKey: 'service:npub1ai::workspace:npub1ws',
+      currentWorkspaceOwnerNpub: 'npub1ws',
+    });
+    expect(store.currentWorkspace).toEqual(aiWorkspace);
   });
 
   it('isWorkspaceSwitching reflects pending npub', () => {
@@ -256,14 +277,14 @@ describe('workspace display methods', () => {
   });
 
   it('getWorkspaceDisplayEntry merges profile data', () => {
-    const ws = { workspaceOwnerNpub: 'npub1ws', name: 'Test' };
+    const ws = { workspaceKey: 'service:svc::workspace:npub1ws', workspaceOwnerNpub: 'npub1ws', name: 'Test' };
     const { fn } = bindMethod('getWorkspaceDisplayEntry', {
       knownWorkspaces: [ws],
-      workspaceProfileRowsByOwner: {
-        npub1ws: { avatarUrl: 'https://example.com/avatar.png' },
+      workspaceProfileRowsByKey: {
+        'service:svc::workspace:npub1ws': { avatarUrl: 'https://example.com/avatar.png' },
       },
     });
-    const result = fn('npub1ws');
+    const result = fn('service:svc::workspace:npub1ws');
     expect(result.name).toBe('Test');
     expect(result.avatarUrl).toBe('https://example.com/avatar.png');
     expect(result.workspaceOwnerNpub).toBe('npub1ws');
@@ -299,6 +320,44 @@ describe('workspace switcher', () => {
     });
     fn();
     expect(store.showWorkspaceSwitcherMenu).toBe(false);
+  });
+
+  it('handleWorkspaceSwitcherSelect includes workspacekey in the target URL', async () => {
+    const originalWindow = globalThis.window;
+    globalThis.window = {
+      location: {
+        href: 'https://flightdeck.example/current/chat?channelid=chan-1',
+      },
+    };
+
+    try {
+      const workspace = {
+        workspaceKey: 'service:npub1ai::workspace:npub1ws',
+        workspaceOwnerNpub: 'npub1ws',
+        slug: 'other-stuff',
+        name: 'Other Stuff',
+        directHttpsUrl: 'https://sb4.otherstuff.ai',
+        connectionToken: 'token-1',
+      };
+      const persistWorkspaceSettings = vi.fn().mockResolvedValue(undefined);
+      const { fn, store } = bindMethod('handleWorkspaceSwitcherSelect', {
+        knownWorkspaces: [workspace],
+        navSection: 'chat',
+        mobileNavOpen: true,
+        persistWorkspaceSettings,
+      });
+
+      await fn(workspace.workspaceKey);
+
+      expect(store.selectedWorkspaceKey).toBe(workspace.workspaceKey);
+      expect(store.workspaceSwitchPendingKey).toBe(workspace.workspaceKey);
+      expect(globalThis.window.location.href).toBe(
+        '/other-stuff/chat?channelid=chan-1&workspacekey=service%3Anpub1ai%3A%3Aworkspace%3Anpub1ws',
+      );
+      expect(persistWorkspaceSettings).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.window = originalWindow;
+    }
   });
 });
 
@@ -379,7 +438,7 @@ describe('applyWorkspaceSettingsRow', () => {
       workspaceTriggers: [],
       wingmanHarnessInput: '',
       wingmanHarnessDirty: false,
-      workspaceProfileRowsByOwner: {},
+      workspaceProfileRowsByKey: {},
       knownWorkspaces: [],
     });
     fn({
@@ -406,7 +465,7 @@ describe('applyWorkspaceSettingsRow', () => {
       workspaceTriggers: [],
       wingmanHarnessInput: '',
       wingmanHarnessDirty: false,
-      workspaceProfileRowsByOwner: {},
+      workspaceProfileRowsByKey: {},
       knownWorkspaces: [],
     });
     fn(null);
@@ -423,7 +482,7 @@ describe('applyWorkspaceSettingsRow', () => {
       workspaceTriggers: [],
       wingmanHarnessInput: 'user-typed-value',
       wingmanHarnessDirty: true,
-      workspaceProfileRowsByOwner: {},
+      workspaceProfileRowsByKey: {},
       knownWorkspaces: [],
     });
     fn({ wingman_harness_url: 'from-row' }, { overwriteInput: false });
@@ -545,10 +604,11 @@ describe('getWorkspaceStorageBackendUrl', () => {
     expect(fn(ws)).toBe('https://storage.example.com');
   });
 
-  it('falls back to currentWorkspaceBackendUrl for same owner', () => {
-    const ws = { workspaceOwnerNpub: 'npub1ws' };
+  it('falls back to currentWorkspaceBackendUrl for current workspace key', () => {
+    const ws = { workspaceKey: 'service:svc::workspace:npub1ws', workspaceOwnerNpub: 'npub1ws' };
     const { fn } = bindMethod('getWorkspaceStorageBackendUrl', {
       knownWorkspaces: [ws],
+      selectedWorkspaceKey: 'service:svc::workspace:npub1ws',
       currentWorkspaceOwnerNpub: 'npub1ws',
       backendUrl: 'https://fallback.example.com',
     });

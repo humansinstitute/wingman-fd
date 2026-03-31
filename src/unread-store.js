@@ -35,6 +35,13 @@ async function cursorRecordId(viewerNpub, cursorKey) {
   return sha256Hex(viewerNpub + cursorKey);
 }
 
+export function pickEffectiveReadUntil(navReadUntil = null, itemReadUntil = null) {
+  if (itemReadUntil && (!navReadUntil || itemReadUntil > navReadUntil)) {
+    return itemReadUntil;
+  }
+  return navReadUntil || null;
+}
+
 // ---------------------------------------------------------------------------
 // Pure helpers (testable without Alpine/Dexie)
 // ---------------------------------------------------------------------------
@@ -59,10 +66,7 @@ export function computeUnreadTaskMap(tasks, cursorMap, viewerNpub) {
     if (task.record_state === 'deleted') continue;
     const taskKey = `tasks:item:${task.record_id}`;
     const taskReadUntil = cursorMap[taskKey] || null;
-    let effectiveReadUntil =
-      taskReadUntil && taskReadUntil > navReadUntil
-        ? taskReadUntil
-        : navReadUntil;
+    let effectiveReadUntil = pickEffectiveReadUntil(navReadUntil, taskReadUntil);
 
     // Self-created tasks are implicitly "read" at creation time.
     // The creator already knows about the task they made, so treat
@@ -117,9 +121,6 @@ export const unreadStoreMixin = {
   // Per-task unread map: { taskRecordId: boolean }
   _unreadTaskItems: {},
 
-  // Timer handle for periodic refresh
-  _unreadRefreshTimer: null,
-
   get unreadChat() { return this._unreadChat; },
   get unreadTasks() { return this._unreadTasks; },
   get unreadDocs() { return this._unreadDocs; },
@@ -137,16 +138,10 @@ export const unreadStoreMixin = {
    */
   async initUnreadTracking() {
     await this.refreshUnreadFlags();
-    // Re-check every 30s so background syncs surface new dots
-    if (this._unreadRefreshTimer) clearInterval(this._unreadRefreshTimer);
-    this._unreadRefreshTimer = setInterval(() => this.refreshUnreadFlags(), 30_000);
   },
 
   teardownUnreadTracking() {
-    if (this._unreadRefreshTimer) {
-      clearInterval(this._unreadRefreshTimer);
-      this._unreadRefreshTimer = null;
-    }
+    // No-op for now. Unread state is refreshed on sync completion and explicit read actions.
   },
 
   /**
@@ -183,10 +178,12 @@ export const unreadStoreMixin = {
       const newChannelMap = {};
       for (const ch of channels) {
         const key = `chat:channel:${ch.record_id}`;
-        const chReadUntil = cursorMap[key] || '1970-01-01T00:00:00.000Z';
+        const chReadUntil = cursorMap[key] || null;
+        const effectiveReadUntil = pickEffectiveReadUntil(chatReadUntil, chReadUntil)
+          || '1970-01-01T00:00:00.000Z';
         const newerMsg = await db.chat_messages
           .where('channel_id').equals(ch.record_id)
-          .and((m) => m.updated_at > chReadUntil && m.record_state !== 'deleted')
+          .and((m) => m.updated_at > effectiveReadUntil && m.record_state !== 'deleted')
           .first();
         newChannelMap[ch.record_id] = newerMsg != null;
       }

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchRecordHistory, syncRecords } from '../src/api.js';
+import { runSync } from '../src/worker/sync-worker.js';
 import { syncManagerMixin } from '../src/sync-manager.js';
 import { getSyncFamilyHash } from '../src/sync-families.js';
 
@@ -7,6 +8,16 @@ vi.mock('../src/api.js', () => ({
   fetchRecordHistory: vi.fn(),
   syncRecords: vi.fn(),
 }));
+
+vi.mock('../src/worker/sync-worker.js', () => ({
+  runSync: vi.fn(),
+  pullRecordsForFamilies: vi.fn(),
+  pruneOnLogin: vi.fn(),
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 // ---------------------------------------------------------------------------
 // Helper: create a fake store with all mixin methods applied
@@ -19,9 +30,11 @@ function createStore(overrides = {}) {
     selectedChannelId: null,
     FAST_SYNC_MS: 1000,
     IDLE_SYNC_MS: 5000,
+    BACKGROUND_GROUP_REFRESH_MS: 300000,
     backgroundSyncTimer: null,
     backgroundSyncInFlight: false,
     visibilityHandler: null,
+    lastGroupsRefreshAt: 0,
     syncing: false,
     syncStatus: 'synced',
     syncSession: {
@@ -400,6 +413,66 @@ describe('lastSyncTimeLabel', () => {
 // performSync
 // ---------------------------------------------------------------------------
 describe('performSync', () => {
+  it('keeps silent no-op syncs on the cheap path', async () => {
+    runSync.mockResolvedValueOnce({ pushed: 0, pulled: 0, pruned: 0 });
+    const refreshSyncStatus = vi.fn().mockResolvedValue(undefined);
+    const refreshStatusRecentChanges = vi.fn().mockResolvedValue(undefined);
+    const refreshWorkspaceSettings = vi.fn().mockResolvedValue(undefined);
+    const ensureTaskFamilyBackfill = vi.fn().mockResolvedValue(undefined);
+    const ensureTaskBoardScopeSetup = vi.fn().mockResolvedValue(undefined);
+    const loadDocComments = vi.fn().mockResolvedValue(undefined);
+    const refreshGroups = vi.fn().mockResolvedValue(undefined);
+    const { fn } = bindMethod('performSync', {
+      session: { npub: 'npub1me' },
+      backendUrl: 'https://backend.example.com',
+      refreshGroups,
+      refreshSyncStatus,
+      refreshStatusRecentChanges,
+      refreshWorkspaceSettings,
+      ensureTaskFamilyBackfill,
+      ensureTaskBoardScopeSetup,
+      loadDocComments,
+      hasForcedInitialBackfill: true,
+      groups: [{ group_id: 'g1' }],
+    });
+
+    const result = await fn({ silent: true });
+
+    expect(result).toEqual({ pushed: 0, pulled: 0, pruned: 0 });
+    expect(refreshGroups).toHaveBeenCalledWith({ minIntervalMs: 300000 });
+    expect(refreshWorkspaceSettings).not.toHaveBeenCalled();
+    expect(ensureTaskFamilyBackfill).not.toHaveBeenCalled();
+    expect(ensureTaskBoardScopeSetup).not.toHaveBeenCalled();
+    expect(loadDocComments).not.toHaveBeenCalled();
+    expect(refreshStatusRecentChanges).not.toHaveBeenCalled();
+    expect(refreshSyncStatus).toHaveBeenCalledWith({ refreshUnread: false });
+  });
+
+  it('refreshes derived state when silent sync pulls remote changes', async () => {
+    runSync.mockResolvedValueOnce({ pushed: 0, pulled: 3, pruned: 0 });
+    const refreshSyncStatus = vi.fn().mockResolvedValue(undefined);
+    const refreshWorkspaceSettings = vi.fn().mockResolvedValue(undefined);
+    const ensureTaskFamilyBackfill = vi.fn().mockResolvedValue(undefined);
+    const ensureTaskBoardScopeSetup = vi.fn().mockResolvedValue(undefined);
+    const { fn } = bindMethod('performSync', {
+      session: { npub: 'npub1me' },
+      backendUrl: 'https://backend.example.com',
+      refreshSyncStatus,
+      refreshWorkspaceSettings,
+      ensureTaskFamilyBackfill,
+      ensureTaskBoardScopeSetup,
+      hasForcedInitialBackfill: true,
+      groups: [{ group_id: 'g1' }],
+    });
+
+    await fn({ silent: true });
+
+    expect(refreshWorkspaceSettings).toHaveBeenCalledTimes(1);
+    expect(ensureTaskFamilyBackfill).toHaveBeenCalledTimes(1);
+    expect(ensureTaskBoardScopeSetup).toHaveBeenCalledTimes(1);
+    expect(refreshSyncStatus).toHaveBeenCalledWith({ refreshUnread: true });
+  });
+
   it('returns early when not signed in', async () => {
     const { fn, store } = bindMethod('performSync', { session: null });
     const result = await fn({ silent: true });

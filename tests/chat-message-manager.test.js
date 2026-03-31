@@ -24,6 +24,7 @@ function createStore(overrides = {}) {
     truncatedChatMessageIds: [],
     focusMessageId: null,
     threadVisibleReplyCount: 6,
+    mainFeedVisibleCount: 80,
     threadSize: 'default',
     pendingChatScrollToLatest: false,
     pendingThreadScrollToLatest: false,
@@ -39,6 +40,7 @@ function createStore(overrides = {}) {
     botNpub: '',
     backendUrl: '',
     THREAD_REPLY_PAGE_SIZE: 6,
+    MAIN_FEED_PAGE_SIZE: 80,
     COMPOSER_MAX_LINES: 12,
     MESSAGE_PREVIEW_MAX_LINES: 15,
     // Stubs for methods from other mixins / the store
@@ -107,6 +109,20 @@ describe('chat message computed getters', () => {
     const feed = store.mainFeedMessages;
     // mainFeedMessages should only contain top-level messages (parent_message_id == null)
     expect(feed.every((m) => m.parent_message_id === null)).toBe(true);
+  });
+
+  it('visibleMainFeedMessages returns the newest feed window', () => {
+    const store = createStore({
+      mainFeedVisibleCount: 2,
+      messages: [
+        { record_id: 'm1', parent_message_id: null, updated_at: '2024-01-01T00:00:00Z' },
+        { record_id: 'm2', parent_message_id: null, updated_at: '2024-01-01T01:00:00Z' },
+        { record_id: 'm3', parent_message_id: null, updated_at: '2024-01-01T02:00:00Z' },
+      ],
+    });
+    expect(store.visibleMainFeedMessages.map((message) => message.record_id)).toEqual(['m2', 'm3']);
+    expect(store.hiddenMainFeedCount).toBe(1);
+    expect(store.hasMoreMainFeedMessages).toBe(true);
   });
 
   it('threadMessages returns empty when no active thread', () => {
@@ -216,6 +232,17 @@ describe('thread lifecycle', () => {
     expect(store.threadVisibleReplyCount).toBe(18);
   });
 
+  it('showMoreMainFeedMessages increases visible count', () => {
+    const { fn, store } = bindMethod('showMoreMainFeedMessages', {
+      mainFeedVisibleCount: 80,
+      MAIN_FEED_PAGE_SIZE: 80,
+    });
+    fn();
+    expect(store.mainFeedVisibleCount).toBe(160);
+    fn();
+    expect(store.mainFeedVisibleCount).toBe(240);
+  });
+
   it('getThreadParentMessage returns parent', () => {
     const parent = { record_id: 'm1', parent_message_id: null };
     const { fn } = bindMethod('getThreadParentMessage', {
@@ -287,15 +314,17 @@ describe('chat preview truncation', () => {
 
   it('syncChatPreviewState prunes invalid IDs', () => {
     const { fn, store } = bindMethod('syncChatPreviewState', {
+      mainFeedVisibleCount: 1,
       messages: [
         { record_id: 'm1', parent_message_id: null, updated_at: '2024-01-01T00:00:00Z' },
+        { record_id: 'm2', parent_message_id: null, updated_at: '2024-01-01T01:00:00Z' },
       ],
       expandedChatMessageIds: ['m1', 'm999'],
       truncatedChatMessageIds: ['m999', 'm1'],
     });
     fn();
-    expect(store.expandedChatMessageIds).toEqual(['m1']);
-    expect(store.truncatedChatMessageIds).toEqual(['m1']);
+    expect(store.expandedChatMessageIds).toEqual([]);
+    expect(store.truncatedChatMessageIds).toEqual([]);
   });
 });
 

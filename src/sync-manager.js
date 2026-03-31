@@ -731,8 +731,15 @@ export const syncManagerMixin = {
       this.updateSyncSession(update);
     };
 
+    let result = null;
+    let syncError = null;
+    let refreshUnread = !silent;
+    let refreshRecentChanges = !silent && this.navSection === 'status';
+
     try {
-      await this.refreshGroups();
+      await this.refreshGroups({
+        minIntervalMs: silent ? this.BACKGROUND_GROUP_REFRESH_MS : 0,
+      });
       if (
         !this.hasForcedInitialBackfill
         && this.groups.length > 0
@@ -746,29 +753,24 @@ export const syncManagerMixin = {
         await clearSyncState();
         this.hasForcedInitialBackfill = true;
       }
-      const result = await runSync(this.workspaceOwnerNpub, this.session.npub, onProgress, {
+      result = await runSync(this.workspaceOwnerNpub, this.session.npub, onProgress, {
         workspaceDbKey: this.workspaceDbKey,
       });
+      const hasRemoteDataChanges = (result?.pulled ?? 0) > 0 || (result?.pruned ?? 0) > 0;
+      refreshUnread = refreshUnread || hasRemoteDataChanges;
+      refreshRecentChanges = refreshRecentChanges || (hasRemoteDataChanges && this.navSection === 'status');
       this.updateSyncSession({ phase: 'applying' });
-      await this.refreshGroups();
-      await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
-      await this.ensureTaskFamilyBackfill();
-      await this.ensureTaskBoardScopeSetup();
-      if (this.docsEditorOpen && this.selectedDocId) {
-        await this.loadDocComments(this.selectedDocId);
+      if (!silent || hasRemoteDataChanges) {
+        await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
+        await this.ensureTaskFamilyBackfill();
+        await this.ensureTaskBoardScopeSetup();
+        if (this.docsEditorOpen && this.selectedDocId) {
+          await this.loadDocComments(this.selectedDocId);
+        }
       }
       this.updateSyncSession({ phase: 'done', finishedAt: Date.now(), lastSuccessAt: Date.now(), state: 'synced' });
-      await this.refreshSyncStatus();
-      await this.refreshStatusRecentChanges();
-      flightDeckLog('info', 'sync', 'sync completed', {
-        backendUrl: this.backendUrl,
-        ownerNpub: this.workspaceOwnerNpub || null,
-        pushed: result?.pushed ?? 0,
-        pulled: result?.pulled ?? 0,
-        syncStatus: this.syncStatus,
-      });
-      return result;
     } catch (error) {
+      syncError = error;
       if (!silent) this.error = error.message;
       this.updateSyncSession({ phase: 'error', state: 'error', error: error.message, finishedAt: Date.now() });
       flightDeckLog('error', 'sync', 'sync failed', {
@@ -776,11 +778,24 @@ export const syncManagerMixin = {
         ownerNpub: this.workspaceOwnerNpub || null,
         error: error?.message || String(error),
       });
-      throw error;
     } finally {
       if (showBusy) this.syncing = false;
-      await this.refreshSyncStatus();
+      await this.refreshSyncStatus({ refreshUnread });
+      if (refreshRecentChanges) {
+        await this.refreshStatusRecentChanges();
+      }
     }
+
+    if (syncError) throw syncError;
+
+    flightDeckLog('info', 'sync', 'sync completed', {
+      backendUrl: this.backendUrl,
+      ownerNpub: this.workspaceOwnerNpub || null,
+      pushed: result?.pushed ?? 0,
+      pulled: result?.pulled ?? 0,
+      syncStatus: this.syncStatus,
+    });
+    return result;
   },
 
   async syncNow() {
@@ -792,7 +807,8 @@ export const syncManagerMixin = {
     this.ensureBackgroundSync();
   },
 
-  async refreshSyncStatus() {
+  async refreshSyncStatus(options = {}) {
+    const refreshUnread = options.refreshUnread !== false;
     if (this.syncing) {
       this.syncStatus = 'syncing';
       return;
@@ -819,7 +835,7 @@ export const syncManagerMixin = {
       });
     }
     // Refresh unread indicators after sync status settles
-    if (typeof this.refreshUnreadFlags === 'function') {
+    if (refreshUnread && typeof this.refreshUnreadFlags === 'function') {
       this.refreshUnreadFlags();
     }
   },

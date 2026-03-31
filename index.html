@@ -80,6 +80,10 @@
               <span class="sync-status-label" x-text="({synced:'Synced',unsynced:'Pending',stale:'Stale',syncing:'Syncing',quarantined:'Quarantined',error:'Error'})[$store.chat.syncStatus] || $store.chat.syncStatus"></span>
               <span class="sync-status-time" x-text="$store.chat.lastSyncTimeLabel()"></span>
             </div>
+            <div class="sync-build-row">
+              <span class="avatar-menu-label">Build</span>
+              <code x-text="$store.chat.appBuildId"></code>
+            </div>
             <template x-if="$store.chat.syncStatus === 'syncing'">
               <div class="sync-progress-block">
                 <div class="sync-progress-bar-track">
@@ -528,7 +532,8 @@
       </nav>
 
       <div class="main-content">
-        <div x-show="$store.chat.navSection === 'status'" class="status-section">
+        <template x-if="$store.chat.navSection === 'status'">
+          <div class="status-section">
           <section class="flightdeck-hero" x-data="{ bpIdx: 0, open: false, query: '' }" @click.outside="open = false; query = ''">
             <h2>Welcome <span x-text="$store.chat.greetingName"></span>, where will we focus today?</h2>
             <div class="flightdeck-hero-scope-row">
@@ -700,9 +705,11 @@
               </section>
             </aside>
           </div>
-        </div>
+          </div>
+        </template>
 
-        <div x-show="$store.chat.navSection === 'reports'" class="reports-section">
+        <template x-if="$store.chat.navSection === 'reports'">
+          <div class="reports-section">
           <div class="reports-workspace">
             <aside class="reports-list-pane">
               <div class="reports-list-header">
@@ -850,10 +857,12 @@
               </div>
             </section>
           </div>
-        </div>
+          </div>
+        </template>
 
         <!-- ═══ TASKS SECTION ═══ -->
-        <div x-show="$store.chat.navSection === 'tasks'" class="tasks-section">
+        <template x-if="$store.chat.navSection === 'tasks'">
+          <div class="tasks-section">
 
           <!-- Task create bar -->
           <form class="task-create-bar" x-show="!$store.chat.showTaskDetail" @submit.prevent="$store.chat.addTask()">
@@ -997,158 +1006,160 @@
           </div>
 
           <!-- Kanban board -->
-          <div class="kanban-board" x-show="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'kanban'">
-            <template x-for="col in $store.chat.boardColumns" :key="col.state">
-              <div class="kanban-column" :class="`kanban-col-${col.state}`">
-                <div class="kanban-column-header">
-                  <span class="kanban-column-title" x-text="col.label"></span>
-                  <span class="kanban-column-count" x-text="col.tasks.length"></span>
-                </div>
-                <div class="kanban-column-body"
-                  @dragover.prevent="col.state !== 'summary' && $store.chat.handleTaskDragOver($event, col.state)"
-                  @dragleave="$store.chat.handleTaskDragLeave($event)"
-                  @drop.prevent="$store.chat.handleTaskDrop($event, col.state)"
-                >
-                  <template x-for="task in col.tasks" :key="task.record_id">
-                    <div
-                      class="kanban-card"
-                      :class="{ 'summary-card': col.state === 'summary', 'kanban-card-selected': $store.chat.isTaskSelected(task.record_id), 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
-                      :draggable="col.state !== 'summary'"
-                      @dragstart="col.state !== 'summary' && $store.chat.handleTaskDragStart($event, task.record_id)"
-                      @dragend="$store.chat.handleTaskDragEnd($event)"
-                      @click="$store.chat.handleTaskCardClick(task.record_id)"
-                    >
-                      <div class="kanban-card-header">
-                        <template x-if="col.state !== 'summary'">
-                          <label class="task-card-select" @click.stop>
-                            <input
-                              type="checkbox"
-                              :checked="$store.chat.isTaskSelected(task.record_id)"
-                              @change="$store.chat.toggleTaskSelection(task.record_id)"
-                            />
-                          </label>
-                        </template>
-                        <span class="kanban-card-title" x-text="task.title"></span>
-                        <template x-if="task.assigned_to_npub">
-                          <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(task.assigned_to_npub)">
-                            <template x-if="$store.chat.getSenderAvatar(task.assigned_to_npub)">
-                              <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar(task.assigned_to_npub)" alt="" />
-                            </template>
-                            <template x-if="!$store.chat.getSenderAvatar(task.assigned_to_npub)">
-                              <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(task.assigned_to_npub))"></span>
-                            </template>
-                          </div>
-                        </template>
-                      </div>
-                      <template x-if="$store.chat.getTaskTags(task).length > 0">
-                        <div class="task-card-tags">
-                          <template x-for="tag in $store.chat.getTaskTags(task)" :key="`${task.record_id}-${tag}`">
-                            <button
-                              type="button"
-                              class="task-card-tag"
-                              :class="{ 'task-card-tag-active': $store.chat.taskFilterTags.includes(tag) }"
-                              @click.stop="$store.chat.toggleTaskFilterTag(tag)"
-                              x-text="tag"
-                            ></button>
+          <template x-if="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'kanban'">
+            <div class="kanban-board">
+              <template x-for="col in $store.chat.boardColumns" :key="col.state">
+                <div class="kanban-column" :class="`kanban-col-${col.state}`">
+                  <div class="kanban-column-header">
+                    <span class="kanban-column-title" x-text="col.label"></span>
+                    <span class="kanban-column-count" x-text="col.tasks.length"></span>
+                  </div>
+                  <div class="kanban-column-body"
+                    @dragover.prevent="col.state !== 'summary' && $store.chat.handleTaskDragOver($event, col.state)"
+                    @dragleave="$store.chat.handleTaskDragLeave($event)"
+                    @drop.prevent="$store.chat.handleTaskDrop($event, col.state)"
+                  >
+                    <template x-for="task in col.tasks" :key="task.record_id">
+                      <div
+                        class="kanban-card"
+                        :class="{ 'summary-card': col.state === 'summary', 'kanban-card-selected': $store.chat.isTaskSelected(task.record_id), 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
+                        :draggable="col.state !== 'summary'"
+                        @dragstart="col.state !== 'summary' && $store.chat.handleTaskDragStart($event, task.record_id)"
+                        @dragend="$store.chat.handleTaskDragEnd($event)"
+                        @click="$store.chat.handleTaskCardClick(task.record_id)"
+                      >
+                        <div class="kanban-card-header">
+                          <template x-if="col.state !== 'summary'">
+                            <label class="task-card-select" @click.stop>
+                              <input
+                                type="checkbox"
+                                :checked="$store.chat.isTaskSelected(task.record_id)"
+                                @change="$store.chat.toggleTaskSelection(task.record_id)"
+                              />
+                            </label>
                           </template>
-                        </div>
-                      </template>
-                      <div class="kanban-card-meta">
-                        <!-- Priority badge -->
-                        <span class="badge" :class="`priority-${task.priority}`" x-text="task.priority" x-show="task.priority && task.priority !== 'sand'"></span>
-                        <!-- Scheduled date -->
-                        <span class="badge badge-date" x-text="task.scheduled_for" x-show="task.scheduled_for"></span>
-                        <!-- Summary card: progress dots -->
-                        <template x-if="col.state === 'summary'">
-                          <div class="summary-meta">
-                            <span class="badge" :class="`state-${$store.chat.computedParentState(task.record_id)}`"
-                              x-text="$store.chat.formatState($store.chat.computedParentState(task.record_id))"></span>
-                            <div class="progress-dots">
-                              <template x-for="st in $store.chat.getSubtasks(task.record_id)" :key="st.record_id">
-                                <span class="progress-dot"
-                                  :style="`background: ${$store.chat.stateColor(st.state)}`"
-                                  :title="st.title + ' (' + $store.chat.formatState(st.state) + ')'"></span>
+                          <span class="kanban-card-title" x-text="task.title"></span>
+                          <template x-if="task.assigned_to_npub">
+                            <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(task.assigned_to_npub)">
+                              <template x-if="$store.chat.getSenderAvatar(task.assigned_to_npub)">
+                                <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar(task.assigned_to_npub)" alt="" />
+                              </template>
+                              <template x-if="!$store.chat.getSenderAvatar(task.assigned_to_npub)">
+                                <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(task.assigned_to_npub))"></span>
                               </template>
                             </div>
-                            <span class="subtask-count" x-text="$store.chat.getSubtasks(task.record_id).length + ' subtask' + ($store.chat.getSubtasks(task.record_id).length !== 1 ? 's' : '')"></span>
+                          </template>
+                        </div>
+                        <template x-if="$store.chat.getTaskTags(task).length > 0">
+                          <div class="task-card-tags">
+                            <template x-for="tag in $store.chat.getTaskTags(task)" :key="`${task.record_id}-${tag}`">
+                              <button
+                                type="button"
+                                class="task-card-tag"
+                                :class="{ 'task-card-tag-active': $store.chat.taskFilterTags.includes(tag) }"
+                                @click.stop="$store.chat.toggleTaskFilterTag(tag)"
+                                x-text="tag"
+                              ></button>
+                            </template>
                           </div>
                         </template>
+                        <div class="kanban-card-meta">
+                          <span class="badge" :class="`priority-${task.priority}`" x-text="task.priority" x-show="task.priority && task.priority !== 'sand'"></span>
+                          <span class="badge badge-date" x-text="task.scheduled_for" x-show="task.scheduled_for"></span>
+                          <template x-if="col.state === 'summary'">
+                            <div class="summary-meta">
+                              <span class="badge" :class="`state-${$store.chat.computedParentState(task.record_id)}`"
+                                x-text="$store.chat.formatState($store.chat.computedParentState(task.record_id))"></span>
+                              <div class="progress-dots">
+                                <template x-for="st in $store.chat.getSubtasks(task.record_id)" :key="st.record_id">
+                                  <span class="progress-dot"
+                                    :style="`background: ${$store.chat.stateColor(st.state)}`"
+                                    :title="st.title + ' (' + $store.chat.formatState(st.state) + ')'"></span>
+                                </template>
+                              </div>
+                              <span class="subtask-count" x-text="$store.chat.getSubtasks(task.record_id).length + ' subtask' + ($store.chat.getSubtasks(task.record_id).length !== 1 ? 's' : '')"></span>
+                            </div>
+                          </template>
+                        </div>
                       </div>
-                    </div>
-                  </template>
-                  <template x-if="col.tasks.length === 0 && col.state !== 'summary'">
-                    <div class="kanban-empty">No tasks</div>
-                  </template>
+                    </template>
+                    <template x-if="col.tasks.length === 0 && col.state !== 'summary'">
+                      <div class="kanban-empty">No tasks</div>
+                    </template>
+                  </div>
                 </div>
-              </div>
-            </template>
-          </div>
+              </template>
+            </div>
+          </template>
 
           <!-- List view -->
-          <div class="task-list-view" x-show="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'list'">
-            <template x-for="group in $store.chat.listGroupedTasks" :key="group.state">
-              <div class="task-list-group">
-                <div class="task-list-group-header" :class="`task-list-group-${group.state}`">
-                  <span class="task-list-group-label" x-text="group.label"></span>
-                  <span class="kanban-column-count" x-text="group.tasks.length"></span>
-                </div>
-                <div class="task-list-rows">
-                  <template x-for="task in group.tasks" :key="task.record_id">
-                    <div
-                      class="task-list-row"
-                      :class="{ 'task-list-row-parent': group.state === 'summary', 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
-                      @click="$store.chat.handleTaskCardClick(task.record_id)"
-                    >
-                      <template x-if="group.state !== 'summary'">
-                        <label class="task-card-select" @click.stop>
-                          <input type="checkbox" :checked="$store.chat.isTaskSelected(task.record_id)" @change="$store.chat.toggleTaskSelection(task.record_id)" />
-                        </label>
-                      </template>
-                      <span class="task-list-title" x-text="task.title"></span>
-                      <template x-if="task.assigned_to_npub">
-                        <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(task.assigned_to_npub)">
-                          <template x-if="$store.chat.getSenderAvatar(task.assigned_to_npub)">
-                            <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar(task.assigned_to_npub)" alt="" />
+          <template x-if="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'list'">
+            <div class="task-list-view">
+              <template x-for="group in $store.chat.listGroupedTasks" :key="group.state">
+                <div class="task-list-group">
+                  <div class="task-list-group-header" :class="`task-list-group-${group.state}`">
+                    <span class="task-list-group-label" x-text="group.label"></span>
+                    <span class="kanban-column-count" x-text="group.tasks.length"></span>
+                  </div>
+                  <div class="task-list-rows">
+                    <template x-for="task in group.tasks" :key="task.record_id">
+                      <div>
+                        <div
+                          class="task-list-row"
+                          :class="{ 'task-list-row-parent': group.state === 'summary', 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
+                          @click="$store.chat.handleTaskCardClick(task.record_id)"
+                        >
+                          <template x-if="group.state !== 'summary'">
+                            <label class="task-card-select" @click.stop>
+                              <input type="checkbox" :checked="$store.chat.isTaskSelected(task.record_id)" @change="$store.chat.toggleTaskSelection(task.record_id)" />
+                            </label>
                           </template>
-                          <template x-if="!$store.chat.getSenderAvatar(task.assigned_to_npub)">
-                            <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(task.assigned_to_npub))"></span>
-                          </template>
-                        </div>
-                      </template>
-                      <span class="badge" :class="`priority-${task.priority}`" x-text="task.priority" x-show="task.priority && task.priority !== 'sand'"></span>
-                      <span class="badge badge-date" x-text="task.scheduled_for" x-show="task.scheduled_for"></span>
-                      <template x-if="group.state === 'summary'">
-                        <span class="badge" :class="`state-${$store.chat.computedParentState(task.record_id)}`" x-text="$store.chat.formatState($store.chat.computedParentState(task.record_id))"></span>
-                      </template>
-                    </div>
-                    <!-- Subtask indentation for summary/parent tasks -->
-                    <template x-if="group.state === 'summary'">
-                      <template x-for="sub in $store.chat.getSubtasks(task.record_id)" :key="sub.record_id">
-                        <div class="task-list-row task-list-row-subtask" :class="{ 'task-unread': $store.chat.isTaskUnread(sub.record_id) }" @click="$store.chat.handleTaskCardClick(sub.record_id)">
-                          <label class="task-card-select" @click.stop>
-                            <input type="checkbox" :checked="$store.chat.isTaskSelected(sub.record_id)" @change="$store.chat.toggleTaskSelection(sub.record_id)" />
-                          </label>
-                          <span class="task-list-indent"></span>
-                          <span class="task-list-title" x-text="sub.title"></span>
-                          <span class="badge" :class="`state-${sub.state}`" x-text="$store.chat.formatState(sub.state)"></span>
-                          <template x-if="sub.assigned_to_npub">
-                            <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(sub.assigned_to_npub)">
-                              <template x-if="$store.chat.getSenderAvatar(sub.assigned_to_npub)">
-                                <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar(sub.assigned_to_npub)" alt="" />
+                          <span class="task-list-title" x-text="task.title"></span>
+                          <template x-if="task.assigned_to_npub">
+                            <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(task.assigned_to_npub)">
+                              <template x-if="$store.chat.getSenderAvatar(task.assigned_to_npub)">
+                                <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar(task.assigned_to_npub)" alt="" />
                               </template>
-                              <template x-if="!$store.chat.getSenderAvatar(sub.assigned_to_npub)">
-                                <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(sub.assigned_to_npub))"></span>
+                              <template x-if="!$store.chat.getSenderAvatar(task.assigned_to_npub)">
+                                <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(task.assigned_to_npub))"></span>
                               </template>
                             </div>
                           </template>
+                          <span class="badge" :class="`priority-${task.priority}`" x-text="task.priority" x-show="task.priority && task.priority !== 'sand'"></span>
+                          <span class="badge badge-date" x-text="task.scheduled_for" x-show="task.scheduled_for"></span>
+                          <template x-if="group.state === 'summary'">
+                            <span class="badge" :class="`state-${$store.chat.computedParentState(task.record_id)}`" x-text="$store.chat.formatState($store.chat.computedParentState(task.record_id))"></span>
+                          </template>
                         </div>
-                      </template>
+                        <template x-if="group.state === 'summary'">
+                          <template x-for="sub in $store.chat.getSubtasks(task.record_id)" :key="sub.record_id">
+                            <div class="task-list-row task-list-row-subtask" :class="{ 'task-unread': $store.chat.isTaskUnread(sub.record_id) }" @click="$store.chat.handleTaskCardClick(sub.record_id)">
+                              <label class="task-card-select" @click.stop>
+                                <input type="checkbox" :checked="$store.chat.isTaskSelected(sub.record_id)" @change="$store.chat.toggleTaskSelection(sub.record_id)" />
+                              </label>
+                              <span class="task-list-indent"></span>
+                              <span class="task-list-title" x-text="sub.title"></span>
+                              <span class="badge" :class="`state-${sub.state}`" x-text="$store.chat.formatState(sub.state)"></span>
+                              <template x-if="sub.assigned_to_npub">
+                                <div class="kanban-card-assignee" :title="'Assigned to ' + $store.chat.getSenderName(sub.assigned_to_npub)">
+                                  <template x-if="$store.chat.getSenderAvatar(sub.assigned_to_npub)">
+                                    <img class="kanban-card-assignee-avatar" :src="$store.chat.getSenderAvatar(sub.assigned_to_npub)" alt="" />
+                                  </template>
+                                  <template x-if="!$store.chat.getSenderAvatar(sub.assigned_to_npub)">
+                                    <span class="kanban-card-assignee-avatar kanban-card-assignee-fallback avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(sub.assigned_to_npub))"></span>
+                                  </template>
+                                </div>
+                              </template>
+                            </div>
+                          </template>
+                        </template>
+                      </div>
                     </template>
-                  </template>
+                  </div>
                 </div>
-              </div>
-            </template>
-          </div>
+              </template>
+            </div>
+          </template>
 
           <!-- Task detail panel -->
           <template x-if="$store.chat.showTaskDetail && $store.chat.editingTask">
@@ -1488,9 +1499,11 @@
               </div>
             </div>
           </template>
-        </div>
+          </div>
+        </template>
 
-        <div class="chat-section" x-show="$store.chat.navSection === 'chat'">
+        <template x-if="$store.chat.navSection === 'chat'">
+          <div class="chat-section">
           <div class="chat-channel-header" x-show="$store.chat.selectedChannelId">
             <span class="chat-channel-hash">#</span>
             <span class="chat-channel-name" x-text="$store.chat.getChannelLabel($store.chat.channels.find(c => c.record_id === $store.chat.selectedChannelId))"></span>
@@ -1519,7 +1532,15 @@
                   <div class="chat-empty">No messages yet. Start a conversation!</div>
                 </template>
 
-                <template x-for="msg in $store.chat.mainFeedMessages" :key="msg.record_id">
+                <button
+                  type="button"
+                  class="thread-load-more-btn"
+                  x-show="$store.chat.hasMoreMainFeedMessages"
+                  @click="$store.chat.showMoreMainFeedMessages()"
+                  x-text="`Show ${Math.min($store.chat.hiddenMainFeedCount, $store.chat.MAIN_FEED_PAGE_SIZE)} older message${Math.min($store.chat.hiddenMainFeedCount, $store.chat.MAIN_FEED_PAGE_SIZE) === 1 ? '' : 's'}`"
+                ></button>
+
+                <template x-for="msg in $store.chat.visibleMainFeedMessages" :key="msg.record_id">
                   <div class="chat-post" :class="{ 'chat-post-focused': $store.chat.isFocusedMessage(msg.record_id) }" :data-message-id="msg.record_id">
                     <div class="chat-msg-actions-menu" @click.outside="$store.chat.isMessageActionsMenuOpen(msg.record_id) && $store.chat.closeMessageActionsMenu()">
                       <button type="button" class="chat-msg-actions-toggle" title="Message actions" aria-label="Message actions" @click.stop="$store.chat.toggleMessageActionsMenu(msg.record_id)">
@@ -1779,9 +1800,11 @@
               </div>
             </div>
           </div>
-        </div>
+          </div>
+        </template>
 
-        <div x-show="$store.chat.navSection === 'docs'" class="docs-section">
+        <template x-if="$store.chat.navSection === 'docs'">
+          <div class="docs-section">
           <div class="docs-view">
             <div class="docs-toolbar" x-show="!$store.chat.docsEditorOpen">
               <input class="docs-search-input" type="text" placeholder="Search docs and folders" x-model="$store.chat.docFilter" />
@@ -2619,9 +2642,11 @@
               </div>
             </div>
           </div>
-        </div>
+          </div>
+        </template>
 
-        <div x-show="$store.chat.navSection === 'calendar'" class="calendar-section">
+        <template x-if="$store.chat.navSection === 'calendar'">
+          <div class="calendar-section">
           <div class="schedules-header">
             <div>
               <h2>Calendar</h2>
@@ -2809,9 +2834,11 @@
               </template>
             </div>
           </template>
-        </div>
+          </div>
+        </template>
 
-        <div x-show="$store.chat.navSection === 'schedules'" class="schedules-section">
+        <template x-if="$store.chat.navSection === 'schedules'">
+          <div class="schedules-section">
           <div class="schedules-header">
             <div>
               <h2>Schedules</h2>
@@ -3048,10 +3075,12 @@
               </div>
             </form>
           </div>
-        </div>
+          </div>
+        </template>
 
         <!-- Jobs page -->
-        <div x-show="$store.chat.navSection === 'jobs'" class="jobs-section">
+        <template x-if="$store.chat.navSection === 'jobs'">
+          <div class="jobs-section">
           <div class="jobs-header">
             <div>
               <h2>Jobs</h2>
@@ -3166,7 +3195,8 @@
               </template>
             </div>
           </div>
-        </div>
+          </div>
+        </template>
 
         <div class="doc-modal-backdrop" x-show="$store.chat.showNewJobModal" x-cloak @click.self="$store.chat.closeNewJobModal()">
           <div class="doc-modal-card schedule-modal">
@@ -3273,7 +3303,8 @@
         </div>
 
         <!-- Scopes page -->
-        <div x-show="$store.chat.navSection === 'scopes'" class="scopes-section">
+        <template x-if="$store.chat.navSection === 'scopes'">
+          <div class="scopes-section">
           <div class="scopes-header">
             <h2>Scopes</h2>
             <p class="scopes-subtitle">Organize work into a hierarchy of scopes.</p>
@@ -3674,14 +3705,18 @@
               </template>
             </div>
           </div>
-        </div>
+          </div>
+        </template>
 
-        <div x-show="$store.chat.navSection === 'people'" class="placeholder-panel">
-          <h2>People</h2>
-          <p>People and groups will materialize from the same V4 sync boundary once that slice is added.</p>
-        </div>
+        <template x-if="$store.chat.navSection === 'people'">
+          <div class="placeholder-panel">
+            <h2>People</h2>
+            <p>People and groups will materialize from the same V4 sync boundary once that slice is added.</p>
+          </div>
+        </template>
 
-        <div x-show="$store.chat.navSection === 'settings'" class="settings-section">
+        <template x-if="$store.chat.navSection === 'settings'">
+          <div class="settings-section">
           <div class="settings-tabs">
             <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'workspace' }" @click="$store.chat.settingsTab = 'workspace'">Workspace</button>
             <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'connection' }" @click="$store.chat.settingsTab = 'connection'">Connection</button>
@@ -4283,7 +4318,8 @@
             </div>
           </section>
           </div>
-        </div>
+          </div>
+        </template>
 
         <!-- New group modal -->
         <div class="doc-modal-backdrop" x-show="$store.chat.showNewGroupModal" x-cloak @click.self="$store.chat.closeNewGroupModal()">

@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "wingman": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "run",
+        "/Users/mini/code/wingmen/src/mcp/stdio-server.ts"
+      ],
+      "env": {
+        "WINGMAN_URL": "http://localhost:3021",
+        "SESSION_ID": "09a7be97-270d-4b97-836a-bfe4afc434b5",
+        "BOT_PUBKEY_HEX": "857543f5d7c7717ddc56a4af042a9a409bff66a8bd3a5100f0b488bf2236574c",
+        "BOT_NPUB": "npub1s4658awhcachmhzk5jhsg256gzdl7e4gh5a9zq8skjyt7g3k2axql224qz",
+        "USER_NPUB": "npub1jss47s4fvv6usl7tn6yp5zamv2u60923ncgfea0e6thkza5p7c3q0afmzy",
+        "AGENT_NSEC": "39d2643c6b4be25850ee2018fd8576b21a5c842862508471c592da8169556e54"
+      }
+    }
+  }
+}

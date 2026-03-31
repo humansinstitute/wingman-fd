@@ -1,4 +1,5 @@
 import { recordFamilyHash as chatFamilyHash } from './translators/chat.js';
+import { recordFamilyHash as reportFamilyHash } from './translators/reports.js';
 import { recordFamilyHash as taskFamilyHash } from './translators/tasks.js';
 import { recordFamilyHash as scheduleFamilyHash } from './translators/schedules.js';
 import { recordFamilyHash as settingsFamilyHash } from './translators/settings.js';
@@ -9,6 +10,7 @@ export const SYNC_FAMILY_OPTIONS = Object.freeze([
   { id: 'chat_message', label: 'Chat messages', hash: chatFamilyHash('chat_message'), table: 'chat_messages' },
   { id: 'directory', label: 'Directories', hash: chatFamilyHash('directory'), table: 'directories' },
   { id: 'document', label: 'Documents', hash: chatFamilyHash('document'), table: 'documents' },
+  { id: 'report', label: 'Reports', hash: reportFamilyHash('report'), table: 'reports' },
   { id: 'task', label: 'Tasks', hash: taskFamilyHash('task'), table: 'tasks' },
   { id: 'schedule', label: 'Schedules', hash: scheduleFamilyHash('schedule'), table: 'schedules' },
   { id: 'comment', label: 'Comments', hash: chatFamilyHash('comment'), table: 'comments' },

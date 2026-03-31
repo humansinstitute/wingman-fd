@@ -1,5 +1,8 @@
+import { forceRefreshToLatestBuild } from './service-worker-registration.js';
+
 const RUNNING_BUILD_ID = typeof __APP_BUILD_ID__ !== 'undefined' ? __APP_BUILD_ID__ : 'dev';
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const IS_DEV = import.meta.env.DEV;
 
 let updateBanner = null;
 let dismissed = false;
@@ -10,7 +13,7 @@ export function getRunningBuildId() {
 }
 
 async function checkForUpdate() {
-  if (dismissed || RUNNING_BUILD_ID === 'dev') return;
+  if (dismissed || IS_DEV) return;
   try {
     const res = await fetch('/version.json', { cache: 'no-store' });
     if (!res.ok) return;
@@ -33,7 +36,9 @@ function showUpdateBanner(newBuildId) {
   updateBanner.addEventListener('click', (e) => {
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (action === 'reload') {
-      location.reload();
+      forceRefreshToLatestBuild().catch(() => {
+        location.reload();
+      });
     } else if (action === 'dismiss') {
       dismissed = true;
       updateBanner.remove();

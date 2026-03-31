@@ -17,7 +17,7 @@ export function buildFlightDeckDocumentTitle({
 
   switch (nextSection) {
     case 'status':
-      return buildSectionTitle('Notifications');
+      return buildSectionTitle('Flight Deck');
     case 'tasks':
       return buildSectionTitle('Tasks');
     case 'calendar':

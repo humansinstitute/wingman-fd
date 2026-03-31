@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 let storedCreds = null;
+const { refreshCredentialExpiryMock } = vi.hoisted(() => ({
+  refreshCredentialExpiryMock: vi.fn(async () => {}),
+}));
 
 vi.mock('../src/auth/secure-store.js', () => ({
   storeCredentials: vi.fn(async (record) => {
@@ -10,7 +13,7 @@ vi.mock('../src/auth/secure-store.js', () => ({
   clearCredentials: vi.fn(async () => {
     storedCreds = null;
   }),
-  refreshCredentialExpiry: vi.fn(async () => {}),
+  refreshCredentialExpiry: refreshCredentialExpiryMock,
 }));
 
 vi.mock('nostr-tools', () => ({
@@ -73,6 +76,7 @@ describe('auth/nostr helpers', () => {
     globalThis.window = globalThis;
     localStorage.clear();
     clearMemoryCredentials();
+    refreshCredentialExpiryMock.mockClear();
     delete window.nostr;
   });
 
@@ -150,6 +154,7 @@ describe('auth/nostr helpers', () => {
     expect(event.kind).toBe(LOGIN_KIND);
     expect(event.tags).toContainEqual(['u', 'https://example.test/api/v4/records']);
     expect(event.tags).toContainEqual(['method', 'GET']);
+    expect(refreshCredentialExpiryMock).toHaveBeenCalledTimes(1);
   });
 
   it('pubkeyToNpub returns an npub string', async () => {

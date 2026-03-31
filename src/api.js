@@ -29,19 +29,6 @@ function url(path) {
   return `${_baseUrl}${path}`;
 }
 
-function getCurrentOriginBaseUrl() {
-  if (typeof window === 'undefined' || !window.location?.origin) return '';
-  return String(window.location.origin || '').replace(/\/+$/, '');
-}
-
-function getCandidateBaseUrls({ preferCurrentOrigin = false } = {}) {
-  const currentOrigin = getCurrentOriginBaseUrl();
-  const ordered = preferCurrentOrigin
-    ? [currentOrigin, _baseUrl]
-    : [_baseUrl, currentOrigin];
-  return [...new Set(ordered.filter(Boolean))];
-}
-
 async function buildApiError(resp, { requestUrl = '', method = 'GET', prefix = 'API' } = {}) {
   const text = await resp.text().catch(() => '');
   const requestMethod = String(method || 'GET').toUpperCase();
@@ -101,35 +88,12 @@ async function signedFetchWithFallbacks(path, { method = 'GET', body } = {}, opt
 }
 
 async function signedFetchWithFallbackMeta(path, { method = 'GET', body } = {}, options = {}) {
-  const candidateBaseUrls = getCandidateBaseUrls(options);
-  if (candidateBaseUrls.length === 0) {
+  if (!_baseUrl) {
     throw new Error('Backend URL not configured');
   }
-
-  let lastResponse = null;
-  let lastError = null;
-
-  for (const baseUrl of candidateBaseUrls) {
-    const requestUrl = `${baseUrl}${path}`;
-    try {
-      const response = await signedFetchAbsolute(requestUrl, { method, body });
-      if (response.status !== 404 && response.status !== 405) {
-        return { response, requestUrl };
-      }
-      lastResponse = response;
-      lastResponse._requestUrl = requestUrl;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  if (lastResponse) {
-    return {
-      response: lastResponse,
-      requestUrl: lastResponse._requestUrl || `${candidateBaseUrls[0]}${path}`,
-    };
-  }
-  throw lastError || new Error(`Request failed for ${path}`);
+  const requestUrl = `${_baseUrl}${path}`;
+  const response = await signedFetchAbsolute(requestUrl, { method, body });
+  return { response, requestUrl };
 }
 
 async function signedFetchBytes(path) {
@@ -419,6 +383,8 @@ export async function syncRecords({ owner_npub, records }) {
   const groupWriteTokens = {};
 
   for (const record of records) {
+    const isOwnerSignedRecord = String(record?.signature_npub || '').trim() === String(owner_npub || '').trim();
+    if (isOwnerSignedRecord) continue;
     const groupRef = String(record?.write_group_id || record?.write_group_npub || '').trim();
     if (!groupRef || groupWriteTokens[groupRef]) continue;
     groupWriteTokens[groupRef] = await createGroupWriteAuthHeader(

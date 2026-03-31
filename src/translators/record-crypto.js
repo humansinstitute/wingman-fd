@@ -4,6 +4,7 @@ import {
   encryptPayloadForGroup,
   getActiveSessionNpub,
   getGroupKey,
+  getLoadedGroupKeyDiagnostics,
   hasGroupKey,
 } from '../crypto/group-keys.js';
 
@@ -28,6 +29,26 @@ function parseCiphertextEnvelope(value) {
     return null;
   }
   return null;
+}
+
+function describeRecordGroupPayloads(record) {
+  return (record.group_payloads || []).map((payload) => {
+    const groupRef = payload?.group_id || payload?.group_npub || null;
+    const keyVersion = Number.isInteger(payload?.group_epoch) ? payload.group_epoch : null;
+    const anyLoadedKey = groupRef ? getGroupKey(groupRef) : null;
+    const exactLoadedKey = groupRef && keyVersion != null ? getGroupKey(groupRef, { keyVersion }) : anyLoadedKey;
+    return {
+      group_ref: groupRef,
+      group_id: payload?.group_id || null,
+      group_npub: payload?.group_npub || null,
+      group_epoch: keyVersion,
+      has_any_loaded_key: Boolean(anyLoadedKey),
+      has_exact_epoch_key: Boolean(exactLoadedKey),
+      loaded_key_version: anyLoadedKey?.key_version ?? null,
+      loaded_group_npub: anyLoadedKey?.group_npub ?? null,
+      exact_key_version: exactLoadedKey?.key_version ?? null,
+    };
+  });
 }
 
 export async function encryptOwnerPayload(ownerNpub, payload) {
@@ -70,6 +91,7 @@ export async function decryptRecordPayload(record) {
   const ownerCiphertext = record.owner_payload?.ciphertext ?? record.owner_payload;
   const viewerNpub = getActiveSessionNpub();
   const errors = [];
+  const payloadDiagnostics = describeRecordGroupPayloads(record);
 
   if (viewerNpub && viewerNpub === record.owner_npub && ownerCiphertext) {
     try {
@@ -89,7 +111,11 @@ export async function decryptRecordPayload(record) {
   for (const payload of (record.group_payloads || [])) {
     const groupRef = payload?.group_id || payload?.group_npub;
     const keyVersion = Number.isInteger(payload?.group_epoch) ? payload.group_epoch : null;
-    if (!groupRef || !payload?.ciphertext || !hasGroupKey(groupRef)) continue;
+    if (!groupRef || !payload?.ciphertext) continue;
+    if (!hasGroupKey(groupRef)) {
+      errors.push(`group:${payload.group_npub || groupRef}:missing-loaded-key(ref=${groupRef},epoch=${keyVersion ?? 'none'})`);
+      continue;
+    }
     try {
       const groupEnvelope = parseCiphertextEnvelope(payload.ciphertext);
       const groupCiphertext = groupEnvelope?.ciphertext || payload.ciphertext;
@@ -113,10 +139,17 @@ export async function decryptRecordPayload(record) {
       errors.push(`group:${payload.group_npub}:${error instanceof Error ? error.message : String(error)}`);
     }
   }
-
-  throw new Error(
-    errors.length > 0
-      ? `Unable to decrypt record ${record.record_id}: ${errors.join('; ')}`
-      : `Unable to decrypt record ${record.record_id}: no matching group key`
-  );
+  const message = errors.length > 0
+    ? `Unable to decrypt record ${record.record_id}: ${errors.join('; ')}`
+    : `Unable to decrypt record ${record.record_id}: no matching group key`;
+  const error = new Error(message);
+  error.diagnostics = {
+    record_id: record.record_id,
+    owner_npub: record.owner_npub,
+    signature_npub: record.signature_npub || null,
+    viewer_npub: viewerNpub || null,
+    group_payloads: payloadDiagnostics,
+    loaded_group_keys: getLoadedGroupKeyDiagnostics(),
+  };
+  throw error;
 }

@@ -93,9 +93,9 @@ describe('findWorkspaceBySlug', () => {
 describe('parseRouteLocation', () => {
   const base = 'http://localhost:5173';
 
-  it('parses root / as chat with no slug', () => {
+  it('parses root / as flight deck with no slug', () => {
     const route = parseRouteLocation(`${base}/`);
-    expect(route.section).toBe('chat');
+    expect(route.section).toBe('status');
     expect(route.workspaceSlug).toBeNull();
   });
 
@@ -111,16 +111,22 @@ describe('parseRouteLocation', () => {
     expect(route.workspaceSlug).toBe('be-free');
   });
 
+  it('maps flight-deck page to status section', () => {
+    const route = parseRouteLocation(`${base}/be-free/flight-deck`);
+    expect(route.section).toBe('status');
+    expect(route.workspaceSlug).toBe('be-free');
+  });
+
   it('maps notifications page to status section', () => {
     const route = parseRouteLocation(`${base}/be-free/notifications`);
     expect(route.section).toBe('status');
     expect(route.workspaceSlug).toBe('be-free');
   });
 
-  it('parses /<slug> alone as workspace root with chat default', () => {
+  it('parses /<slug> alone as workspace root with flight deck default', () => {
     const route = parseRouteLocation(`${base}/be-free`);
     expect(route.workspaceSlug).toBe('be-free');
-    expect(route.section).toBe('chat');
+    expect(route.section).toBe('status');
   });
 
   it('extracts query params alongside slug', () => {
@@ -131,8 +137,26 @@ describe('parseRouteLocation', () => {
     expect(route.params.taskid).toBe('xyz');
   });
 
+  it('extracts workspace identity hints alongside slug', () => {
+    const route = parseRouteLocation(
+      `${base}/be-free/chat?workspacekey=${encodeURIComponent('service:npub1ai::workspace:npub1ws')}&channelid=chan-1`,
+    );
+    expect(route.workspaceSlug).toBe('be-free');
+    expect(route.section).toBe('chat');
+    expect(route.params.workspacekey).toBe('service:npub1ai::workspace:npub1ws');
+    expect(route.params.channelid).toBe('chan-1');
+  });
+
+  it('extracts report query params alongside slug', () => {
+    const route = parseRouteLocation(`${base}/be-free/reports?scopeid=abc&reportid=report-1`);
+    expect(route.workspaceSlug).toBe('be-free');
+    expect(route.section).toBe('reports');
+    expect(route.params.scopeid).toBe('abc');
+    expect(route.params.reportid).toBe('report-1');
+  });
+
   it('parses all known page sections', () => {
-    const pages = ['chat', 'tasks', 'calendar', 'schedules', 'docs', 'people', 'scopes', 'settings'];
+    const pages = ['chat', 'tasks', 'calendar', 'schedules', 'docs', 'reports', 'people', 'scopes', 'settings'];
     for (const page of pages) {
       const route = parseRouteLocation(`${base}/my-ws/${page}`);
       expect(route.workspaceSlug).toBe('my-ws');
@@ -149,7 +173,7 @@ describe('parseRouteLocation', () => {
   it('treats unknown single segment as workspace slug', () => {
     const route = parseRouteLocation(`${base}/my-company`);
     expect(route.workspaceSlug).toBe('my-company');
-    expect(route.section).toBe('chat');
+    expect(route.section).toBe('status');
   });
 
   it('handles trailing slashes', () => {

@@ -4,7 +4,7 @@ vi.mock('../src/auth/nostr.js', () => ({
   createNip98AuthHeader: vi.fn(async (requestUrl, method) => `NIP98 ${method} ${requestUrl}`),
 }));
 
-describe('workspace API host fallback', () => {
+describe('workspace API host binding', () => {
   const originalWindow = globalThis.window;
   const originalFetch = globalThis.fetch;
 
@@ -83,38 +83,33 @@ describe('workspace API host fallback', () => {
     expect(result.requestUrl).toBe('https://sb.example/api/v4/storage/prepare');
   });
 
-  it('falls back to the current origin for storage prepare requests', async () => {
+  it('does not fall back to the current origin for storage prepare requests', async () => {
     const fetchMock = vi.fn(async (requestUrl) => {
-      if (requestUrl === 'https://sb.example/api/v4/storage/prepare') {
-        return {
-          ok: false,
-          status: 404,
-          json: async () => ({ error: 'Not Found' }),
-          text: async () => 'Not Found',
-        };
-      }
       return {
-        ok: true,
-        status: 200,
-        json: async () => ({ object_id: 'obj-1', requestUrl }),
-        text: async () => JSON.stringify({ object_id: 'obj-1', requestUrl }),
+        ok: false,
+        status: 404,
+        json: async () => ({ error: 'Not Found' }),
+        text: async () => 'Not Found',
       };
     });
     globalThis.fetch = fetchMock;
 
     const api = await import('../src/api.js');
     api.setBaseUrl('https://sb.example');
-    const result = await api.prepareStorageObject({
+    await expect(api.prepareStorageObject({
       owner_npub: 'npub1workspace',
       content_type: 'image/png',
       size_bytes: 12,
       file_name: 'avatar.png',
+    })).rejects.toMatchObject({
+      status: 404,
+      method: 'POST',
+      requestUrl: 'https://sb.example/api/v4/storage/prepare',
+      message: 'API 404 POST https://sb.example/api/v4/storage/prepare: Not Found',
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('https://sb.example/api/v4/storage/prepare');
-    expect(fetchMock.mock.calls[1][0]).toBe('https://tower.example/api/v4/storage/prepare');
-    expect(result.requestUrl).toBe('https://tower.example/api/v4/storage/prepare');
   });
 
   it('preserves storage prepare failure details', async () => {
@@ -133,14 +128,14 @@ describe('workspace API host fallback', () => {
     })).rejects.toMatchObject({
       status: 404,
       method: 'POST',
-      requestUrl: 'https://tower.example/api/v4/storage/prepare',
-      message: 'API 404 POST https://tower.example/api/v4/storage/prepare: Not Found',
+      requestUrl: 'https://sb.example/api/v4/storage/prepare',
+      message: 'API 404 POST https://sb.example/api/v4/storage/prepare: Not Found',
     });
   });
 
   it('uses backend storage upload before trying the direct upload URL', async () => {
     const fetchMock = vi.fn(async (requestUrl) => {
-      if (requestUrl === 'https://tower.example/api/v4/storage/obj-1') {
+      if (requestUrl === 'https://sb.example/api/v4/storage/obj-1') {
         return {
           ok: true,
           status: 200,
@@ -164,15 +159,14 @@ describe('workspace API host fallback', () => {
       'image/png',
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('https://sb.example/api/v4/storage/obj-1');
-    expect(fetchMock.mock.calls[1][0]).toBe('https://tower.example/api/v4/storage/obj-1');
-    expect(result.requestUrl).toBe('https://tower.example/api/v4/storage/obj-1');
+    expect(result.requestUrl).toBe('https://sb.example/api/v4/storage/obj-1');
   });
 
   it('includes direct upload failure when backend upload path is unavailable too', async () => {
     globalThis.fetch = vi.fn(async (requestUrl) => {
-      if (requestUrl === 'https://sb.example/api/v4/storage/obj-1' || requestUrl === 'https://tower.example/api/v4/storage/obj-1') {
+      if (requestUrl === 'https://sb.example/api/v4/storage/obj-1') {
         return {
           ok: false,
           status: 404,
@@ -202,9 +196,9 @@ describe('workspace API host fallback', () => {
     )).rejects.toMatchObject({
       status: 404,
       method: 'PUT',
-      requestUrl: 'https://tower.example/api/v4/storage/obj-1',
+      requestUrl: 'https://sb.example/api/v4/storage/obj-1',
       directUploadMessage: 'Storage upload 404 PUT https://upload.example/object: Upload target missing',
-      message: 'API 404 PUT https://tower.example/api/v4/storage/obj-1: Prepared object missing | direct upload failed after backend upload fallback: Storage upload 404 PUT https://upload.example/object: Upload target missing',
+      message: 'API 404 PUT https://sb.example/api/v4/storage/obj-1: Prepared object missing | direct upload failed after backend upload fallback: Storage upload 404 PUT https://upload.example/object: Upload target missing',
     });
   });
 
@@ -252,34 +246,29 @@ describe('workspace API host fallback', () => {
     expect(result).toBe(imageBlob);
   });
 
-  it('falls back to the current origin for storage blob downloads', async () => {
+  it('does not fall back to the current origin for storage blob downloads', async () => {
     const imageBlob = new Blob(['avatar'], { type: 'image/png' });
-    const fetchMock = vi.fn(async (requestUrl) => {
-      if (requestUrl === 'https://sb.example/api/v4/storage/obj-1/content') {
-        return {
-          ok: false,
-          status: 404,
-          blob: async () => imageBlob,
-          text: async () => 'Not Found',
-        };
-      }
+    const fetchMock = vi.fn(async () => {
       return {
-        ok: true,
-        status: 200,
+        ok: false,
+        status: 404,
         blob: async () => imageBlob,
-        text: async () => '',
+        text: async () => 'Not Found',
       };
     });
     globalThis.fetch = fetchMock;
 
     const api = await import('../src/api.js');
     api.setBaseUrl('https://sb.example');
-    const result = await api.downloadStorageObjectBlob('obj-1');
+    await expect(api.downloadStorageObjectBlob('obj-1')).rejects.toMatchObject({
+      status: 404,
+      method: 'GET',
+      requestUrl: 'https://sb.example/api/v4/storage/obj-1/content',
+      message: 'API 404 GET https://sb.example/api/v4/storage/obj-1/content: Not Found',
+    });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('https://sb.example/api/v4/storage/obj-1/content');
-    expect(fetchMock.mock.calls[1][0]).toBe('https://tower.example/api/v4/storage/obj-1/content');
-    expect(result).toBe(imageBlob);
   });
 });
 

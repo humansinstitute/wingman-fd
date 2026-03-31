@@ -7,11 +7,13 @@ import {
   getPendingWritesByFamilies,
   getSyncState,
   getTaskById,
+  getReportById,
   getCommentsByTarget,
   getAudioNoteById,
   setSyncState,
   upsertAudioNote,
   upsertComment,
+  upsertReport,
   upsertTask,
 } from '../src/db.js';
 import { getSyncFamily, getSyncStateKeyForFamily, SYNC_FAMILY_OPTIONS } from '../src/sync-families.js';
@@ -32,6 +34,7 @@ describe('sync repair helpers', () => {
       'chat_message',
       'directory',
       'document',
+      'report',
       'task',
       'schedule',
       'comment',
@@ -69,19 +72,31 @@ describe('sync repair helpers', () => {
       record_state: 'active',
       updated_at: '2026-03-17T00:00:00.000Z',
     });
+    await upsertReport({
+      record_id: 'report-1',
+      owner_npub: 'npub_owner',
+      declaration_type: 'metric',
+      title: 'Daily Users',
+      payload: { label: 'Daily Users', value: 50 },
+      record_state: 'active',
+      updated_at: '2026-03-17T00:00:00.000Z',
+    });
 
     await setSyncState(getSyncStateKeyForFamily('comment'), '2026-03-17T00:00:00.000Z');
     await setSyncState(getSyncStateKeyForFamily('audio_note'), '2026-03-17T00:00:00.000Z');
+    await setSyncState(getSyncStateKeyForFamily('report'), '2026-03-17T00:00:00.000Z');
     await setSyncState(getSyncStateKeyForFamily('task'), '2026-03-17T00:00:00.000Z');
 
-    await clearRuntimeFamilies(['comment', 'audio_note']);
-    await clearSyncStateForFamilies(['comment', 'audio_note']);
+    await clearRuntimeFamilies(['comment', 'audio_note', 'report']);
+    await clearSyncStateForFamilies(['comment', 'audio_note', 'report']);
 
     expect(await getCommentsByTarget('doc-1')).toEqual([]);
     expect(await getAudioNoteById('audio-1')).toBeUndefined();
+    expect(await getReportById('report-1')).toBeUndefined();
     expect((await getTaskById('task-1'))?.title).toBe('Keep me');
     expect(await getSyncState(getSyncStateKeyForFamily('comment'))).toBeNull();
     expect(await getSyncState(getSyncStateKeyForFamily('audio_note'))).toBeNull();
+    expect(await getSyncState(getSyncStateKeyForFamily('report'))).toBeNull();
     expect(await getSyncState(getSyncStateKeyForFamily('task'))).toBe('2026-03-17T00:00:00.000Z');
   });
 

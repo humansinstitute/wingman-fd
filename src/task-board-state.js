@@ -51,9 +51,162 @@ export const RECENT_TASK_BOARD_ID = '__recent__';
 export const ALL_TASK_BOARD_ID = '__all__';
 export const WEEKDAY_OPTIONS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
+const EMPTY_ARRAY = Object.freeze([]);
+const scopesMapCache = new WeakMap();
+const taskGraphCache = new WeakMap();
+const taskBoardDerivedCache = new WeakMap();
+
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
 // ---------------------------------------------------------------------------
+
+function getCachedScopesMap(store) {
+  const scopes = Array.isArray(store?.scopes) ? store.scopes : EMPTY_ARRAY;
+  let cached = scopesMapCache.get(scopes);
+  if (cached) return cached;
+  cached = new Map();
+  for (const scope of scopes) cached.set(scope.record_id, scope);
+  scopesMapCache.set(scopes, cached);
+  return cached;
+}
+
+function getTaskGraph(store) {
+  const tasks = Array.isArray(store?.tasks) ? store.tasks : EMPTY_ARRAY;
+  let cached = taskGraphCache.get(tasks);
+  if (cached) return cached;
+
+  const parentIds = new Set();
+  const subtasksByParent = new Map();
+  for (const task of tasks) {
+    if (task?.record_state === 'deleted' || !task?.parent_task_id) continue;
+    parentIds.add(task.parent_task_id);
+    const subtasks = subtasksByParent.get(task.parent_task_id);
+    if (subtasks) subtasks.push(task);
+    else subtasksByParent.set(task.parent_task_id, [task]);
+  }
+
+  const parentStateByParent = new Map();
+  for (const [parentId, subtasks] of subtasksByParent.entries()) {
+    parentStateByParent.set(parentId, computeParentState(subtasks));
+  }
+
+  cached = {
+    parentIds,
+    subtasksByParent,
+    parentStateByParent,
+  };
+  taskGraphCache.set(tasks, cached);
+  return cached;
+}
+
+function getDerivedSelectedBoardScope(store, scopesMap) {
+  const selectedBoardId = store?.selectedBoardId;
+  if (!selectedBoardId
+    || selectedBoardId === ALL_TASK_BOARD_ID
+    || selectedBoardId === RECENT_TASK_BOARD_ID
+    || selectedBoardId === UNSCOPED_TASK_BOARD_ID) {
+    return null;
+  }
+  return scopesMap.get(selectedBoardId) || null;
+}
+
+function getTaskBoardDerived(store) {
+  const tasks = Array.isArray(store?.tasks) ? store.tasks : EMPTY_ARRAY;
+  const scopes = Array.isArray(store?.scopes) ? store.scopes : EMPTY_ARRAY;
+  const taskFilterTags = Array.isArray(store?.taskFilterTags) ? store.taskFilterTags : EMPTY_ARRAY;
+  const scopesMap = getCachedScopesMap(store);
+  const selectedBoardId = store?.selectedBoardId ?? null;
+  const selectedBoardScope = getDerivedSelectedBoardScope(store, scopesMap);
+
+  const previous = taskBoardDerivedCache.get(store);
+  if (previous
+    && previous.tasks === tasks
+    && previous.scopes === scopes
+    && previous.selectedBoardId === selectedBoardId
+    && previous.showBoardDescendantTasks === store?.showBoardDescendantTasks
+    && previous.taskFilter === store?.taskFilter
+    && previous.taskFilterTags === taskFilterTags
+    && previous.taskFilterAssignee === store?.taskFilterAssignee) {
+    return previous.value;
+  }
+
+  const graph = getTaskGraph(store);
+  const normalizedSelectedBoardId = selectedBoardId === UNSCOPED_TASK_BOARD_ID
+    ? UNSCOPED_TASK_BOARD_ID
+    : selectedBoardId;
+  const boardScopedTasks = computeBoardScopedTasks(
+    tasks,
+    normalizedSelectedBoardId,
+    selectedBoardScope,
+    scopesMap,
+    Boolean(store?.showBoardDescendantTasks),
+  );
+  const filteredTasks = computeFilteredTasks(
+    boardScopedTasks,
+    store?.taskFilter,
+    taskFilterTags,
+    store?.taskFilterAssignee,
+  );
+  const activeTasks = filteredTasks.filter((task) =>
+    task.state !== 'done' && task.state !== 'archive' && !graph.parentIds.has(task.record_id)
+  );
+  const doneTasks = filteredTasks.filter((task) =>
+    task.state === 'done' && !graph.parentIds.has(task.record_id)
+  );
+  const summaryTasks = filteredTasks.filter((task) =>
+    task.state !== 'archive' && graph.parentIds.has(task.record_id)
+  );
+  const boardColumns = computeBoardColumns(activeTasks, doneTasks, summaryTasks);
+  const listGroupedTasks = boardColumns.filter((column) => column.tasks.length > 0);
+
+  let visibleBoardTasks = boardScopedTasks.filter((task) => task.state !== 'archive');
+  const query = String(store?.taskFilter || '').trim().toLowerCase();
+  if (query) {
+    visibleBoardTasks = visibleBoardTasks.filter((task) =>
+      String(task.title || '').toLowerCase().includes(query)
+      || String(task.description || '').toLowerCase().includes(query)
+      || String(task.tags || '').toLowerCase().includes(query)
+    );
+  }
+
+  const allTaskTagsSet = new Set();
+  for (const task of visibleBoardTasks) {
+    for (const tag of parseTaskTags(task.tags)) allTaskTagsSet.add(tag);
+  }
+
+  const calendarScheduledTasks = filteredTasks.filter((task) =>
+    task.record_state !== 'deleted'
+    && task.state !== 'archive'
+    && !graph.parentIds.has(task.record_id)
+    && Boolean(task.scheduled_for)
+  );
+
+  const value = {
+    boardScopedTasks,
+    filteredTasks,
+    activeTasks,
+    doneTasks,
+    summaryTasks,
+    boardColumns,
+    listGroupedTasks,
+    visibleBoardTasks,
+    allTaskTags: [...allTaskTagsSet].sort(),
+    calendarScheduledTasks,
+  };
+
+  taskBoardDerivedCache.set(store, {
+    tasks,
+    scopes,
+    selectedBoardId,
+    showBoardDescendantTasks: store?.showBoardDescendantTasks,
+    taskFilter: store?.taskFilter,
+    taskFilterTags,
+    taskFilterAssignee: store?.taskFilterAssignee,
+    value,
+  });
+
+  return value;
+}
 
 export function resolveGroupId(groupRef, groups) {
   const value = String(groupRef || '').trim();
@@ -283,15 +436,15 @@ export const taskBoardStateMixin = {
   // --- subtask handling ---
 
   isParentTask(taskId) {
-    return this.tasks.some(t => t.parent_task_id === taskId && t.record_state !== 'deleted');
+    return getTaskGraph(this).parentIds.has(taskId);
   },
 
   getSubtasks(parentId) {
-    return this.tasks.filter(t => t.parent_task_id === parentId && t.record_state !== 'deleted');
+    return getTaskGraph(this).subtasksByParent.get(parentId) || EMPTY_ARRAY;
   },
 
   computedParentState(parentId) {
-    return computeParentState(this.getSubtasks(parentId));
+    return getTaskGraph(this).parentStateByParent.get(parentId) || 'new';
   },
 
   stateColor(state) {
@@ -472,8 +625,7 @@ export const taskBoardStateMixin = {
   },
 
   get listGroupedTasks() {
-    const cols = this.boardColumns;
-    return cols.filter(col => col.tasks.length > 0);
+    return getTaskBoardDerived(this).listGroupedTasks;
   },
 
   getTaskBoardOptionLabel(scopeId) {
@@ -657,35 +809,23 @@ export const taskBoardStateMixin = {
   // --- task filtering ---
 
   get boardScopedTasks() {
-    return computeBoardScopedTasks(
-      this.tasks,
-      this.selectedBoardIsUnscoped ? UNSCOPED_TASK_BOARD_ID : this.selectedBoardId,
-      this.selectedBoardScope,
-      this.scopesMap,
-      this.showBoardDescendantTasks,
-    );
+    return getTaskBoardDerived(this).boardScopedTasks;
   },
 
   get filteredTasks() {
-    return computeFilteredTasks(this.boardScopedTasks, this.taskFilter, this.taskFilterTags, this.taskFilterAssignee);
+    return getTaskBoardDerived(this).filteredTasks;
   },
 
   get activeTasks() {
-    return this.filteredTasks.filter(t =>
-      t.state !== 'done' && t.state !== 'archive' && !this.isParentTask(t.record_id)
-    );
+    return getTaskBoardDerived(this).activeTasks;
   },
 
   get doneTasks() {
-    return this.filteredTasks.filter(t =>
-      t.state === 'done' && !this.isParentTask(t.record_id)
-    );
+    return getTaskBoardDerived(this).doneTasks;
   },
 
   get summaryTasks() {
-    return this.filteredTasks.filter(t =>
-      t.state !== 'archive' && this.isParentTask(t.record_id)
-    );
+    return getTaskBoardDerived(this).summaryTasks;
   },
 
   get selectedTasks() {
@@ -701,18 +841,13 @@ export const taskBoardStateMixin = {
   },
 
   get boardColumns() {
-    return computeBoardColumns(this.activeTasks, this.doneTasks, this.summaryTasks);
+    return getTaskBoardDerived(this).boardColumns;
   },
 
   // --- calendar ---
 
   get calendarScheduledTasks() {
-    return this.filteredTasks.filter((task) =>
-      task.record_state !== 'deleted'
-      && task.state !== 'archive'
-      && !this.isParentTask(task.record_id)
-      && Boolean(task.scheduled_for)
-    );
+    return getTaskBoardDerived(this).calendarScheduledTasks;
   },
 
   get taskCalendar() {
@@ -725,26 +860,11 @@ export const taskBoardStateMixin = {
   // --- visible board tasks / tags ---
 
   get visibleBoardTasks() {
-    let tasks = this.boardScopedTasks.filter((t) => t.state !== 'archive');
-    const query = String(this.taskFilter || '').trim().toLowerCase();
-    if (query) {
-      tasks = tasks.filter((t) =>
-        String(t.title || '').toLowerCase().includes(query)
-        || String(t.description || '').toLowerCase().includes(query)
-        || String(t.tags || '').toLowerCase().includes(query)
-      );
-    }
-    return tasks;
+    return getTaskBoardDerived(this).visibleBoardTasks;
   },
 
   get allTaskTags() {
-    const tagSet = new Set();
-    for (const task of this.visibleBoardTasks) {
-      for (const tag of parseTaskTags(task.tags)) {
-        tagSet.add(tag);
-      }
-    }
-    return [...tagSet].sort();
+    return getTaskBoardDerived(this).allTaskTags;
   },
 
   getTaskTags(task) {
@@ -898,9 +1018,7 @@ export const taskBoardStateMixin = {
   // --- scope helpers ---
 
   get scopesMap() {
-    const m = new Map();
-    for (const s of this.scopes) m.set(s.record_id, s);
-    return m;
+    return getCachedScopesMap(this);
   },
 
   get scopeTree() {

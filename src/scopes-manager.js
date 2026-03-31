@@ -95,9 +95,6 @@ export const scopesManagerMixin = {
     for (const scope of (Array.isArray(scopes) ? scopes : [])) {
       const normalized = this.normalizeScopeRowGroupRefs(scope);
       normalizedScopes.push(normalized);
-      if (normalized !== scope) {
-        await upsertScope(normalized);
-      }
     }
     if (!sameListBySignature(this.scopes, normalizedScopes)) {
       this.scopes = normalizedScopes;

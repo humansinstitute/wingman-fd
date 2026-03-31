@@ -15,12 +15,12 @@ sharedDb.version(1).stores({
 });
 
 // ---------------------------------------------------------------------------
-// Workspace DB — one per workspace, keyed by ownerNpub.
+// Workspace DB — one per workspace identity key.
 // Contains ALL record / sync tables.
 // ---------------------------------------------------------------------------
 
 let _currentWorkspaceDb = null;
-let _currentWorkspaceOwnerNpub = null;
+let _currentWorkspaceDbKey = null;
 
 const WORKSPACE_STORES = {
   workspace_settings: '&workspace_owner_npub, record_id, updated_at',
@@ -41,8 +41,8 @@ const WORKSPACE_STORES = {
   read_cursors:       '&record_id, cursor_key, viewer_npub, read_until',
 };
 
-function createWorkspaceDb(ownerNpub) {
-  const db = new Dexie(`wingman-fd-ws-${ownerNpub}`);
+function createWorkspaceDb(workspaceDbKey) {
+  const db = new Dexie(`wingman-fd-ws-${workspaceDbKey}`);
   const WORKSPACE_STORES_V2 = {
     workspace_settings: '&workspace_owner_npub, record_id, updated_at',
     channels:           'record_id, owner_npub, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
@@ -89,21 +89,21 @@ function createWorkspaceDb(ownerNpub) {
   return db;
 }
 
-export function openWorkspaceDb(ownerNpub) {
-  if (!ownerNpub) throw new Error('ownerNpub is required to open a workspace database');
-  if (_currentWorkspaceOwnerNpub === ownerNpub && _currentWorkspaceDb) {
+export function openWorkspaceDb(workspaceDbKey) {
+  if (!workspaceDbKey) throw new Error('workspaceDbKey is required to open a workspace database');
+  if (_currentWorkspaceDbKey === workspaceDbKey && _currentWorkspaceDb) {
     return _currentWorkspaceDb;
   }
   if (_currentWorkspaceDb) {
     try { _currentWorkspaceDb.close(); } catch { /* already closed */ }
   }
-  _currentWorkspaceDb = createWorkspaceDb(ownerNpub);
-  _currentWorkspaceOwnerNpub = ownerNpub;
+  _currentWorkspaceDb = createWorkspaceDb(workspaceDbKey);
+  _currentWorkspaceDbKey = workspaceDbKey;
   return _currentWorkspaceDb;
 }
 
 export function getWorkspaceDb() {
-  if (!_currentWorkspaceDb) throw new Error('No workspace database open — call openWorkspaceDb(ownerNpub) first');
+  if (!_currentWorkspaceDb) throw new Error('No workspace database open — call openWorkspaceDb(workspaceDbKey) first');
   return _currentWorkspaceDb;
 }
 
@@ -111,8 +111,8 @@ export function getSharedDb() {
   return sharedDb;
 }
 
-export function getCurrentWorkspaceOwnerNpub() {
-  return _currentWorkspaceOwnerNpub;
+export function getCurrentWorkspaceDbKey() {
+  return _currentWorkspaceDbKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ function sanitizeForStorage(value) {
 
 /** Shorthand — workspace db, throws if none open. */
 function wsDb() {
-  if (!_currentWorkspaceDb) throw new Error('No workspace database open — call openWorkspaceDb(ownerNpub) first');
+  if (!_currentWorkspaceDb) throw new Error('No workspace database open — call openWorkspaceDb(workspaceDbKey) first');
   return _currentWorkspaceDb;
 }
 
@@ -134,14 +134,14 @@ export function hasWorkspaceDb() {
   return _currentWorkspaceDb !== null;
 }
 
-export async function deleteWorkspaceDb(ownerNpub) {
-  if (!ownerNpub) throw new Error('ownerNpub is required to delete a workspace database');
-  if (_currentWorkspaceOwnerNpub === ownerNpub && _currentWorkspaceDb) {
+export async function deleteWorkspaceDb(workspaceDbKey) {
+  if (!workspaceDbKey) throw new Error('workspaceDbKey is required to delete a workspace database');
+  if (_currentWorkspaceDbKey === workspaceDbKey && _currentWorkspaceDb) {
     _currentWorkspaceDb.close();
     _currentWorkspaceDb = null;
-    _currentWorkspaceOwnerNpub = null;
+    _currentWorkspaceDbKey = null;
   }
-  const dbName = `wingman-fd-ws-${ownerNpub}`;
+  const dbName = `wingman-fd-ws-${workspaceDbKey}`;
   await Dexie.delete(dbName);
 }
 
@@ -238,9 +238,9 @@ export async function getWorkspaceSettings(workspaceOwnerNpub) {
   return wsDb().workspace_settings.get(workspaceOwnerNpub);
 }
 
-export async function getWorkspaceSettingsSnapshot(workspaceOwnerNpub) {
-  if (!workspaceOwnerNpub) return null;
-  const tempDb = createWorkspaceDb(workspaceOwnerNpub);
+export async function getWorkspaceSettingsSnapshot(workspaceDbKey, workspaceOwnerNpub) {
+  if (!workspaceDbKey || !workspaceOwnerNpub) return null;
+  const tempDb = createWorkspaceDb(workspaceDbKey);
   try {
     await tempDb.open();
     return tempDb.workspace_settings.get(workspaceOwnerNpub);

@@ -23,9 +23,73 @@ import {
   rankThreadReplies,
   resolveVisibleThreadReplyCount,
   sortMessagesByUpdatedAt,
-  visibleThreadReplies,
 } from './chat-order.js';
 import { sameListBySignature } from './utils/state-helpers.js';
+
+const chatDerivedCache = new WeakMap();
+
+function getChatDerivedState(store) {
+  const messages = Array.isArray(store?.messages) ? store.messages : [];
+  const activeThreadId = store?.activeThreadId ?? null;
+  const focusMessageId = store?.focusMessageId ?? null;
+  const mainFeedVisibleCount = Math.max(
+    0,
+    Number(store?.mainFeedVisibleCount ?? store?.MAIN_FEED_PAGE_SIZE ?? 0) || 0,
+  );
+  const threadVisibleReplyCount = Math.max(0, Number(store?.threadVisibleReplyCount) || 0);
+
+  const previous = chatDerivedCache.get(store);
+  if (
+    previous
+    && previous.messages === messages
+    && previous.activeThreadId === activeThreadId
+    && previous.focusMessageId === focusMessageId
+    && previous.mainFeedVisibleCount === mainFeedVisibleCount
+    && previous.threadVisibleReplyCount === threadVisibleReplyCount
+  ) {
+    return previous.value;
+  }
+
+  const mainFeedMessages = rankMainFeedMessages(messages);
+  const resolvedMainFeedVisibleCount = resolveVisibleThreadReplyCount(
+    mainFeedMessages,
+    mainFeedVisibleCount,
+    focusMessageId,
+  );
+  const visibleMainFeedMessages = mainFeedMessages.slice(-resolvedMainFeedVisibleCount);
+  const hiddenMainFeedCount = Math.max(0, mainFeedMessages.length - resolvedMainFeedVisibleCount);
+
+  const threadMessages = activeThreadId ? rankThreadReplies(messages, activeThreadId) : [];
+  const resolvedThreadVisibleReplyCount = resolveVisibleThreadReplyCount(
+    threadMessages,
+    threadVisibleReplyCount,
+    focusMessageId,
+  );
+  const visibleThreadMessages = threadMessages.slice(-resolvedThreadVisibleReplyCount);
+  const hiddenThreadReplyCount = Math.max(0, threadMessages.length - resolvedThreadVisibleReplyCount);
+
+  const value = {
+    mainFeedMessages,
+    resolvedMainFeedVisibleCount,
+    visibleMainFeedMessages,
+    hiddenMainFeedCount,
+    threadMessages,
+    resolvedThreadVisibleReplyCount,
+    visibleThreadMessages,
+    hiddenThreadReplyCount,
+  };
+
+  chatDerivedCache.set(store, {
+    messages,
+    activeThreadId,
+    focusMessageId,
+    mainFeedVisibleCount,
+    threadVisibleReplyCount,
+    value,
+  });
+
+  return value;
+}
 
 // ---------------------------------------------------------------------------
 // Mixin — methods and getters that use `this` (the Alpine store)
@@ -40,24 +104,39 @@ export const chatMessageManagerMixin = {
   },
 
   get mainFeedMessages() {
-    return rankMainFeedMessages(this.messages);
+    return getChatDerivedState(this).mainFeedMessages;
+  },
+
+  get resolvedMainFeedVisibleCount() {
+    return getChatDerivedState(this).resolvedMainFeedVisibleCount;
+  },
+
+  get visibleMainFeedMessages() {
+    return getChatDerivedState(this).visibleMainFeedMessages;
+  },
+
+  get hiddenMainFeedCount() {
+    return getChatDerivedState(this).hiddenMainFeedCount;
+  },
+
+  get hasMoreMainFeedMessages() {
+    return this.hiddenMainFeedCount > 0;
   },
 
   get threadMessages() {
-    if (!this.activeThreadId) return [];
-    return rankThreadReplies(this.messages, this.activeThreadId);
+    return getChatDerivedState(this).threadMessages;
   },
 
   get resolvedThreadVisibleReplyCount() {
-    return resolveVisibleThreadReplyCount(this.threadMessages, this.threadVisibleReplyCount, this.focusMessageId);
+    return getChatDerivedState(this).resolvedThreadVisibleReplyCount;
   },
 
   get visibleThreadMessages() {
-    return visibleThreadReplies(this.messages, this.activeThreadId, this.threadVisibleReplyCount, this.focusMessageId);
+    return getChatDerivedState(this).visibleThreadMessages;
   },
 
   get hiddenThreadReplyCount() {
-    return Math.max(0, this.threadMessages.length - this.resolvedThreadVisibleReplyCount);
+    return getChatDerivedState(this).hiddenThreadReplyCount;
   },
 
   get hasMoreThreadMessages() {
@@ -247,6 +326,16 @@ export const chatMessageManagerMixin = {
     this.restoreScrollAnchor(anchor);
   },
 
+  showMoreMainFeedMessages() {
+    const anchor = this.captureScrollAnchor({
+      containerSelector: '[data-chat-feed]',
+      itemSelector: '[data-message-id]',
+      itemAttribute: 'data-message-id',
+    });
+    this.mainFeedVisibleCount += this.MAIN_FEED_PAGE_SIZE;
+    this.restoreScrollAnchor(anchor);
+  },
+
   getThreadParentMessage() {
     if (!this.activeThreadId) return null;
     return this.messages.find(msg => msg.record_id === this.activeThreadId) ?? null;
@@ -277,7 +366,7 @@ export const chatMessageManagerMixin = {
   },
 
   syncChatPreviewState() {
-    const validIds = new Set(this.mainFeedMessages.map((message) => message.record_id));
+    const validIds = new Set(this.visibleMainFeedMessages.map((message) => message.record_id));
     this.expandedChatMessageIds = this.expandedChatMessageIds.filter((id) => validIds.has(id));
     this.truncatedChatMessageIds = this.truncatedChatMessageIds.filter((id) => validIds.has(id));
   },

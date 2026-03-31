@@ -11,6 +11,20 @@ import {
 } from './db.js';
 import { fetchProfileByNpub } from './profiles.js';
 
+const EMPTY_ARRAY = Object.freeze([]);
+const addressBookPeopleMapCache = new WeakMap();
+const REMEMBER_PEOPLE_TOUCH_MS = 15 * 60 * 1000;
+
+function getAddressBookPeopleMap(store) {
+  const people = Array.isArray(store?.addressBookPeople) ? store.addressBookPeople : EMPTY_ARRAY;
+  let cached = addressBookPeopleMapCache.get(people);
+  if (cached) return cached;
+  cached = new Map();
+  for (const person of people) cached.set(person.npub, person);
+  addressBookPeopleMapCache.set(people, cached);
+  return cached;
+}
+
 // ---------------------------------------------------------------------------
 // Mixin — methods and getters that use `this` (the Alpine store)
 // ---------------------------------------------------------------------------
@@ -78,7 +92,7 @@ export const peopleProfilesManagerMixin = {
 
   getCachedPerson(npub) {
     if (!npub) return null;
-    return this.addressBookPeople.find((person) => person.npub === npub) ?? null;
+    return getAddressBookPeopleMap(this).get(npub) ?? null;
   },
 
   getSenderName(npub) {
@@ -104,17 +118,42 @@ export const peopleProfilesManagerMixin = {
   // --- address book ---
 
   async rememberPeople(npubs = [], source = 'unknown') {
-    for (const npub of [...new Set(npubs.filter(Boolean))]) {
-      await upsertAddressBookPerson({
-        npub,
-        label: this.chatProfiles[npub]?.name ?? null,
-        avatar_url: this.chatProfiles[npub]?.picture ?? null,
-        source,
-        last_used_at: new Date().toISOString(),
-      });
+    const uniqueNpubs = [...new Set(npubs.filter(Boolean))];
+    if (uniqueNpubs.length === 0) return;
+
+    const existingPeople = getAddressBookPeopleMap(this);
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    let wroteAny = false;
+
+    for (const npub of uniqueNpubs) {
+      const existing = existingPeople.get(npub) ?? null;
+      const nextLabel = this.chatProfiles[npub]?.name ?? null;
+      const nextAvatar = this.chatProfiles[npub]?.picture ?? null;
+      const existingLastUsedAt = Date.parse(existing?.last_used_at || '');
+      const shouldTouchTimestamp = !Number.isFinite(existingLastUsedAt)
+        || (now - existingLastUsedAt) >= REMEMBER_PEOPLE_TOUCH_MS;
+      const shouldWrite = !existing
+        || (existing.label ?? null) !== nextLabel
+        || (existing.avatar_url ?? null) !== nextAvatar
+        || shouldTouchTimestamp;
+
+      if (shouldWrite) {
+        await upsertAddressBookPerson({
+          npub,
+          label: nextLabel,
+          avatar_url: nextAvatar,
+          source: existing?.source || source,
+          last_used_at: nowIso,
+        });
+        wroteAny = true;
+      }
       this.resolveChatProfile(npub);
     }
-    this.addressBookPeople = await getAddressBookPeople();
+
+    if (wroteAny) {
+      this.addressBookPeople = await getAddressBookPeople();
+    }
   },
 
   // --- people search / suggestions ---

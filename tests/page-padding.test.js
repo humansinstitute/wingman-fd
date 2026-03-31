@@ -64,9 +64,27 @@ describe('Flight Deck outer chrome — pinned to window edges', () => {
     expect(parsed.right).toBe('0');
   });
 
-  it('body still has max-width constraint', () => {
+  it('body does not center the shell with a max-width clamp', () => {
     const maxWidth = getPropertyValue('body', 'max-width');
-    expect(maxWidth).toBeTruthy();
+    if (maxWidth !== null) {
+      expect(maxWidth).toBe('none');
+    }
+  });
+
+  it('body does not use auto horizontal margins', () => {
+    const margin = getPropertyValue('body', 'margin');
+    const marginLeft = getPropertyValue('body', 'margin-left');
+    const marginRight = getPropertyValue('body', 'margin-right');
+
+    if (margin !== null) {
+      expect(margin).not.toMatch(/\bauto\b/);
+    }
+    if (marginLeft !== null) {
+      expect(marginLeft).not.toBe('auto');
+    }
+    if (marginRight !== null) {
+      expect(marginRight).not.toBe('auto');
+    }
   });
 
   it('body still has vertical padding for top/bottom spacing', () => {

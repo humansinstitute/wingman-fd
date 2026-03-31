@@ -89,6 +89,7 @@ export const connectSettingsManagerMixin = {
       const workspace = workspaceFromToken(token, { name: 'Imported workspace' });
       if (workspace) {
         this.mergeKnownWorkspaces([workspace]);
+        this.selectedWorkspaceKey = workspace.workspaceKey || '';
         this.currentWorkspaceOwnerNpub = workspace.workspaceOwnerNpub;
         this.ownerNpub = workspace.workspaceOwnerNpub;
       } else {
@@ -104,8 +105,8 @@ export const connectSettingsManagerMixin = {
     localStorage.setItem('use_cvm_sync', this.useCvmSync ? 'true' : 'false');
     await this.saveSettings();
     this.showAvatarMenu = false;
-    if (this.currentWorkspaceOwnerNpub) {
-      await this.selectWorkspace(this.currentWorkspaceOwnerNpub);
+    if (this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub) {
+      await this.selectWorkspace(this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub);
     }
   },
 
@@ -256,8 +257,9 @@ export const connectSettingsManagerMixin = {
     });
     if (!workspace) return;
     this.mergeKnownWorkspaces([workspace]);
+    this.selectedWorkspaceKey = workspace.workspaceKey || '';
     this.showConnectModal = false;
-    await this.selectWorkspace(workspace.workspaceOwnerNpub);
+    await this.selectWorkspace(workspace.workspaceKey || workspace.workspaceOwnerNpub);
   },
 
   async connectCreateWorkspace() {
@@ -292,7 +294,7 @@ export const connectSettingsManagerMixin = {
       });
       this.mergeKnownWorkspaces([workspace]);
       this.showConnectModal = false;
-      await this.selectWorkspace(workspace.workspaceOwnerNpub);
+      await this.selectWorkspace(workspace.workspaceKey || workspace.workspaceOwnerNpub);
     } catch (error) {
       this.connectWorkspacesError = error?.message || 'Failed to create workspace';
     } finally {

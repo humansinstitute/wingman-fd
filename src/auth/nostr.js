@@ -290,6 +290,7 @@ export async function createNip98AuthHeader(url, method, body = null) {
     }
     if (!secret) throw new Error('No secret key available for NIP-98 auth.');
     const signedEvent = finalizeEvent(eventTemplate, secret);
+    await refreshCredentialExpiry();
     return `Nostr ${btoa(JSON.stringify(signedEvent))}`;
   }
 
@@ -309,6 +310,7 @@ export async function createNip98AuthHeader(url, method, body = null) {
       throw new Error('NIP-07 signer returned a different pubkey than the active session. Sign in again.');
     }
     setMemoryPubkey(pubkey);
+    await refreshCredentialExpiry();
     return `Nostr ${btoa(JSON.stringify(signedEvent))}`;
   }
 
@@ -327,6 +329,7 @@ export async function createNip98AuthHeader(url, method, body = null) {
     }
 
     const signedEvent = await signer.signEvent(eventTemplate);
+    await refreshCredentialExpiry();
     return `Nostr ${btoa(JSON.stringify(signedEvent))}`;
   }
 

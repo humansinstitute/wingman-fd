@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeWorkspaceEntries, normalizeWorkspaceEntry, workspaceFromToken } from '../src/workspaces.js';
+import {
+  buildWorkspaceKey,
+  findWorkspaceByKey,
+  mergeWorkspaceEntries,
+  normalizeWorkspaceEntry,
+  workspaceFromToken,
+} from '../src/workspaces.js';
+
+describe('workspace identity keys', () => {
+  it('prefers service_npub when building workspace keys', () => {
+    expect(buildWorkspaceKey({
+      workspaceOwnerNpub: 'npub1workspace',
+      serviceNpub: 'npub1service',
+      directHttpsUrl: 'https://sb.example',
+    })).toBe('service:npub1service::workspace:npub1workspace');
+  });
+
+  it('falls back to url-scoped keys when service_npub is missing', () => {
+    expect(buildWorkspaceKey({
+      workspaceOwnerNpub: 'npub1workspace',
+      directHttpsUrl: 'https://sb.example/',
+    })).toBe('url:https://sb.example::workspace:npub1workspace');
+  });
+});
 
 describe('workspace entry normalization', () => {
   it('keeps missing names empty so placeholders stay render-only', () => {
@@ -49,6 +72,7 @@ describe('workspace entry normalization', () => {
     });
 
     expect(workspace).toMatchObject({
+      workspaceKey: 'service:npub1service::workspace:npub1workspace',
       workspaceOwnerNpub: 'npub1workspace',
       directHttpsUrl: 'https://sb4.otherstuff.studio',
       serviceNpub: 'npub1service',
@@ -84,6 +108,68 @@ describe('workspace entry normalization', () => {
       avatarUrl: 'storage://avatar-1',
       directHttpsUrl: 'https://tower.example',
     });
+  });
+
+  it('keeps distinct entries for the same workspace pubkey on different services', () => {
+    const merged = mergeWorkspaceEntries([], [
+      {
+        workspace_owner_npub: 'npub1workspace',
+        direct_https_url: 'https://sb4.otherstuff.ai',
+        service_npub: 'npub1servicea',
+        name: 'Other Stuff',
+      },
+      {
+        workspace_owner_npub: 'npub1workspace',
+        direct_https_url: 'https://sb4.otherstuff.studio',
+        service_npub: 'npub1serviceb',
+        name: 'Other Stuff',
+      },
+    ]);
+
+    expect(merged).toHaveLength(2);
+    expect(merged.map((entry) => entry.workspaceKey).sort()).toEqual([
+      'service:npub1servicea::workspace:npub1workspace',
+      'service:npub1serviceb::workspace:npub1workspace',
+    ]);
+  });
+
+  it('keeps distinct legacy entries for the same workspace pubkey when neither side has a service key', () => {
+    const merged = mergeWorkspaceEntries([], [
+      {
+        workspace_owner_npub: 'npub1workspace',
+        direct_https_url: 'https://sb4.otherstuff.ai',
+        name: 'Other Stuff',
+      },
+      {
+        workspace_owner_npub: 'npub1workspace',
+        direct_https_url: 'https://sb4.otherstuff.studio',
+        name: 'Other Stuff',
+      },
+    ]);
+
+    expect(merged).toHaveLength(2);
+    expect(merged.map((entry) => entry.workspaceKey).sort()).toEqual([
+      'url:https://sb4.otherstuff.ai::workspace:npub1workspace',
+      'url:https://sb4.otherstuff.studio::workspace:npub1workspace',
+    ]);
+  });
+
+  it('finds a workspace by composite workspace key', () => {
+    const workspaces = mergeWorkspaceEntries([], [
+      {
+        workspace_owner_npub: 'npub1workspace',
+        direct_https_url: 'https://sb4.otherstuff.ai',
+        service_npub: 'npub1servicea',
+      },
+      {
+        workspace_owner_npub: 'npub1workspace',
+        direct_https_url: 'https://sb4.otherstuff.studio',
+        service_npub: 'npub1serviceb',
+      },
+    ]);
+
+    const found = findWorkspaceByKey(workspaces, 'service:npub1serviceb::workspace:npub1workspace');
+    expect(found?.directHttpsUrl).toBe('https://sb4.otherstuff.studio');
   });
 
   it('applies explicit clears from workspace settings payloads without wiping other fields', () => {

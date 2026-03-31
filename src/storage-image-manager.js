@@ -12,6 +12,9 @@ import {
 } from './db.js';
 import { downloadStorageObjectBlob } from './api.js';
 import { storageImageCacheKey } from './utils/state-helpers.js';
+import { flightDeckLog } from './logging.js';
+
+const STORAGE_IMAGE_FAILURE_TTL_MS = 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Mixin — methods that use `this` (the Alpine store)
@@ -35,6 +38,7 @@ export const storageImageManagerMixin = {
     }
     this.storageImageUrlCache = {};
     this.storageImageLoadPromises = {};
+    this.storageImageFailureCache = {};
   },
 
   rememberStorageImageUrl(cacheKey, url) {
@@ -46,7 +50,40 @@ export const storageImageManagerMixin = {
       ...(this.storageImageUrlCache || {}),
       [cacheKey]: url,
     };
+    if (this.storageImageFailureCache?.[cacheKey]) {
+      const nextFailures = { ...(this.storageImageFailureCache || {}) };
+      delete nextFailures[cacheKey];
+      this.storageImageFailureCache = nextFailures;
+    }
     return url;
+  },
+
+  getStorageImageFailure(cacheKey) {
+    const entry = this.storageImageFailureCache?.[cacheKey] || null;
+    if (!entry) return null;
+    if ((Date.now() - Number(entry.ts || 0)) > STORAGE_IMAGE_FAILURE_TTL_MS) {
+      const nextFailures = { ...(this.storageImageFailureCache || {}) };
+      delete nextFailures[cacheKey];
+      this.storageImageFailureCache = nextFailures;
+      return null;
+    }
+    return entry;
+  },
+
+  rememberStorageImageFailure(cacheKey, objectId, error, options = {}) {
+    const message = error instanceof Error ? error.message : String(error);
+    const entry = {
+      ts: Date.now(),
+      objectId,
+      backendUrl: String(options?.backendUrl || '').trim(),
+      error: message,
+    };
+    this.storageImageFailureCache = {
+      ...(this.storageImageFailureCache || {}),
+      [cacheKey]: entry,
+    };
+    flightDeckLog('warn', 'storage', 'storage image fetch failed; suppressing retries temporarily', entry);
+    return entry;
   },
 
   async resolveStorageImageUrl(objectId, options = {}) {
@@ -54,6 +91,11 @@ export const storageImageManagerMixin = {
     const cacheKey = storageImageCacheKey(objectId, backendUrl);
     const existing = this.storageImageUrlCache?.[cacheKey];
     if (existing) return existing;
+
+    const previousFailure = this.getStorageImageFailure(cacheKey);
+    if (previousFailure) {
+      throw new Error(previousFailure.error || `Storage image ${objectId} unavailable`);
+    }
 
     const pending = this.storageImageLoadPromises?.[cacheKey];
     if (pending) return pending;
@@ -86,13 +128,18 @@ export const storageImageManagerMixin = {
       return this.rememberStorageImageUrl(cacheKey, URL.createObjectURL(blob));
     })();
 
+    const guardedPromise = loadPromise.catch((error) => {
+      this.rememberStorageImageFailure(cacheKey, objectId, error, { backendUrl });
+      throw error;
+    });
+
     this.storageImageLoadPromises = {
       ...(this.storageImageLoadPromises || {}),
-      [cacheKey]: loadPromise,
+      [cacheKey]: guardedPromise,
     };
 
     try {
-      return await loadPromise;
+      return await guardedPromise;
     } finally {
       const next = { ...(this.storageImageLoadPromises || {}) };
       delete next[cacheKey];
