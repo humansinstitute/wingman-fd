@@ -288,6 +288,7 @@ export function initApp() {
     boardPickerQuery: '',
     showBoardDescendantTasks: false,
     taskViewMode: 'kanban',
+    collapsedSections: {},
     taskBoardScopeSetupInFlight: false,
     newTaskTitle: '',
     newSubtaskTitle: '',
@@ -1036,6 +1037,7 @@ export function initApp() {
         await this.refreshGroups();
         this.runAccessPruneOnLogin().catch(() => {}); // fire-and-forget; non-blocking
         this.selectedBoardId = this.readStoredTaskBoardId();
+        this.collapsedSections = this.readStoredCollapsedSections();
         this.validateSelectedBoardId();
         await this.refreshAddressBook();
         await this.refreshChannels();
