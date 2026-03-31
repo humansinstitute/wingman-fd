@@ -29,6 +29,7 @@ import { resolveChannelLabel } from './channel-labels.js';
 import { buildFlightDeckDocumentTitle } from './page-title.js';
 import { getRunningBuildId } from './version-check.js';
 import { filterDocItemsByScope } from './docs-scope-filter.js';
+import { sectionLiveQueryMixin } from './section-live-queries.js';
 import {
   CALENDAR_VIEWS,
   buildTaskCalendar,
@@ -70,6 +71,7 @@ import {
   getAudioNotesByOwner,
   getDocumentsByOwner,
   getReportsByOwner,
+  getReportById,
   upsertDocument,
   getDocumentById,
   getDirectoriesByOwner,
@@ -188,8 +190,8 @@ export function initApp() {
     ? { section: 'status' }
     : parseRouteLocation();
   const storeObj = {
-    FAST_SYNC_MS: 1000,
-    IDLE_SYNC_MS: 10000,
+    FAST_SYNC_MS: 15000,
+    IDLE_SYNC_MS: 30000,
     BACKGROUND_GROUP_REFRESH_MS: 5 * 60 * 1000,
     MAIN_FEED_PAGE_SIZE: 80,
     MESSAGE_PREVIEW_MAX_LINES: 15,
@@ -253,6 +255,7 @@ export function initApp() {
     backgroundSyncTimer: null,
     backgroundSyncInFlight: false,
     syncBackoffMs: 0,
+    hasBootstrappedUnreadTracking: false,
     visibilityHandler: null,
     lastGroupsRefreshAt: 0,
     docConnectorFrame: null,
@@ -261,11 +264,6 @@ export function initApp() {
     chatFeedScrollFrame: null,
     threadRepliesScrollFrame: null,
     chatPreviewMeasureFrame: null,
-    sharedLiveSubscriptions: [],
-    workspaceLiveSubscriptions: [],
-    channelLiveSubscription: null,
-    taskCommentsLiveSubscription: null,
-    docCommentsLiveSubscription: null,
     docCommentBackfillAttemptsByDocId: {},
     pendingChatScrollToLatest: false,
     pendingThreadScrollToLatest: false,
@@ -1081,37 +1079,46 @@ export function initApp() {
         this.openConnectModal();
       }
       if (this.selectedWorkspaceKey) {
-        await this.refreshGroups();
-        this.runAccessPruneOnLogin().catch(() => {}); // fire-and-forget; non-blocking
-        this.selectedBoardId = this.readStoredTaskBoardId();
-        this.validateSelectedBoardId();
-        await this.refreshAddressBook();
-        await this.refreshChannels();
-        await this.refreshAudioNotes();
-        await this.refreshDirectories();
-        await this.refreshDocuments();
-        await this.refreshReports();
-        await this.refreshScopes();
-        await this.refreshTasks();
-        await this.refreshSchedules();
-        await this.ensureTaskBoardScopeSetup();
-        await this.applyRouteFromLocation();
-        if (this.navSection === 'chat' && this.selectedChannelId) {
-          this.scheduleChatFeedScrollToBottom();
-        }
-        await this.refreshSyncStatus();
-        await this.refreshStatusRecentChanges();
-        if (this.defaultAgentNpub) this.resolveChatProfile(this.defaultAgentNpub);
+        await this.bootstrapSelectedWorkspace({ runAccessPrune: true });
       }
       this.pendingInviteToken = null; // invite bootstrap complete
       this.routeSyncPaused = false; // unpause route sync after init (no-op if applyRouteFromLocation already unpaused)
     },
 
+    async bootstrapSelectedWorkspace(options = {}) {
+      if (!this.selectedWorkspaceKey && !this.currentWorkspaceOwnerNpub) return;
+      await this.refreshGroups();
+      if (options.runAccessPrune === true) {
+        this.runAccessPruneOnLogin().catch(() => {});
+      }
+      this.selectedBoardId = this.readStoredTaskBoardId();
+      this.validateSelectedBoardId();
+      await this.applyRouteFromLocation();
+      await this.refreshSyncStatus();
+      if (this.navSection === 'status') {
+        await this.refreshStatusRecentChanges({ force: true });
+      }
+      if (this.navSection === 'chat' && this.selectedChannelId) {
+        this.scheduleChatFeedScrollToBottom();
+      }
+      if (this.defaultAgentNpub) this.resolveChatProfile(this.defaultAgentNpub);
+    },
+
     createLiveSubscription(query, onNext) {
+      let pending = null;
+      let rafId = null;
       return liveQuery(query).subscribe({
         next: (value) => {
-          Promise.resolve(onNext(value)).catch((error) => {
-            console.error('Live query update failed:', error?.message || error);
+          // Coalesce rapid-fire Dexie notifications into one callback per frame
+          pending = value;
+          if (rafId != null) return;
+          rafId = requestAnimationFrame(() => {
+            rafId = null;
+            const current = pending;
+            pending = null;
+            Promise.resolve(onNext(current)).catch((error) => {
+              console.error('Live query update failed:', error?.message || error);
+            });
           });
         },
         error: (error) => {
@@ -1127,166 +1134,6 @@ export function initApp() {
       } catch {
         /* ignore */
       }
-    },
-
-    stopSharedLiveQueries() {
-      for (const subscription of this.sharedLiveSubscriptions) {
-        this.stopLiveSubscription(subscription);
-      }
-      this.sharedLiveSubscriptions = [];
-    },
-
-    stopWorkspaceLiveQueries() {
-      for (const subscription of this.workspaceLiveSubscriptions) {
-        this.stopLiveSubscription(subscription);
-      }
-      this.workspaceLiveSubscriptions = [];
-      this.stopSelectedChannelLiveQuery();
-      this.stopTaskCommentsLiveQuery();
-      this.stopDocCommentsLiveQuery();
-      this.teardownUnreadTracking();
-    },
-
-    stopSelectedChannelLiveQuery() {
-      this.stopLiveSubscription(this.channelLiveSubscription);
-      this.channelLiveSubscription = null;
-    },
-
-    stopTaskCommentsLiveQuery() {
-      this.stopLiveSubscription(this.taskCommentsLiveSubscription);
-      this.taskCommentsLiveSubscription = null;
-    },
-
-    stopDocCommentsLiveQuery() {
-      this.stopLiveSubscription(this.docCommentsLiveSubscription);
-      this.docCommentsLiveSubscription = null;
-    },
-
-    stopAllLiveQueries() {
-      this.stopSharedLiveQueries();
-      this.stopWorkspaceLiveQueries();
-    },
-
-    startSharedLiveQueries() {
-      if (this.sharedLiveSubscriptions.length > 0) return;
-      this.sharedLiveSubscriptions = [
-        this.createLiveSubscription(
-          () => getAddressBookPeople(),
-          (people) => this.applyAddressBookPeople(people),
-        ),
-      ];
-    },
-
-    startWorkspaceLiveQueries() {
-      this.stopWorkspaceLiveQueries();
-      const ownerNpub = this.workspaceOwnerNpub;
-      if (!ownerNpub) return;
-
-      this.workspaceLiveSubscriptions = [
-        this.createLiveSubscription(
-          () => getChannelsByOwner(ownerNpub),
-          (channels) => this.applyChannels(channels),
-        ),
-        this.createLiveSubscription(
-          () => getAudioNotesByOwner(ownerNpub),
-          (audioNotes) => this.applyAudioNotes(audioNotes),
-        ),
-        this.createLiveSubscription(
-          () => getDirectoriesByOwner(ownerNpub),
-          (directories) => this.applyDirectories(directories),
-        ),
-        this.createLiveSubscription(
-          () => getDocumentsByOwner(ownerNpub),
-          (documents) => this.applyDocuments(documents),
-        ),
-        this.createLiveSubscription(
-          () => getReportsByOwner(ownerNpub),
-          (reports) => this.applyReports(reports),
-        ),
-        this.createLiveSubscription(
-          () => getTasksByOwner(ownerNpub),
-          (tasks) => this.applyTasks(tasks),
-        ),
-        this.createLiveSubscription(
-          () => getSchedulesByOwner(ownerNpub),
-          (schedules) => this.applySchedules(schedules),
-        ),
-        this.createLiveSubscription(
-          () => getScopesByOwner(ownerNpub),
-          (scopes) => this.applyScopes(scopes),
-        ),
-      ];
-
-      this.startSelectedChannelLiveQuery();
-      this.initUnreadTracking();
-    },
-
-    startSelectedChannelLiveQuery() {
-      this.stopSelectedChannelLiveQuery();
-
-      const workspaceOwnerNpub = this.workspaceOwnerNpub;
-      const channelId = this.selectedChannelId;
-
-      if (!workspaceOwnerNpub || !channelId) {
-        this.applyMessages([], { scrollToLatest: false });
-        return;
-      }
-
-      this.channelLiveSubscription = this.createLiveSubscription(
-        () => getMessagesByChannel(channelId),
-        (messages) => {
-          if (this.workspaceOwnerNpub !== workspaceOwnerNpub || this.selectedChannelId !== channelId) return;
-          return this.applyMessages(messages);
-        },
-      );
-    },
-
-    startTaskCommentsLiveQuery() {
-      this.stopTaskCommentsLiveQuery();
-
-      const workspaceOwnerNpub = this.workspaceOwnerNpub;
-      const taskId = this.activeTaskId;
-
-      if (!workspaceOwnerNpub || !taskId) {
-        this.applyTaskComments([]);
-        return;
-      }
-
-      this.taskCommentsLiveSubscription = this.createLiveSubscription(
-        () => getCommentsByTarget(taskId),
-        (comments) => {
-          if (this.workspaceOwnerNpub !== workspaceOwnerNpub || this.activeTaskId !== taskId) return;
-          return this.applyTaskComments(comments);
-        },
-      );
-    },
-
-    startDocCommentsLiveQuery(docId = this.selectedDocId) {
-      this.stopDocCommentsLiveQuery();
-
-      const workspaceOwnerNpub = this.workspaceOwnerNpub;
-      const targetDocId = String(docId || '').trim();
-      const documentFamilyHash = recordFamilyHash('document');
-
-      if (!workspaceOwnerNpub || !targetDocId || this.selectedDocType !== 'document') {
-        this.applyDocComments([]);
-        return;
-      }
-
-      this.docCommentsLiveSubscription = this.createLiveSubscription(
-        async () => {
-          const comments = await getCommentsByTarget(targetDocId);
-          return comments.filter((comment) => comment.target_record_family_hash === documentFamilyHash);
-        },
-        (comments) => {
-          if (
-            this.workspaceOwnerNpub !== workspaceOwnerNpub
-            || this.selectedDocType !== 'document'
-            || this.selectedDocId !== targetDocId
-          ) return;
-          return this.applyDocComments(comments, { docId: targetDocId, allowBackfill: true });
-        },
-      );
     },
 
     initRouteSync() {
@@ -1521,6 +1368,7 @@ export function initApp() {
       } finally {
         this.routeSyncPaused = false;
       }
+      this.startWorkspaceLiveQueries();
       this.syncRoute(true);
     },
 
@@ -1598,17 +1446,10 @@ export function initApp() {
           this.selectedWorkspaceKey = this.knownWorkspaces[0].workspaceKey || '';
           this.currentWorkspaceOwnerNpub = this.knownWorkspaces[0].workspaceOwnerNpub;
         }
-        if (this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub) {
-          await this.selectWorkspace(this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub, { refresh: false });
-          await this.refreshGroups();
-          await this.refreshChannels();
-          await this.refreshSyncStatus();
-        }
         this.updateWorkspaceBootstrapPrompt();
         if (!this.backendUrl || !this.selectedWorkspaceKey) {
           this.openConnectModal();
         }
-        this.ensureBackgroundSync(true);
       } catch (error) {
         this.loginError = error.message;
       }
@@ -1648,9 +1489,7 @@ export function initApp() {
         await this.persistWorkspaceSettings();
 
         if (this.selectedWorkspaceKey) {
-          await this.refreshGroups();
-          await this.refreshChannels();
-          await this.refreshSyncStatus();
+          await this.bootstrapSelectedWorkspace({ runAccessPrune: true });
         }
         this.updateWorkspaceBootstrapPrompt();
         if (!this.backendUrl || !this.selectedWorkspaceKey) {
@@ -1710,6 +1549,7 @@ export function initApp() {
       this.workspaceSettingsGroupIds = [];
       this.workspaceHarnessUrl = '';
       this.revokeWorkspaceAvatarPreviewObjectUrl();
+      this.hasBootstrappedUnreadTracking = false;
       this.workspaceProfileNameInput = '';
       this.workspaceProfileSlugInput = '';
       this.workspaceProfileDescriptionInput = '';
@@ -1764,7 +1604,38 @@ export function initApp() {
       this.showChannelSettingsModal = false;
     },
 
+    // Release domain arrays for sections the user is leaving.
+    // Keeps memory stable by not accumulating all sections simultaneously.
+    // Data is re-fetched via liveQuery when navigating back.
+    clearInactiveSectionData(activeSection) {
+      if (activeSection !== 'chat') {
+        this.messages = [];
+        this.audioNotes = [];
+      }
+      if (activeSection !== 'tasks' && activeSection !== 'calendar') {
+        this.tasks = [];
+        this.taskComments = [];
+        this.editingTask = null;
+        this.showTaskDetail = false;
+      }
+      if (activeSection !== 'docs') {
+        this.documents = [];
+        this.directories = [];
+        this.docComments = [];
+      }
+      if (activeSection !== 'reports' && activeSection !== 'status') {
+        this.reports = [];
+      }
+      if (activeSection !== 'schedules' && activeSection !== 'calendar') {
+        this.schedules = [];
+      }
+      if (activeSection !== 'status') {
+        this.statusRecentChanges = [];
+      }
+    },
+
     navigateTo(section, options = {}) {
+      this.clearInactiveSectionData(section);
       this.navSection = section;
       this.mobileNavOpen = false;
       this.showWorkspaceSwitcherMenu = false;
@@ -1794,12 +1665,13 @@ export function initApp() {
         }
       }
       if (section === 'status') {
-        this.refreshStatusRecentChanges();
+        this.refreshStatusRecentChanges({ force: true });
       }
       if (section === 'reports' && !this.selectedReportId) {
         this.selectedReportId = this.selectedReport?.record_id || null;
       }
       if (options.syncRoute !== false) this.syncRoute();
+      this.startWorkspaceLiveQueries();
       this.ensureBackgroundSync(true);
     },
 
@@ -1839,6 +1711,17 @@ export function initApp() {
       this.applyDocuments(await getDocumentsByOwner(ownerNpub));
     },
 
+    applySelectedDocument(document = null) {
+      const recordId = String(this.selectedDocId || '').trim();
+      if (!recordId) return;
+      const nextDocuments = this.documents.filter((item) => item?.record_id !== recordId);
+      if (document && document.record_state !== 'deleted') {
+        nextDocuments.push(document);
+      }
+      this.applyDocuments(nextDocuments);
+      this.loadDocEditorFromSelection();
+    },
+
     async applyReports(reports = []) {
       const nextReports = Array.isArray(reports) ? reports : [];
       if (!sameListBySignature(this.reports, nextReports, (report) => [
@@ -1853,6 +1736,16 @@ export function initApp() {
       if (this.selectedReportId && !this.reports.some((report) => report?.record_id === this.selectedReportId)) {
         this.selectedReportId = null;
       }
+    },
+
+    async applySelectedReport(report = null) {
+      const recordId = String(this.selectedReportId || '').trim();
+      if (!recordId) return;
+      const nextReports = this.reports.filter((item) => item?.record_id !== recordId);
+      if (report && report.record_state !== 'deleted') {
+        nextReports.push(report);
+      }
+      await this.applyReports(nextReports);
     },
 
     async refreshReports() {
@@ -2135,7 +2028,11 @@ export function initApp() {
       this.reportModalReport = null;
     },
 
-    async refreshStatusRecentChanges() {
+    async refreshStatusRecentChanges(options = {}) {
+      // Skip if not on status section (unless forced)
+      if (this.navSection !== 'status' && !options.force) return;
+      // Skip if we already have cached data and no new records were pulled
+      if (this.statusRecentChanges.length > 0 && !options.force && !options.hasNewData) return;
       const sinceIso = new Date(Date.now() - this.getStatusRangeMs()).toISOString();
       const messages = await getRecentChatMessagesSince(sinceIso);
       const documents = await getRecentDocumentChangesSince(sinceIso);
@@ -2289,6 +2186,7 @@ export function initApp() {
           this.persistSelectedBoardId(this.selectedBoardId);
           this.validateSelectedBoardId();
         }
+        this.startWorkspaceLiveQueries();
         this.syncRoute();
         if (item.recordId) this.openReportModalById(item.recordId);
         return;
@@ -2320,6 +2218,7 @@ export function initApp() {
       if (item.section === 'schedules') {
         this.navSection = 'schedules';
         this.mobileNavOpen = false;
+        this.startWorkspaceLiveQueries();
         if (item.recordId) this.startEditSchedule(item.recordId);
         else this.syncRoute();
         return;
@@ -2328,6 +2227,7 @@ export function initApp() {
       this.focusMessageId = item.focusRecordId ?? item.recordId ?? null;
       this.navSection = 'chat';
       this.mobileNavOpen = false;
+      this.startWorkspaceLiveQueries();
       if (item.channelId) {
         await this.selectChannel(item.channelId, { scrollToLatest: false });
       }
@@ -2399,9 +2299,12 @@ export function initApp() {
       ].join('|'))) {
         this.tasks = normalizedTasks;
       }
+      // Resolve assignee profiles for display but do NOT write back to
+      // Dexie (address book) from a liveQuery handler — that creates a
+      // reactive cascade.  Profile resolution is fire-and-forget here.
       const assignedNpubs = [...new Set(normalizedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
-      if (assignedNpubs.length > 0) {
-        await this.rememberPeople(assignedNpubs, 'task-assignee');
+      for (const npub of assignedNpubs) {
+        this.resolveChatProfile(npub);
       }
       this.selectedTaskIds = this.selectedTaskIds.filter((taskId) =>
         normalizedTasks.some((task) => task.record_id === taskId && task.record_state !== 'deleted' && !this.isParentTask(taskId))
@@ -2414,6 +2317,32 @@ export function initApp() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
       await this.applyTasks(await getTasksByOwner(ownerNpub));
+    },
+
+    async applySelectedTask(task = null) {
+      const recordId = String(this.activeTaskId || '').trim();
+      if (!recordId) return;
+
+      const nextTasks = this.tasks.filter((item) => item?.record_id !== recordId);
+      if (task && task.record_state !== 'deleted') {
+        nextTasks.push(task);
+      }
+      await this.applyTasks(nextTasks);
+
+      if (this.activeTaskId !== recordId) return;
+      const selectedTask = this.tasks.find((item) => item.record_id === recordId) || null;
+      this.editingTask = selectedTask ? toRaw(selectedTask) : null;
+      if (this.editingTask) {
+        const hasStoredRefs = Array.isArray(this.editingTask.references) && this.editingTask.references.length > 0;
+        if (!hasStoredRefs && this.editingTask.description) {
+          this.editingTask.references = parseReferencesFromDescription(this.editingTask.description);
+        }
+      }
+      if (this.editingTask?.assigned_to_npub) {
+        this.resolveChatProfile(this.editingTask.assigned_to_npub);
+      }
+      this.showTaskDetail = Boolean(selectedTask);
+      this.taskDescriptionEditing = !this.editingTask?.description;
     },
 
     formatScheduleDays(days = []) {
@@ -3114,6 +3043,7 @@ export function initApp() {
       }
       this.navSection = 'tasks';
       this.mobileNavOpen = false;
+      this.startWorkspaceLiveQueries();
       this.openTaskDetail(taskId);
     },
 
@@ -3896,6 +3826,7 @@ export function initApp() {
       this.selectedDocCommentId = null;
       this.navSection = 'docs';
       this.mobileNavOpen = false;
+      this.startWorkspaceLiveQueries();
       this.loadDocEditorFromSelection();
       if (options.syncRoute !== false) this.syncRoute();
     },
@@ -4093,10 +4024,12 @@ export function initApp() {
       } else if (type === 'task') {
         this.navSection = 'tasks';
         this.mobileNavOpen = false;
+        this.startWorkspaceLiveQueries();
         this.$nextTick(() => this.openTaskDetail(id));
       } else if (type === 'scope') {
         this.navSection = 'scopes';
         this.mobileNavOpen = false;
+        this.startWorkspaceLiveQueries();
         this.$nextTick(() => {
           this.scopeNavFocus = id;
           document.getElementById('scope-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -4104,6 +4037,7 @@ export function initApp() {
       } else if (type === 'person') {
         this.navSection = 'people';
         this.mobileNavOpen = false;
+        this.startWorkspaceLiveQueries();
       }
     },
 
@@ -4455,6 +4389,7 @@ export function initApp() {
     jobsManagerMixin,
     audioRecordingManagerMixin,
     storageImageManagerMixin,
+    sectionLiveQueryMixin,
     unreadStoreMixin,
   );
 

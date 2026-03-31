@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchRecordHistory, syncRecords } from '../src/api.js';
-import { runSync } from '../src/worker/sync-worker.js';
+import {
+  pullRecordsForFamilies,
+  pruneOnLogin,
+  runSync,
+} from '../src/sync-worker-client.js';
 import { syncManagerMixin } from '../src/sync-manager.js';
 import { getSyncFamilyHash } from '../src/sync-families.js';
 
@@ -9,10 +13,30 @@ vi.mock('../src/api.js', () => ({
   syncRecords: vi.fn(),
 }));
 
-vi.mock('../src/worker/sync-worker.js', () => ({
+vi.mock('../src/db.js', () => ({
+  getPendingWrites: vi.fn(async () => []),
+  getPendingWritesByFamilies: vi.fn(async () => []),
+  removePendingWrite: vi.fn(async () => {}),
+  clearSyncState: vi.fn(async () => {}),
+  clearRuntimeFamilies: vi.fn(async () => {}),
+  clearSyncStateForFamilies: vi.fn(async () => {}),
+  getSyncQuarantineEntries: vi.fn(async () => []),
+  deleteSyncQuarantineEntry: vi.fn(async () => {}),
+  clearSyncQuarantineForFamilies: vi.fn(async () => {}),
+  deleteRuntimeRecordByFamily: vi.fn(async () => {}),
+  upsertTask: vi.fn(async () => {}),
+  upsertDocument: vi.fn(async () => {}),
+  upsertDirectory: vi.fn(async () => {}),
+  getCommentsByTarget: vi.fn(async () => []),
+  upsertComment: vi.fn(async () => {}),
+}));
+
+vi.mock('../src/sync-worker-client.js', () => ({
   runSync: vi.fn(),
   pullRecordsForFamilies: vi.fn(),
   pruneOnLogin: vi.fn(),
+  startWorkerFlushTimer: vi.fn(),
+  stopWorkerFlushTimer: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -423,7 +447,7 @@ describe('performSync', () => {
     const loadDocComments = vi.fn().mockResolvedValue(undefined);
     const refreshGroups = vi.fn().mockResolvedValue(undefined);
     const { fn } = bindMethod('performSync', {
-      session: { npub: 'npub1me' },
+      session: { npub: 'npub1me', method: 'extension' },
       backendUrl: 'https://backend.example.com',
       refreshGroups,
       refreshSyncStatus,
@@ -439,6 +463,16 @@ describe('performSync', () => {
     const result = await fn({ silent: true });
 
     expect(result).toEqual({ pushed: 0, pulled: 0, pruned: 0 });
+    expect(runSync).toHaveBeenCalledWith(
+      'npub1owner',
+      'npub1me',
+      expect.any(Function),
+      expect.objectContaining({
+        authMethod: 'extension',
+        backendUrl: 'https://backend.example.com',
+        workspaceDbKey: 'npub1owner',
+      }),
+    );
     expect(refreshGroups).toHaveBeenCalledWith({ minIntervalMs: 300000 });
     expect(refreshWorkspaceSettings).not.toHaveBeenCalled();
     expect(ensureTaskFamilyBackfill).not.toHaveBeenCalled();

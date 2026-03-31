@@ -224,8 +224,14 @@ export const chatMessageManagerMixin = {
       this.messages = nextMessages;
     }
 
-    for (const message of nextMessages) {
-      await this.rememberPeople([message.sender_npub], 'chat');
+    // Resolve sender profiles for display without writing back to Dexie.
+    // rememberPeople writes to the address book which triggers reactive
+    // cascades when called from a liveQuery handler.
+    if (typeof this.resolveChatProfile === 'function') {
+      const senderNpubs = [...new Set(nextMessages.map((m) => m.sender_npub).filter(Boolean))];
+      for (const npub of senderNpubs) {
+        this.resolveChatProfile(npub);
+      }
     }
 
     if (

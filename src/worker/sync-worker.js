@@ -1,22 +1,16 @@
 /**
- * Sync worker — runs on a timer or manual trigger.
+ * Sync execution module.
  *
- * Responsibilities:
- *  1. Flush pending_writes to the V4 backend via POST /api/v4/records/sync
- *  2. Pull new records from GET /api/v4/records
- *  3. Translate inbound records through chat translators
- *  4. Write materialized rows into Dexie
- *
- * Communication with the main thread is via postMessage / onmessage.
- *
- * NOTE: Because Dexie doesn't work inside a true Web Worker without
- * workarounds, this file is designed to be imported as a *module* by
- * the main thread and driven via a simple call interface.  A real
- * Web Worker upgrade can happen later.
+ * The real browser worker entrypoint lives in `sync-worker-runner.js`.
+ * This file keeps the sync/pull/prune logic testable and reusable from:
+ *   - the dedicated Web Worker
+ *   - Node-based unit tests
+ *   - the main-thread fallback path when workers are unavailable
  */
 
 import {
   openWorkspaceDb,
+  getWorkspaceDb,
   getPendingWrites,
   removePendingWrite,
   upsertWorkspaceSettings,
@@ -34,6 +28,8 @@ import {
   setSyncState,
   upsertSyncQuarantineEntry,
   deleteSyncQuarantineEntry,
+  getReadCursorsByKeys,
+  getReadCursorsByPrefix,
 } from '../db.js';
 
 import { syncRecords, fetchRecords, getBaseUrl, fetchRecordsSummary, fetchHeartbeat } from '../api.js';
@@ -378,6 +374,9 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, opt
     const pruneResult = pullResult.pulled > 0
       ? await maybePruneAfterSync(viewerNpub, ownerNpub)
       : { pruned: 0 };
+    if (pullResult.pulled > 0 || pruneResult.pruned > 0) {
+      await updateUnreadSummaries(viewerNpub);
+    }
     return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: true, staleFamilies: heartbeat.stale_families.length };
   }
 
@@ -389,7 +388,103 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, opt
   const pruneResult = pullResult.pulled > 0
     ? await maybePruneAfterSync(viewerNpub, ownerNpub)
     : { pruned: 0 };
+  if (pullResult.pulled > 0 || pruneResult.pruned > 0) {
+    await updateUnreadSummaries(viewerNpub);
+  }
   return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: false };
+}
+
+/**
+ * Compute unread summaries and store them in sync_state.
+ * Runs in the worker after a pull that fetched new records,
+ * so the main thread can read cheap pre-computed flags.
+ */
+async function updateUnreadSummaries(viewerNpub) {
+  if (!viewerNpub) return;
+  try {
+    const db = getWorkspaceDb();
+
+    // Load read cursors
+    const navRows = await getReadCursorsByKeys(viewerNpub, ['chat:nav', 'tasks:nav', 'docs:nav']);
+    const cursorMap = {};
+    for (const row of navRows) cursorMap[row.cursor_key] = row.read_until;
+
+    // Chat unread
+    const chatReadUntil = cursorMap['chat:nav'] || '1970-01-01T00:00:00.000Z';
+    const newestChatMsg = await db.chat_messages.where('updated_at').above(chatReadUntil).first();
+    const chatUnread = newestChatMsg != null && newestChatMsg.record_state !== 'deleted';
+
+    // Docs unread
+    const docsReadUntil = cursorMap['docs:nav'] || '1970-01-01T00:00:00.000Z';
+    const newestDoc = await db.documents.where('updated_at').above(docsReadUntil).first();
+    const docsUnread = newestDoc != null && newestDoc.record_state !== 'deleted';
+
+    // Tasks unread
+    const tasksNavReadUntil = cursorMap['tasks:nav'] || null;
+    let tasksUnread = false;
+    if (tasksNavReadUntil) {
+      const taskCursorRows = await getReadCursorsByPrefix(viewerNpub, 'tasks:item:');
+      const taskCursorMap = {};
+      for (const row of taskCursorRows) taskCursorMap[row.cursor_key] = row.read_until;
+
+      const allTasks = await db.tasks.toArray();
+      for (const task of allTasks) {
+        if (task.record_state === 'deleted') continue;
+        const itemKey = `tasks:item:${task.record_id}`;
+        const itemReadUntil = taskCursorMap[itemKey] || null;
+        let effective = tasksNavReadUntil;
+        if (itemReadUntil && itemReadUntil > effective) effective = itemReadUntil;
+        if (viewerNpub && task.owner_npub === viewerNpub && task.created_at && task.created_at > effective) {
+          effective = task.created_at;
+        }
+        if (task.updated_at > effective) {
+          tasksUnread = true;
+          break;
+        }
+      }
+    }
+
+    // Per-channel unread (batched)
+    const channelRows = await getReadCursorsByPrefix(viewerNpub, 'chat:channel:');
+    const channelCursorMap = {};
+    for (const row of channelRows) channelCursorMap[row.cursor_key] = row.read_until;
+
+    const channels = await db.channels.toArray();
+    const channelUnread = {};
+    if (channels.length > 0) {
+      let earliestCursor = chatReadUntil;
+      const perChannelCursors = {};
+      for (const ch of channels) {
+        if (ch.record_state === 'deleted') continue;
+        const chCursorKey = `chat:channel:${ch.record_id}`;
+        const chReadUntil = channelCursorMap[chCursorKey] || null;
+        const effective = (chReadUntil && chReadUntil > chatReadUntil) ? chReadUntil : chatReadUntil;
+        perChannelCursors[ch.record_id] = effective;
+        if (effective < earliestCursor) earliestCursor = effective;
+      }
+      const recentMsgs = await db.chat_messages.where('updated_at').above(earliestCursor).toArray();
+      for (const ch of channels) {
+        if (ch.record_state === 'deleted') continue;
+        const cursor = perChannelCursors[ch.record_id];
+        if (!cursor) continue;
+        channelUnread[ch.record_id] = recentMsgs.some(
+          (m) => m.channel_id === ch.record_id && m.updated_at > cursor && m.record_state !== 'deleted'
+        );
+      }
+    }
+
+    await setSyncState('unread_summary', {
+      chatUnread,
+      docsUnread,
+      tasksUnread,
+      channelUnread,
+      computedAt: Date.now(),
+    });
+  } catch (error) {
+    flightDeckLog('warn', 'sync', 'unread summary update failed', {
+      error: error?.message || String(error),
+    });
+  }
 }
 
 /**

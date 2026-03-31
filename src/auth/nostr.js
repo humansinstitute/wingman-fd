@@ -19,15 +19,20 @@ let memorySecret = null;
 let memoryPubkey = null;
 let memoryBunkerSigner = null;
 let memoryBunkerUri = null;
+let extensionSignerBridge = null;
 
 function extensionSignerReady() {
   return typeof window !== 'undefined'
-    && Boolean(window.nostr?.getPublicKey && window.nostr?.signEvent);
+    ? Boolean(window.nostr?.getPublicKey && window.nostr?.signEvent)
+      || Boolean(extensionSignerBridge?.getPublicKey && extensionSignerBridge?.signEvent)
+    : Boolean(extensionSignerBridge?.getPublicKey && extensionSignerBridge?.signEvent);
 }
 
 function extensionNip44Ready() {
   return typeof window !== 'undefined'
-    && Boolean(window.nostr?.nip44?.encrypt && window.nostr?.nip44?.decrypt);
+    ? Boolean(window.nostr?.nip44?.encrypt && window.nostr?.nip44?.decrypt)
+      || Boolean(extensionSignerBridge?.encrypt && extensionSignerBridge?.decrypt)
+    : Boolean(extensionSignerBridge?.encrypt && extensionSignerBridge?.decrypt);
 }
 
 export function hexToBytes(hex) {
@@ -102,12 +107,20 @@ function buildHttpAuthEvent(url, method, payloadHash) {
 }
 
 let nip07SignQueue = Promise.resolve();
+let extensionBridgeSignQueue = Promise.resolve();
 
 function serialNip07SignEvent(event) {
   nip07SignQueue = nip07SignQueue
     .then(() => window.nostr.signEvent(event))
     .catch(() => window.nostr.signEvent(event));
   return nip07SignQueue;
+}
+
+function serialBridgeSignEvent(event) {
+  extensionBridgeSignQueue = extensionBridgeSignQueue
+    .then(() => extensionSignerBridge.signEvent(event))
+    .catch(() => extensionSignerBridge.signEvent(event));
+  return extensionBridgeSignQueue;
 }
 
 async function sha256Hex(input) {
@@ -170,8 +183,40 @@ export function clearMemoryCredentials() {
   memoryBunkerUri = null;
 }
 
+export function setExtensionSignerBridge(bridge) {
+  if (bridge?.getPublicKey && bridge?.signEvent) {
+    extensionSignerBridge = bridge;
+    return;
+  }
+  extensionSignerBridge = null;
+}
+
+export function clearExtensionSignerBridge() {
+  extensionSignerBridge = null;
+}
+
 export function getPubkeyFromEvent(event) {
   return event?.pubkey ?? null;
+}
+
+export async function getExtensionPublicKey() {
+  if (typeof window !== 'undefined' && window.nostr?.getPublicKey) {
+    return window.nostr.getPublicKey();
+  }
+  if (extensionSignerBridge?.getPublicKey) {
+    return extensionSignerBridge.getPublicKey();
+  }
+  throw new Error('No NIP-07 browser extension found.');
+}
+
+export async function signEventWithExtension(event) {
+  if (typeof window !== 'undefined' && window.nostr?.signEvent) {
+    return serialNip07SignEvent(event);
+  }
+  if (extensionSignerBridge?.signEvent) {
+    return serialBridgeSignEvent(event);
+  }
+  throw new Error('No NIP-07 browser extension found.');
 }
 
 export async function pubkeyToNpub(pubkey) {
@@ -217,9 +262,9 @@ export async function signLoginEvent(method, supplemental = null) {
     if (!available) {
       throw new Error('No NIP-07 browser extension found.');
     }
-    const pubkey = await window.nostr.getPublicKey();
+    const pubkey = await getExtensionPublicKey();
     const event = { ...buildUnsignedEvent(method), pubkey };
-    const signedEvent = await window.nostr.signEvent(event);
+    const signedEvent = await signEventWithExtension(event);
     if (signedEvent?.pubkey !== pubkey) {
       throw new Error('NIP-07 signer pubkey changed during login. Sign in again.');
     }
@@ -299,13 +344,13 @@ export async function createNip98AuthHeader(url, method, body = null) {
     if (!available) {
       throw new Error('No NIP-07 browser extension found.');
     }
-    const currentPubkey = await window.nostr.getPublicKey();
+    const currentPubkey = await getExtensionPublicKey();
     const expectedPubkey = getMemoryPubkey() || creds.pubkey || currentPubkey;
     if (currentPubkey !== expectedPubkey) {
       throw new Error('NIP-07 signer pubkey changed since login. Sign in again.');
     }
     const pubkey = currentPubkey;
-    const signedEvent = await serialNip07SignEvent({ ...eventTemplate, pubkey });
+    const signedEvent = await signEventWithExtension({ ...eventTemplate, pubkey });
     if (signedEvent?.pubkey !== pubkey) {
       throw new Error('NIP-07 signer returned a different pubkey than the active session. Sign in again.');
     }
@@ -376,11 +421,28 @@ async function withAuthSecret() {
     const available = await waitForExtensionSigner();
     if (!available) throw new Error('No NIP-07 browser extension found.');
     if (!extensionNip44Ready()) throw new Error('NIP-07 signer does not expose NIP-44 encryption.');
+    const pubkeyHex = getMemoryPubkey() || creds.pubkey || await getExtensionPublicKey();
+    if (typeof window !== 'undefined' && window.nostr?.nip44?.encrypt && window.nostr?.nip44?.decrypt) {
+      return {
+        method: 'extension',
+        pubkeyHex,
+        encrypt: async (peerPubkeyHex, plaintext) => window.nostr.nip44.encrypt(peerPubkeyHex, plaintext),
+        decrypt: async (peerPubkeyHex, ciphertext) => window.nostr.nip44.decrypt(peerPubkeyHex, ciphertext),
+      };
+    }
+    if (extensionSignerBridge?.encrypt && extensionSignerBridge?.decrypt) {
+      return {
+        method: 'extension',
+        pubkeyHex,
+        encrypt: async (peerPubkeyHex, plaintext) => extensionSignerBridge.encrypt(peerPubkeyHex, plaintext),
+        decrypt: async (peerPubkeyHex, ciphertext) => extensionSignerBridge.decrypt(peerPubkeyHex, ciphertext),
+      };
+    }
     return {
       method: 'extension',
-      pubkeyHex: getMemoryPubkey() || creds.pubkey || await window.nostr.getPublicKey(),
-      encrypt: async (pubkeyHex, plaintext) => window.nostr.nip44.encrypt(pubkeyHex, plaintext),
-      decrypt: async (pubkeyHex, ciphertext) => window.nostr.nip44.decrypt(pubkeyHex, ciphertext),
+      pubkeyHex,
+      encrypt: async (peerPubkeyHex, plaintext) => window.nostr.nip44.encrypt(peerPubkeyHex, plaintext),
+      decrypt: async (peerPubkeyHex, ciphertext) => window.nostr.nip44.decrypt(peerPubkeyHex, ciphertext),
     };
   }
 
@@ -456,8 +518,9 @@ export async function tryAutoLoginFromStorage() {
 
   if (creds.method === 'extension') {
     const available = await waitForExtensionSigner(1500, 120);
-    if (!available || !window.nostr?.getPublicKey) return null;
-    const extensionPubkey = await window.nostr.getPublicKey();
+    if (!available) return null;
+    const extensionPubkey = await getExtensionPublicKey().catch(() => null);
+    if (!extensionPubkey) return null;
     if (extensionPubkey !== creds.pubkey) return null;
     setMemoryPubkey(creds.pubkey);
     await refreshCredentialExpiry();

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = {
   pending: [],
@@ -37,6 +37,7 @@ vi.mock('../src/api.js', () => ({
   }),
   fetchRecords: vi.fn(async () => ({ records: [] })),
   fetchRecordsSummary: vi.fn(async () => state.summaryResponse ?? { available: false, families: [] }),
+  fetchHeartbeat: vi.fn(async () => ({ available: false, families: [] })),
 }));
 
 describe('sync worker pending write batching', () => {
@@ -166,5 +167,258 @@ describe('staleness check', () => {
     const { checkStaleness } = await import('../src/worker/sync-worker.js');
     const result = await checkStaleness('npub-owner');
     expect(result).toEqual({ stale: false, available: true });
+  });
+});
+
+describe('sync worker client bridge', () => {
+  let originalWorker;
+  let originalNostr;
+
+  beforeEach(() => {
+    originalWorker = globalThis.Worker;
+    originalNostr = globalThis.window?.nostr;
+  });
+
+  afterEach(() => {
+    if (originalWorker === undefined) {
+      delete globalThis.Worker;
+    } else {
+      globalThis.Worker = originalWorker;
+    }
+    if (globalThis.window) {
+      if (originalNostr === undefined) {
+        delete globalThis.window.nostr;
+      } else {
+        globalThis.window.nostr = originalNostr;
+      }
+    }
+    vi.resetModules();
+  });
+
+  it('boots a browser worker and routes progress and results through the protocol', async () => {
+    const workerInstances = [];
+
+    class MockWorker {
+      constructor(url, options) {
+        this.url = String(url);
+        this.options = options;
+        this.onmessage = null;
+        this.onerror = null;
+        this.terminated = false;
+        this.lastMessage = null;
+        workerInstances.push(this);
+      }
+
+      addEventListener(type, handler) {
+        if (type === 'message') this.onmessage = handler;
+        if (type === 'error' || type === 'messageerror') this.onerror = handler;
+      }
+
+      removeEventListener() {}
+
+      terminate() {
+        this.terminated = true;
+      }
+
+      postMessage(message) {
+        this.lastMessage = message;
+        Promise.resolve().then(() => {
+          if (message.method === 'runSync') {
+            this.onmessage?.({
+              data: {
+                type: 'sync-worker:progress',
+                id: message.id,
+                update: { phase: 'checking' },
+              },
+            });
+            this.onmessage?.({
+              data: {
+                type: 'sync-worker:progress',
+                id: message.id,
+                update: { phase: 'applying' },
+              },
+            });
+            this.onmessage?.({
+              data: {
+                type: 'sync-worker:response',
+                id: message.id,
+                ok: true,
+                value: { pushed: 7, pulled: 2, pruned: 0 },
+              },
+            });
+          }
+        });
+      }
+    }
+
+    globalThis.Worker = MockWorker;
+    vi.resetModules();
+
+    const { primeSyncWorker, runSync } = await import('../src/sync-worker-client.js');
+    expect(primeSyncWorker()).toBe(true);
+    expect(workerInstances).toHaveLength(1);
+    expect(workerInstances[0].url).toContain('sync-worker-runner.js');
+    expect(workerInstances[0].options).toEqual({ type: 'module' });
+
+    const updates = [];
+    const result = await runSync('npub-owner', 'npub-viewer', (update) => updates.push(update), {
+      authMethod: 'secret',
+      backendUrl: 'https://backend.example.com',
+      workspaceDbKey: 'workspace-db',
+    });
+
+    expect(result).toEqual({ pushed: 7, pulled: 2, pruned: 0 });
+    expect(updates.map((update) => update.phase)).toEqual(['checking', 'applying']);
+    expect(workerInstances[0].lastMessage).toMatchObject({
+      type: 'sync-worker:request',
+      method: 'runSync',
+      payload: {
+        ownerNpub: 'npub-owner',
+        viewerNpub: 'npub-viewer',
+        options: {
+          authMethod: 'secret',
+          backendUrl: 'https://backend.example.com',
+          workspaceDbKey: 'workspace-db',
+        },
+      },
+    });
+  });
+
+  it('bridges extension-auth signing requests through the main thread', async () => {
+    const workerInstances = [];
+    const signedEvent = {
+      id: 'signed-event-id',
+      sig: 'signed-event-sig',
+      kind: 27235,
+      pubkey: 'pubkey-hex',
+      created_at: 1,
+      tags: [],
+      content: '',
+    };
+
+    class MockWorker {
+      constructor() {
+        workerInstances.push(this);
+        this.onmessage = null;
+        this.onerror = null;
+        this.messages = [];
+        this.runRequestId = null;
+      }
+
+      addEventListener(type, handler) {
+        if (type === 'message') this.onmessage = handler;
+        if (type === 'error' || type === 'messageerror') this.onerror = handler;
+      }
+
+      removeEventListener() {}
+
+      terminate() {}
+
+      postMessage(message) {
+        this.messages.push(message);
+        Promise.resolve().then(() => {
+          if (message.type === 'sync-worker:request' && message.method === 'runSync') {
+            this.runRequestId = message.id;
+            this.onmessage?.({
+              data: {
+                type: 'sync-worker:auth-request',
+                authId: 1,
+                method: 'getPublicKey',
+              },
+            });
+            return;
+          }
+
+          if (message.type === 'sync-worker:auth-response' && message.authId === 1) {
+            this.onmessage?.({
+              data: {
+                type: 'sync-worker:auth-request',
+                authId: 2,
+                method: 'signEvent',
+                params: {
+                  event: {
+                    kind: 27235,
+                    pubkey: message.value,
+                    created_at: 1,
+                    tags: [],
+                    content: '',
+                  },
+                },
+              },
+            });
+            return;
+          }
+
+          if (message.type === 'sync-worker:auth-response' && message.authId === 2) {
+            this.onmessage?.({
+              data: {
+                type: 'sync-worker:response',
+                id: this.runRequestId,
+                ok: true,
+                value: { pushed: 1, pulled: 0, pruned: 0 },
+              },
+            });
+          }
+        });
+      }
+    }
+
+    globalThis.Worker = MockWorker;
+    globalThis.window = globalThis.window || {};
+    globalThis.window.nostr = {
+      getPublicKey: vi.fn(async () => 'pubkey-hex'),
+      signEvent: vi.fn(async (event) => ({ ...event, ...signedEvent })),
+    };
+    vi.resetModules();
+
+    const client = await import('../src/sync-worker-client.js');
+
+    const result = await client.runSync('npub-owner', 'npub-viewer', undefined, {
+      authMethod: 'extension',
+      backendUrl: 'https://backend.example.com',
+      workspaceDbKey: 'workspace-db',
+    });
+
+    expect(result).toEqual({ pushed: 1, pulled: 0, pruned: 0 });
+    expect(workerInstances).toHaveLength(1);
+    expect(globalThis.window.nostr.getPublicKey).toHaveBeenCalledTimes(1);
+    expect(globalThis.window.nostr.signEvent).toHaveBeenCalledTimes(1);
+    expect(globalThis.window.nostr.signEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 27235,
+      pubkey: 'pubkey-hex',
+    }));
+    expect(workerInstances[0].messages).toContainEqual(expect.objectContaining({
+      type: 'sync-worker:request',
+      method: 'runSync',
+      payload: expect.objectContaining({
+        ownerNpub: 'npub-owner',
+        viewerNpub: 'npub-viewer',
+        options: expect.objectContaining({
+          authMethod: 'extension',
+          backendUrl: 'https://backend.example.com',
+          workspaceDbKey: 'workspace-db',
+        }),
+      }),
+    }));
+    expect(workerInstances[0].messages).toContainEqual({
+      type: 'sync-worker:auth-response',
+      authId: 1,
+      ok: true,
+      value: 'pubkey-hex',
+    });
+    expect(workerInstances[0].messages).toContainEqual({
+      type: 'sync-worker:auth-response',
+      authId: 2,
+      ok: true,
+      value: {
+        kind: 27235,
+        pubkey: 'pubkey-hex',
+        created_at: 1,
+        tags: [],
+        content: '',
+        id: 'signed-event-id',
+        sig: 'signed-event-sig',
+      },
+    });
   });
 });

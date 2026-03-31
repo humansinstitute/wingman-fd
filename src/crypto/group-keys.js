@@ -39,6 +39,32 @@ export function clearCryptoContext() {
   clearGroupKeyCache();
 }
 
+/**
+ * Export all loaded group keys as plain serializable objects.
+ * Used to transfer decrypted key material to the Web Worker via postMessage.
+ */
+export function exportDecryptedKeys() {
+  return Array.from(groupKeysByNpub.values()).map((key) => ({
+    group_id: key.group_id,
+    group_npub: key.group_npub,
+    name: key.name || '',
+    key_version: key.key_version ?? 1,
+    nsec: key.nsec,
+  }));
+}
+
+/**
+ * Import pre-decrypted group keys (from the main thread).
+ * Each entry must have { group_npub, nsec } at minimum.
+ */
+export function importDecryptedKeys(entries = []) {
+  clearGroupKeyCache();
+  for (const entry of entries) {
+    if (!entry?.group_npub || !entry?.nsec) continue;
+    rememberGroupKey(entry);
+  }
+}
+
 export function createGroupIdentity() {
   return createLocalIdentity();
 }

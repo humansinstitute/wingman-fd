@@ -839,19 +839,6 @@ export const workspaceManagerMixin = {
       await this.persistWorkspaceSettings();
       await this.refreshWorkspaceSettings();
       this.syncWorkspaceProfileDraft({ force: true });
-
-      if (this.session?.npub) {
-        await this.refreshGroups();
-        await this.refreshChannels();
-        await this.refreshAudioNotes();
-        await this.refreshDirectories();
-        await this.refreshDocuments();
-        await this.refreshScopes();
-        await this.refreshTasks();
-        await this.refreshSchedules();
-        await this.ensureTaskBoardScopeSetup();
-        await this.refreshStatusRecentChanges();
-      }
     } finally {
       if (this.workspaceSwitchPendingKey === workspace.workspaceKey) {
         this.workspaceSwitchPendingKey = '';
