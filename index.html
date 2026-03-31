@@ -978,12 +978,12 @@
           <!-- Kanban board -->
           <div class="kanban-board" x-show="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'kanban'">
             <template x-for="col in $store.chat.boardColumns" :key="col.state">
-              <div class="kanban-column" :class="{ [`kanban-col-${col.state}`]: true, 'kanban-column-collapsed': $store.chat.isSectionCollapsed(col.state) }">
-                <div class="kanban-column-header" @click="$store.chat.toggleSectionCollapse(col.state)" style="cursor: pointer;">
+              <div class="kanban-column" :class="`kanban-col-${col.state}`">
+                <div class="kanban-column-header">
                   <span class="kanban-column-title" x-text="col.label"></span>
                   <span class="kanban-column-count" x-text="col.tasks.length"></span>
                 </div>
-                <div class="kanban-column-body" x-show="!$store.chat.isSectionCollapsed(col.state)"
+                <div class="kanban-column-body"
                   @dragover.prevent="col.state !== 'summary' && $store.chat.handleTaskDragOver($event, col.state)"
                   @dragleave="$store.chat.handleTaskDragLeave($event)"
                   @drop.prevent="$store.chat.handleTaskDrop($event, col.state)"
@@ -1067,11 +1067,11 @@
           <div class="task-list-view" x-show="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'list'">
             <template x-for="group in $store.chat.listGroupedTasks" :key="group.state">
               <div class="task-list-group">
-                <div class="task-list-group-header" :class="`task-list-group-${group.state}`" @click="$store.chat.toggleSectionCollapse(group.state)" style="cursor: pointer;">
+                <div class="task-list-group-header" :class="`task-list-group-${group.state}`">
                   <span class="task-list-group-label" x-text="group.label"></span>
                   <span class="kanban-column-count" x-text="group.tasks.length"></span>
                 </div>
-                <div class="task-list-rows" x-show="!$store.chat.isSectionCollapsed(group.state)">
+                <div class="task-list-rows">
                   <template x-for="task in group.tasks" :key="task.record_id">
                     <div
                       class="task-list-row"
