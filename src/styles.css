@@ -5601,7 +5601,7 @@ button:disabled {
 
 @media (max-width: 768px) {
   body {
-    padding: 0.5rem;
+    padding: 0.5rem 0;
   }
 
   .app-layout {

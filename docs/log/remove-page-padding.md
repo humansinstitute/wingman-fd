@@ -22,6 +22,9 @@ Three padding sources were zeroed out:
    - `≤960px`: `padding-right: 1rem` → `padding-right: 0`
    - `≤720px`: `1rem 1rem 1.5rem 0` → `1rem 0 1.5rem 0`
 
+4. **`body` mobile breakpoint (≤768px)** — `padding: 0.5rem` → `padding: 0.5rem 0`
+   The mobile media query was using shorthand `0.5rem` which applied to all four sides, re-introducing 0.5rem of left/right padding on screens ≤768px. This was missed in the initial fix.
+
 ## What was preserved
 
 - `body { max-width: 1400px }` — page still centers on wide screens

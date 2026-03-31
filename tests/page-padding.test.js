@@ -131,4 +131,37 @@ describe('Mobile responsive padding', () => {
     }
     // If no mobile override exists, that's fine — desktop is already 0
   });
+
+  it('no media query re-introduces left/right body padding', () => {
+    // Find all body rules inside media queries and verify none add horizontal padding
+    const mediaBodyRegex = /@media[^{]*\{[^}]*body\s*\{([^}]+)\}/gs;
+    let match;
+    while ((match = mediaBodyRegex.exec(stylesheetContent)) !== null) {
+      const block = match[1];
+      const paddingMatch = block.match(/(?:^|;|\s)padding\s*:\s*([^;]+)/);
+      if (paddingMatch) {
+        const parts = paddingMatch[1].trim().split(/\s+/);
+        if (parts.length === 1) {
+          // Single value applies to all sides — left/right must be 0
+          expect(parts[0]).toBe('0');
+        } else if (parts.length === 2) {
+          expect(parts[1]).toBe('0');
+        } else if (parts.length === 3) {
+          expect(parts[1]).toBe('0');
+        } else if (parts.length === 4) {
+          expect(parts[1]).toBe('0');
+          expect(parts[3]).toBe('0');
+        }
+      }
+      // Also check padding-left / padding-right individually
+      const plMatch = block.match(/padding-left\s*:\s*([^;]+)/);
+      if (plMatch) {
+        expect(plMatch[1].trim()).toBe('0');
+      }
+      const prMatch = block.match(/padding-right\s*:\s*([^;]+)/);
+      if (prMatch) {
+        expect(prMatch[1].trim()).toBe('0');
+      }
+    }
+  });
 });
