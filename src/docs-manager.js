@@ -26,7 +26,7 @@ import { outboundComment } from './translators/comments.js';
 import { toRaw } from './utils/state-helpers.js';
 import { fetchRecordHistory } from './api.js';
 import { inboundDocument } from './translators/docs.js';
-import { renderMarkdownToHtml } from './markdown.js';
+import { renderMarkdownToHtml, hydrateStorageImageMarkup } from './markdown.js';
 import { diffLines } from 'diff';
 
 // ---------------------------------------------------------------------------
@@ -1441,12 +1441,17 @@ export const docsManagerMixin = {
     URL.revokeObjectURL(url);
   },
 
-  exportDocPDF() {
+  async exportDocPDF() {
     const doc = this.selectedDocument;
     if (!doc) return;
     const title = this.docEditorTitle || doc.title || 'document';
     const content = this.docEditorContent || doc.content || '';
     const rendered = this.renderMarkdown(content);
+
+    // Resolve storage-backed images so they appear in the print output
+    const resolverFn = (objectId) => this.resolveStorageImageUrl(objectId);
+    const hydrated = await hydrateStorageImageMarkup(rendered, resolverFn);
+
     const printWindow = window.open('about:blank', '_blank');
     if (!printWindow) {
       this.error = 'Popup blocked — please allow popups for this site and try again.';
@@ -1467,9 +1472,10 @@ export const docsManagerMixin = {
   th { background: #f5f5f5; }
   blockquote { border-left: 3px solid #ddd; margin-left: 0; padding-left: 1rem; color: #555; }
   img { max-width: 100%; }
+  .md-storage-image-error { opacity: 0.3; min-height: 2rem; background: #f0f0f0; }
   @media print { body { margin: 0; } }
 </style>
-</head><body><h1>${title}</h1>${rendered}</body></html>`);
+</head><body><h1>${title}</h1>${hydrated}</body></html>`);
     printWindow.document.close();
     printWindow.onafterprint = () => printWindow.close();
     setTimeout(() => printWindow.print(), 300);

@@ -90,3 +90,63 @@ export function renderMarkdownToHtml(source) {
   const rendered = markdown.parse(normalized, { async: false });
   return typeof rendered === 'string' ? rendered : '';
 }
+
+/**
+ * Resolve pending storage images in rendered HTML to actual URLs.
+ *
+ * Finds all `<img … data-storage-object-id="ID" …>` tags that lack a `src`
+ * and calls `resolverFn(objectId)` to obtain the URL. On success the `src` is
+ * injected and the `md-storage-image-pending` class is removed. On failure the
+ * tag is kept but marked with `md-storage-image-error`.
+ *
+ * @param {string} html  Rendered HTML string from `renderMarkdownToHtml`.
+ * @param {(objectId: string) => Promise<string>} resolverFn  Async function
+ *   that returns a URL for a given storage object ID.
+ * @returns {Promise<string>} The HTML with storage images hydrated.
+ */
+export async function hydrateStorageImageMarkup(html, resolverFn) {
+  if (!html) return html || '';
+
+  // Match <img …data-storage-object-id="VALUE"…> tags that have no src attribute
+  const storageImgRe = /<img\b([^>]*?)data-storage-object-id="([^"]+)"([^>]*?)\/?\s*>/g;
+  const matches = [];
+  let match;
+  while ((match = storageImgRe.exec(html)) !== null) {
+    // Only process if there is no src already set
+    const fullTag = match[0];
+    if (/\bsrc="/.test(fullTag)) continue;
+    matches.push({ fullTag, objectId: match[2] });
+  }
+
+  if (matches.length === 0) return html;
+
+  // Resolve all images concurrently
+  const resolutions = await Promise.allSettled(
+    matches.map(async ({ objectId }) => ({
+      objectId,
+      url: await resolverFn(objectId),
+    })),
+  );
+
+  let result = html;
+  for (let i = 0; i < matches.length; i++) {
+    const { fullTag } = matches[i];
+    const resolution = resolutions[i];
+
+    if (resolution.status === 'fulfilled' && resolution.value.url) {
+      const safeUrl = String(resolution.value.url).replace(/"/g, '&quot;');
+      const hydrated = fullTag
+        .replace('md-storage-image-pending', '')
+        .replace(/class="([^"]*)\s*"/, 'class="$1"')
+        .replace('<img ', `<img src="${safeUrl}" `);
+      result = result.replace(fullTag, hydrated);
+    } else {
+      // Mark as error
+      const errored = fullTag
+        .replace('md-storage-image-pending', 'md-storage-image-error');
+      result = result.replace(fullTag, errored);
+    }
+  }
+
+  return result;
+}
