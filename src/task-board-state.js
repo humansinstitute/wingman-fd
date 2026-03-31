@@ -578,52 +578,6 @@ export const taskBoardStateMixin = {
     return normalizeScopeRowGroupRefs(scope, (ref) => this.resolveGroupId(ref));
   },
 
-  // --- section collapse ---
-
-  isSectionCollapsed(state) {
-    return Boolean(this.collapsedSections[state]);
-  },
-
-  toggleSectionCollapse(state) {
-    this.collapsedSections = {
-      ...this.collapsedSections,
-      [state]: !this.collapsedSections[state],
-    };
-    this.persistCollapsedSections();
-  },
-
-  persistCollapsedSections() {
-    if (typeof window === 'undefined') return;
-    const slug = this.currentWorkspaceSlug;
-    const key = slug
-      ? `coworker:${slug}:collapsed-sections`
-      : 'coworker:collapsed-sections';
-    const active = Object.fromEntries(
-      Object.entries(this.collapsedSections).filter(([, v]) => v)
-    );
-    if (Object.keys(active).length > 0) {
-      window.localStorage.setItem(key, JSON.stringify(active));
-    } else {
-      window.localStorage.removeItem(key);
-    }
-  },
-
-  readStoredCollapsedSections() {
-    if (typeof window === 'undefined') return {};
-    const slug = this.currentWorkspaceSlug;
-    const key = slug
-      ? `coworker:${slug}:collapsed-sections`
-      : 'coworker:collapsed-sections';
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      return typeof parsed === 'object' && parsed !== null ? parsed : {};
-    } catch {
-      return {};
-    }
-  },
-
   // --- board picker ---
 
   toggleBoardPicker() {
