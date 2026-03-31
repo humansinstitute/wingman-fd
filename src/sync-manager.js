@@ -23,7 +23,11 @@ import {
   upsertComment,
 } from './db.js';
 import { fetchRecordHistory, syncRecords } from './api.js';
-import { runSync, pullRecordsForFamilies, pruneOnLogin } from './worker/sync-worker.js';
+import {
+  runSync,
+  pullRecordsForFamilies,
+  pruneOnLogin,
+} from './sync-worker-client.js';
 import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
 import { outboundTask } from './translators/tasks.js';
@@ -754,6 +758,8 @@ export const syncManagerMixin = {
         this.hasForcedInitialBackfill = true;
       }
       result = await runSync(this.workspaceOwnerNpub, this.session.npub, onProgress, {
+        authMethod: this.session?.method || '',
+        backendUrl: this.backendUrl,
         workspaceDbKey: this.workspaceDbKey,
       });
       const hasRemoteDataChanges = (result?.pulled ?? 0) > 0 || (result?.pruned ?? 0) > 0;
@@ -912,6 +918,8 @@ export const syncManagerMixin = {
     if (hashes.length === 0) return { pulled: 0 };
     return pullRecordsForFamilies(this.workspaceOwnerNpub, this.session.npub, hashes, {
       ...options,
+      authMethod: this.session?.method || '',
+      backendUrl: this.backendUrl,
       workspaceDbKey: this.workspaceDbKey,
     });
   },

@@ -1,18 +1,11 @@
 /**
- * Sync worker — runs on a timer or manual trigger.
+ * Sync execution module.
  *
- * Responsibilities:
- *  1. Flush pending_writes to the V4 backend via POST /api/v4/records/sync
- *  2. Pull new records from GET /api/v4/records
- *  3. Translate inbound records through chat translators
- *  4. Write materialized rows into Dexie
- *
- * Communication with the main thread is via postMessage / onmessage.
- *
- * NOTE: Because Dexie doesn't work inside a true Web Worker without
- * workarounds, this file is designed to be imported as a *module* by
- * the main thread and driven via a simple call interface.  A real
- * Web Worker upgrade can happen later.
+ * The real browser worker entrypoint lives in `sync-worker-runner.js`.
+ * This file keeps the sync/pull/prune logic testable and reusable from:
+ *   - the dedicated Web Worker
+ *   - Node-based unit tests
+ *   - the main-thread fallback path when workers are unavailable
  */
 
 import {

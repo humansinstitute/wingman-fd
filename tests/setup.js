@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 
 if (!globalThis.crypto?.randomUUID) {
   globalThis.crypto = {

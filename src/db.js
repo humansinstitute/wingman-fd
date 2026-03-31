@@ -1,5 +1,11 @@
 import Dexie from 'dexie';
 import { getSyncFamily, getSyncStateKeyForFamily } from './sync-families.js';
+import {
+  resolveWindowLimit,
+  takeNewestWindow,
+  takeWindow,
+  sortRowsByTimestamp,
+} from './windowing.js';
 
 // ---------------------------------------------------------------------------
 // Shared DB — singleton, always open. Holds global (non-workspace) state.
@@ -350,9 +356,11 @@ export async function getDocumentById(recordId) {
 // chat_messages — workspace DB
 // ---------------------------------------------------------------------------
 
-export async function getMessagesByChannel(channelId) {
+export async function getMessagesByChannel(channelId, options = {}) {
   const rows = await wsDb().chat_messages.where('channel_id').equals(channelId).sortBy('updated_at');
-  return rows.filter((row) => row.record_state !== 'deleted');
+  const activeRows = rows.filter((row) => row.record_state !== 'deleted');
+  if (!options.limit) return activeRows;
+  return takeWindow(activeRows, resolveWindowLimit('chatMessages', options), { fromStart: false });
 }
 
 export async function upsertMessage(msg) {
@@ -363,25 +371,25 @@ export async function getMessageById(recordId) {
   return wsDb().chat_messages.get(recordId);
 }
 
-export async function getRecentChatMessagesSince(sinceIso) {
+export async function getRecentChatMessagesSince(sinceIso, options = {}) {
   const rows = await wsDb().chat_messages.where('updated_at').aboveOrEqual(sinceIso).toArray();
-  return rows
-    .filter((row) => row.record_state !== 'deleted')
-    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeWindow(ordered, resolveWindowLimit('chatMessages', options), { fromStart: true });
 }
 
-export async function getRecentDocumentChangesSince(sinceIso) {
+export async function getRecentDocumentChangesSince(sinceIso, options = {}) {
   const rows = await wsDb().documents.where('updated_at').aboveOrEqual(sinceIso).toArray();
-  return rows
-    .filter((row) => row.record_state !== 'deleted')
-    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('documents', options));
 }
 
-export async function getRecentDirectoryChangesSince(sinceIso) {
+export async function getRecentDirectoryChangesSince(sinceIso, options = {}) {
   const rows = await wsDb().directories.where('updated_at').aboveOrEqual(sinceIso).toArray();
-  return rows
-    .filter((row) => row.record_state !== 'deleted')
-    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('directories', options));
 }
 
 // ---------------------------------------------------------------------------
@@ -393,11 +401,11 @@ export async function getReportsByOwner(ownerNpub) {
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
-export async function getRecentReportChangesSince(sinceIso) {
+export async function getRecentReportChangesSince(sinceIso, options = {}) {
   const rows = await wsDb().reports.where('updated_at').aboveOrEqual(sinceIso).toArray();
-  return rows
-    .filter((row) => row.record_state !== 'deleted')
-    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('reports', options));
 }
 
 export async function upsertReport(report) {
@@ -579,11 +587,11 @@ export async function getTasksByOwner(ownerNpub) {
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
-export async function getRecentTaskChangesSince(sinceIso) {
+export async function getRecentTaskChangesSince(sinceIso, options = {}) {
   const rows = await wsDb().tasks.where('updated_at').aboveOrEqual(sinceIso).toArray();
-  return rows
-    .filter((row) => row.record_state !== 'deleted')
-    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('tasks', options));
 }
 
 export async function upsertTask(task) {
@@ -603,11 +611,11 @@ export async function getSchedulesByOwner(ownerNpub) {
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
-export async function getRecentScheduleChangesSince(sinceIso) {
+export async function getRecentScheduleChangesSince(sinceIso, options = {}) {
   const rows = await wsDb().schedules.where('updated_at').aboveOrEqual(sinceIso).toArray();
-  return rows
-    .filter((row) => row.record_state !== 'deleted')
-    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('schedules', options));
 }
 
 export async function upsertSchedule(schedule) {
@@ -622,18 +630,20 @@ export async function getScheduleById(recordId) {
 // comments — workspace DB
 // ---------------------------------------------------------------------------
 
-export async function getCommentsByTarget(targetRecordId) {
+export async function getCommentsByTarget(targetRecordId, options = {}) {
   const rows = await wsDb().comments.where('target_record_id').equals(targetRecordId).toArray();
-  return rows
+  const ordered = rows
     .filter((row) => row.record_state !== 'deleted')
     .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+  if (!options.limit) return ordered;
+  return takeWindow(ordered, resolveWindowLimit('threadReplies', options), { fromStart: true });
 }
 
-export async function getRecentCommentsSince(sinceIso) {
+export async function getRecentCommentsSince(sinceIso, options = {}) {
   const rows = await wsDb().comments.where('updated_at').aboveOrEqual(sinceIso).toArray();
-  return rows
-    .filter((row) => row.record_state !== 'deleted')
-    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('threadReplies', options));
 }
 
 export async function upsertComment(comment) {
@@ -738,4 +748,39 @@ export async function upsertReadCursor(cursor) {
 
 export async function getAllReadCursors(viewerNpub) {
   return wsDb().read_cursors.where('viewer_npub').equals(viewerNpub).toArray();
+}
+
+export async function getReadCursorsByKeys(viewerNpub, cursorKeys = []) {
+  const keys = [...new Set(cursorKeys.map((key) => String(key || '').trim()).filter(Boolean))];
+  if (!viewerNpub || keys.length === 0) return [];
+  return wsDb().read_cursors
+    .where('cursor_key')
+    .anyOf(keys)
+    .and((row) => row.viewer_npub === viewerNpub)
+    .toArray();
+}
+
+export async function getReadCursorsByPrefix(viewerNpub, cursorPrefix) {
+  const prefix = String(cursorPrefix || '').trim();
+  if (!viewerNpub || !prefix) return [];
+  return wsDb().read_cursors
+    .where('cursor_key')
+    .between(prefix, `${prefix}\uffff`, true, true)
+    .and((row) => row.viewer_npub === viewerNpub)
+    .toArray();
+}
+
+export async function getWindowedTasksByOwner(ownerNpub, options = {}) {
+  const rows = await getTasksByOwner(ownerNpub);
+  return takeNewestWindow(rows, resolveWindowLimit('tasks', options));
+}
+
+export async function getWindowedDocumentsByOwner(ownerNpub, options = {}) {
+  const rows = await getDocumentsByOwner(ownerNpub);
+  return takeNewestWindow(rows, resolveWindowLimit('documents', options));
+}
+
+export async function getWindowedReportsByOwner(ownerNpub, options = {}) {
+  const rows = await getReportsByOwner(ownerNpub);
+  return takeNewestWindow(rows, resolveWindowLimit('reports', options));
 }

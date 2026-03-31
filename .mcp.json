@@ -9,7 +9,7 @@
       ],
       "env": {
         "WINGMAN_URL": "http://localhost:3021",
-        "SESSION_ID": "09a7be97-270d-4b97-836a-bfe4afc434b5",
+        "SESSION_ID": "52f909e1-7d33-4d71-8167-13d6776fd5d1",
         "BOT_PUBKEY_HEX": "857543f5d7c7717ddc56a4af042a9a409bff66a8bd3a5100f0b488bf2236574c",
         "BOT_NPUB": "npub1s4658awhcachmhzk5jhsg256gzdl7e4gh5a9zq8skjyt7g3k2axql224qz",
         "USER_NPUB": "npub1jss47s4fvv6usl7tn6yp5zamv2u60923ncgfea0e6thkza5p7c3q0afmzy",
