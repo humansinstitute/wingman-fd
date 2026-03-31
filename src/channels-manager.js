@@ -32,11 +32,13 @@ import {
   bootstrapWrappedGroupKeys,
   buildWrappedMemberKeys,
   createGroupIdentity,
+  getLastGroupKeyBootstrapDiagnostics,
   wrapKnownGroupKeyForMember,
 } from './crypto/group-keys.js';
 import { sameListBySignature, toRaw } from './utils/state-helpers.js';
 import { buildSuperBasedConnectionToken } from './superbased-token.js';
 import { APP_NPUB } from './app-identity.js';
+import { flightDeckLog } from './logging.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -163,7 +165,30 @@ export const channelsManagerMixin = {
       const groups = result.groups ?? [];
       const mappedGroups = groups.map((group) => mapGroupEntry(group))
         .filter((group) => !this.workspaceOwnerNpub || group.owner_npub === this.workspaceOwnerNpub);
-      await bootstrapWrappedGroupKeys(keyResult.keys ?? []);
+      const bootstrapResult = await bootstrapWrappedGroupKeys(keyResult.keys ?? []);
+      const workspaceGroupRefs = new Set(
+        mappedGroups.flatMap((group) => [group.group_id, group.group_npub]).filter(Boolean)
+      );
+      const relevantFailures = (bootstrapResult.failures || [])
+        .filter((entry) => workspaceGroupRefs.has(entry.group_id) || workspaceGroupRefs.has(entry.group_npub));
+      if (relevantFailures.length > 0 || (mappedGroups.length > 0 && (bootstrapResult.loaded || 0) === 0)) {
+        flightDeckLog('warn', 'groups', 'group-key bootstrap diagnostics', {
+          viewerNpub,
+          workspaceOwnerNpub: this.workspaceOwnerNpub || null,
+          visibleGroupCount: mappedGroups.length,
+          wrappedKeyCount: (keyResult.keys || []).length,
+          bootstrap: getLastGroupKeyBootstrapDiagnostics(),
+          relevantFailures,
+        });
+      } else {
+        flightDeckLog('debug', 'groups', 'group-key bootstrap complete', {
+          viewerNpub,
+          workspaceOwnerNpub: this.workspaceOwnerNpub || null,
+          visibleGroupCount: mappedGroups.length,
+          wrappedKeyCount: (keyResult.keys || []).length,
+          loadedKeyCount: bootstrapResult.loaded || 0,
+        });
+      }
       this.groups = mappedGroups;
       for (const group of mappedGroups) {
         await upsertGroup({
@@ -175,6 +200,11 @@ export const channelsManagerMixin = {
       this.validateSelectedBoardId();
       this.normalizeTaskFilterTags();
     } catch (error) {
+      flightDeckLog('error', 'groups', 'refreshGroups failed', {
+        viewerNpub,
+        workspaceOwnerNpub: this.workspaceOwnerNpub || null,
+        error: error?.message || String(error),
+      });
       console.debug('refreshGroups failed:', error?.message || error);
     }
   },
@@ -728,12 +758,12 @@ export const channelsManagerMixin = {
         await this.addEncryptedGroupMember(groupId, inviteeNpub);
       }
 
-      const ownerNpub = this.currentWorkspaceOwnerNpub || this.ownerNpub;
-      const token = buildSuperBasedConnectionToken({
+      const workspace = this.currentWorkspace;
+      const token = workspace?.connectionToken || buildSuperBasedConnectionToken({
         directHttpsUrl: this.backendUrl,
-        serviceNpub: this.connectHostServiceNpub || '',
-        workspaceOwnerNpub: ownerNpub,
-        appNpub: APP_NPUB,
+        serviceNpub: workspace?.serviceNpub || this.connectHostServiceNpub || '',
+        workspaceOwnerNpub: this.workspaceOwnerNpub,
+        appNpub: workspace?.appNpub || APP_NPUB,
       });
 
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
