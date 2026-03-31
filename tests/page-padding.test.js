@@ -152,6 +152,41 @@ describe('Mobile responsive padding', () => {
     }
   });
 
+  it('.jobs-section must not have left/right padding', () => {
+    const padding = getPropertyValue('.jobs-section', 'padding');
+    if (padding) {
+      const parts = padding.split(/\s+/);
+      if (parts.length === 1) {
+        // Single value applies to all sides — left/right must be 0
+        expect(parts[0]).toBe('0');
+      } else if (parts.length === 2) {
+        expect(parts[1]).toBe('0');
+      } else if (parts.length === 3) {
+        expect(parts[1]).toBe('0');
+      } else if (parts.length === 4) {
+        expect(parts[1]).toBe('0');
+        expect(parts[3]).toBe('0');
+      }
+    }
+  });
+
+  it('.scopes-section must not have left/right padding', () => {
+    const padding = getPropertyValue('.scopes-section', 'padding');
+    if (padding) {
+      const parts = padding.split(/\s+/);
+      if (parts.length === 1) {
+        expect(parts[0]).toBe('0');
+      } else if (parts.length === 2) {
+        expect(parts[1]).toBe('0');
+      } else if (parts.length === 3) {
+        expect(parts[1]).toBe('0');
+      } else if (parts.length === 4) {
+        expect(parts[1]).toBe('0');
+        expect(parts[3]).toBe('0');
+      }
+    }
+  });
+
   it('no media query re-introduces left/right body padding', () => {
     // Find all body rules inside media queries and verify none add horizontal padding
     const mediaBodyRegex = /@media[^{]*\{[^}]*body\s*\{([^}]+)\}/gs;

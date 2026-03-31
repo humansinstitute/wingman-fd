@@ -9,7 +9,7 @@ Remove the arbitrary left and right padding on the Flight Deck page shell so con
 
 ## Changes
 
-Five padding sources were zeroed out (items 4–5 found during re-review on 2026-03-31):
+Seven padding sources were zeroed out (items 4–5 found during re-review on 2026-03-31, items 6–7 found during live-app investigation on 2026-03-31):
 
 1. **`body`** — `padding: 0.5rem 2rem` → `padding: 0.5rem 0`
    Removed the 2rem left/right page-level padding. Vertical padding preserved.
@@ -27,6 +27,12 @@ Five padding sources were zeroed out (items 4–5 found during re-review on 2026
 
 5. **`.placeholder-panel`** — `padding: 1.25rem` → `padding: 1.25rem 0`
    This is a direct child of `.main-content` (People section placeholder). The shorthand applied 1.25rem to all sides including left/right, creating a visible horizontal gap.
+
+6. **`.jobs-section`** — `padding: 1.5rem` → `padding: 1.5rem 0`
+   Direct child of `.main-content`. The uniform shorthand applied 1.5rem to all sides including left/right.
+
+7. **`.scopes-section`** — `padding: 1rem 1.25rem` → `padding: 1rem 0`
+   Direct child of `.main-content`. The 2-value shorthand applied 1.25rem to left/right.
 
 ## What was preserved
 
