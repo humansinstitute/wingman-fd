@@ -27,6 +27,8 @@ import {
   runSync,
   pullRecordsForFamilies,
   pruneOnLogin,
+  startWorkerFlushTimer,
+  stopWorkerFlushTimer,
 } from './sync-worker-client.js';
 import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
@@ -621,6 +623,7 @@ export const syncManagerMixin = {
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.visibilityHandler = null;
     }
+    stopWorkerFlushTimer();
   },
 
   scheduleBackgroundSync(delayMs = null) {
@@ -640,6 +643,10 @@ export const syncManagerMixin = {
     if (!this.visibilityHandler && typeof document !== 'undefined') {
       this.visibilityHandler = () => this.ensureBackgroundSync(true);
       document.addEventListener('visibilitychange', this.visibilityHandler);
+    }
+    // Start the independent worker flush timer for low-latency outbox delivery
+    if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
+      startWorkerFlushTimer(this.workspaceOwnerNpub, this.backendUrl, this.workspaceDbKey);
     }
     this.scheduleBackgroundSync(runSoon ? 50 : null);
   },
@@ -788,7 +795,7 @@ export const syncManagerMixin = {
       if (showBusy) this.syncing = false;
       await this.refreshSyncStatus({ refreshUnread });
       if (refreshRecentChanges) {
-        await this.refreshStatusRecentChanges();
+        await this.refreshStatusRecentChanges({ hasNewData: true });
       }
     }
 
@@ -944,7 +951,7 @@ export const syncManagerMixin = {
     if ((selected.has('comment') || selected.has('audio_note')) && this.docsEditorOpen && this.selectedDocId) {
       await this.loadDocComments(this.selectedDocId);
     }
-    await this.refreshStatusRecentChanges();
+    await this.refreshStatusRecentChanges({ hasNewData: true, force: true });
     await this.refreshSyncStatus();
   },
 

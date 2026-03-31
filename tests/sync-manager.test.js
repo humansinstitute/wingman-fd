@@ -35,6 +35,8 @@ vi.mock('../src/sync-worker-client.js', () => ({
   runSync: vi.fn(),
   pullRecordsForFamilies: vi.fn(),
   pruneOnLogin: vi.fn(),
+  startWorkerFlushTimer: vi.fn(),
+  stopWorkerFlushTimer: vi.fn(),
 }));
 
 beforeEach(() => {

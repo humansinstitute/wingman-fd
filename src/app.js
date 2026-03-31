@@ -1096,7 +1096,7 @@ export function initApp() {
       await this.applyRouteFromLocation();
       await this.refreshSyncStatus();
       if (this.navSection === 'status') {
-        await this.refreshStatusRecentChanges();
+        await this.refreshStatusRecentChanges({ force: true });
       }
       if (this.navSection === 'chat' && this.selectedChannelId) {
         this.scheduleChatFeedScrollToBottom();
@@ -1604,7 +1604,38 @@ export function initApp() {
       this.showChannelSettingsModal = false;
     },
 
+    // Release domain arrays for sections the user is leaving.
+    // Keeps memory stable by not accumulating all sections simultaneously.
+    // Data is re-fetched via liveQuery when navigating back.
+    clearInactiveSectionData(activeSection) {
+      if (activeSection !== 'chat') {
+        this.messages = [];
+        this.audioNotes = [];
+      }
+      if (activeSection !== 'tasks' && activeSection !== 'calendar') {
+        this.tasks = [];
+        this.taskComments = [];
+        this.editingTask = null;
+        this.showTaskDetail = false;
+      }
+      if (activeSection !== 'docs') {
+        this.documents = [];
+        this.directories = [];
+        this.docComments = [];
+      }
+      if (activeSection !== 'reports' && activeSection !== 'status') {
+        this.reports = [];
+      }
+      if (activeSection !== 'schedules' && activeSection !== 'calendar') {
+        this.schedules = [];
+      }
+      if (activeSection !== 'status') {
+        this.statusRecentChanges = [];
+      }
+    },
+
     navigateTo(section, options = {}) {
+      this.clearInactiveSectionData(section);
       this.navSection = section;
       this.mobileNavOpen = false;
       this.showWorkspaceSwitcherMenu = false;
@@ -1634,7 +1665,7 @@ export function initApp() {
         }
       }
       if (section === 'status') {
-        this.refreshStatusRecentChanges();
+        this.refreshStatusRecentChanges({ force: true });
       }
       if (section === 'reports' && !this.selectedReportId) {
         this.selectedReportId = this.selectedReport?.record_id || null;
@@ -1997,7 +2028,11 @@ export function initApp() {
       this.reportModalReport = null;
     },
 
-    async refreshStatusRecentChanges() {
+    async refreshStatusRecentChanges(options = {}) {
+      // Skip if not on status section (unless forced)
+      if (this.navSection !== 'status' && !options.force) return;
+      // Skip if we already have cached data and no new records were pulled
+      if (this.statusRecentChanges.length > 0 && !options.force && !options.hasNewData) return;
       const sinceIso = new Date(Date.now() - this.getStatusRangeMs()).toISOString();
       const messages = await getRecentChatMessagesSince(sinceIso);
       const documents = await getRecentDocumentChangesSince(sinceIso);

@@ -273,7 +273,33 @@ export function primeSyncWorker() {
 }
 
 export function shutdownSyncWorker() {
+  stopWorkerFlushTimer();
   resetWorkerInstance();
+}
+
+/**
+ * Start an independent outbox flush timer in the worker.
+ * The worker will flush pending writes every 5s on its own,
+ * decoupling UI responsiveness from sync latency.
+ */
+export function startWorkerFlushTimer(ownerNpub, backendUrl, workspaceDbKey) {
+  const worker = ensureWorkerInstance();
+  if (!worker) return;
+  try {
+    worker.postMessage({
+      type: 'sync-worker:start-flush-timer',
+      ownerNpub,
+      backendUrl,
+      workspaceDbKey,
+    });
+  } catch { /* ignore */ }
+}
+
+export function stopWorkerFlushTimer() {
+  if (!workerInstance) return;
+  try {
+    workerInstance.postMessage({ type: 'sync-worker:stop-flush-timer' });
+  } catch { /* ignore */ }
 }
 
 export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, options = {}) {
