@@ -349,9 +349,21 @@ export const scopesManagerMixin = {
 
   async updateDocScope(doc, scopeId, options = {}) {
     if (!doc || !this.session?.npub) return;
+    const scopeAssignment = this.buildScopeAssignment(scopeId);
+    let shares = this.getStoredDocShares(doc);
+    if (scopeId) {
+      const scope = this.scopesMap.get(scopeId);
+      if (scope) {
+        const scopeShares = this.buildScopeDefaultShares(this.getScopeShareGroupIds(scope));
+        shares = this.mergeDocShareLists(shares, scopeShares);
+      }
+    }
+    const groupIds = this.getShareGroupIds(shares);
     const updated = {
       ...doc,
-      ...this.buildScopeAssignment(scopeId),
+      ...scopeAssignment,
+      shares,
+      group_ids: groupIds,
     };
     this.patchDocumentLocal(updated);
     await upsertDocument(updated);
@@ -401,9 +413,21 @@ export const scopesManagerMixin = {
 
   async updateDirectoryScope(dir, scopeId) {
     if (!dir || !this.session?.npub) return;
+    const scopeAssignment = this.buildScopeAssignment(scopeId);
+    let shares = this.getStoredDocShares(dir);
+    if (scopeId) {
+      const scope = this.scopesMap.get(scopeId);
+      if (scope) {
+        const scopeShares = this.buildScopeDefaultShares(this.getScopeShareGroupIds(scope));
+        shares = this.mergeDocShareLists(shares, scopeShares);
+      }
+    }
+    const groupIds = this.getShareGroupIds(shares);
     const updated = toRaw({
       ...dir,
-      ...this.buildScopeAssignment(scopeId),
+      ...scopeAssignment,
+      shares,
+      group_ids: groupIds,
       version: (dir.version ?? 1) + 1,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),

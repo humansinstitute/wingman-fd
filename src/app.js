@@ -3713,12 +3713,19 @@ export function initApp() {
       const explicitShares = this.getExplicitDocShares(item);
       const inheritedShares = targetFolderId ? this.getInheritedDirectoryShares(targetFolderId) : [];
       let shares = this.mergeDocShareLists(explicitShares, inheritedShares);
-      if (shares.length === 0) shares = this.getDefaultPrivateShares();
-      const groupIds = this.getShareGroupIds(shares);
       const nextVersion = (item.version ?? 1) + 1;
       const scopeAssignment = options.applyDefaultScope === true
         ? this.getDirectoryDefaultScopeAssignment(targetFolderId)
         : this.getDirectoryDefaultScopeAssignment(item);
+      if (scopeAssignment.scope_id) {
+        const scope = this.scopesMap.get(scopeAssignment.scope_id);
+        if (scope) {
+          const scopeShares = this.buildScopeDefaultShares(this.getScopeShareGroupIds(scope));
+          shares = this.mergeDocShareLists(shares, scopeShares);
+        }
+      }
+      if (shares.length === 0) shares = this.getDefaultPrivateShares();
+      const groupIds = this.getShareGroupIds(shares);
       const updated = {
         ...item,
         parent_directory_id: targetFolderId,

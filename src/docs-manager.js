@@ -1064,6 +1064,14 @@ export const docsManagerMixin = {
     const defaultScopeAssignment = this.getDirectoryDefaultScopeAssignment(parentDirectoryId);
     const recordId = crypto.randomUUID();
     const now = new Date().toISOString();
+    let shares = this.getInheritedDirectoryShares(parentDirectoryId);
+    if (defaultScopeAssignment.scope_id) {
+      const scope = this.scopesMap?.get(defaultScopeAssignment.scope_id);
+      if (scope) {
+        const scopeShares = this.buildScopeDefaultShares(this.getScopeShareGroupIds(scope));
+        shares = this.mergeDocShareLists(shares, scopeShares);
+      }
+    }
     const row = {
       record_id: recordId,
       owner_npub: ownerNpub,
@@ -1071,7 +1079,7 @@ export const docsManagerMixin = {
       content: '',
       parent_directory_id: parentDirectoryId,
       ...defaultScopeAssignment,
-      shares: this.getInheritedDirectoryShares(parentDirectoryId),
+      shares,
       group_ids: [],
       sync_status: 'pending',
       record_state: 'active',
