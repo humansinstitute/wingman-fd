@@ -281,6 +281,7 @@ export function initApp() {
     taskCommentAudioDrafts: [],
     taskFilter: '',
     taskFilterTags: [],
+    taskFilterAssignee: null,
     selectedTaskIds: [],
     bulkTaskBusy: false,
     selectedBoardId: null,
@@ -3516,6 +3517,15 @@ export function initApp() {
     clearTaskFilters() {
       this.taskFilter = '';
       this.taskFilterTags = [];
+      this.taskFilterAssignee = null;
+    },
+
+    toggleFilterToMe() {
+      if (this.taskFilterAssignee) {
+        this.taskFilterAssignee = null;
+      } else {
+        this.taskFilterAssignee = this.session?.npub || null;
+      }
     },
 
     async moveTaskToBoard(taskId, boardScopeId) {

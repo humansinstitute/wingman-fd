@@ -875,6 +875,27 @@
               x-model="$store.chat.taskFilter"
               placeholder="Search tasks..."
             />
+            <button
+              type="button"
+              class="filter-to-me-btn"
+              :class="{ 'filter-to-me-active': $store.chat.taskFilterAssignee }"
+              @click="$store.chat.toggleFilterToMe()"
+              :title="$store.chat.taskFilterAssignee ? 'Show all tasks' : 'Show my tasks'"
+              :aria-pressed="!!$store.chat.taskFilterAssignee"
+            >
+              <template x-if="$store.chat.getSenderAvatar($store.chat.session?.npub)">
+                <img
+                  class="filter-to-me-avatar"
+                  :src="$store.chat.getSenderAvatar($store.chat.session?.npub)"
+                  alt="Me"
+                />
+              </template>
+              <template x-if="!$store.chat.getSenderAvatar($store.chat.session?.npub)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+                </svg>
+              </template>
+            </button>
             <template x-if="$store.chat.allTaskTags.length > 0">
               <div class="task-tag-filters">
                 <template x-for="tag in $store.chat.allTaskTags" :key="tag">
@@ -886,7 +907,7 @@
                     x-text="tag"
                   ></button>
                 </template>
-                <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter">
+                <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter || $store.chat.taskFilterAssignee">
                   <button type="button" class="clear-filters-btn" @click="$store.chat.clearTaskFilters()">Clear</button>
                 </template>
               </div>
@@ -2616,6 +2637,27 @@
               x-model="$store.chat.taskFilter"
               placeholder="Search scheduled tasks..."
             />
+            <button
+              type="button"
+              class="filter-to-me-btn"
+              :class="{ 'filter-to-me-active': $store.chat.taskFilterAssignee }"
+              @click="$store.chat.toggleFilterToMe()"
+              :title="$store.chat.taskFilterAssignee ? 'Show all tasks' : 'Show my tasks'"
+              :aria-pressed="!!$store.chat.taskFilterAssignee"
+            >
+              <template x-if="$store.chat.getSenderAvatar($store.chat.session?.npub)">
+                <img
+                  class="filter-to-me-avatar"
+                  :src="$store.chat.getSenderAvatar($store.chat.session?.npub)"
+                  alt="Me"
+                />
+              </template>
+              <template x-if="!$store.chat.getSenderAvatar($store.chat.session?.npub)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+                </svg>
+              </template>
+            </button>
             <template x-if="$store.chat.allTaskTags.length > 0">
               <div class="task-tag-filters">
                 <template x-for="tag in $store.chat.allTaskTags" :key="tag">
@@ -2627,7 +2669,7 @@
                     x-text="tag"
                   ></button>
                 </template>
-                <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter">
+                <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter || $store.chat.taskFilterAssignee">
                   <button type="button" class="clear-filters-btn" @click="$store.chat.clearTaskFilters()">Clear</button>
                 </template>
               </div>
