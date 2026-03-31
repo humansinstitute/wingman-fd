@@ -9,14 +9,54 @@ If you received an Agent Connect package, read that package first and then use t
 1. Use `llms_url` from the Agent Connect package as the semantic guide for this workspace.
 2. Use `connection_token` from the package to configure the target agent session against the same workspace.
 3. Use `service.openapi_url`, `service.docs_url`, and `service.health_url` from the package to inspect the live backend.
-4. Use Wingman Yoke when it is available in the target environment.
+4. Prefer Wingman Yoke for agent and operator workflows when it is available in the target environment.
 
-Wingman Yoke should be the default integration path for workspace-aware automation because it can preserve the active workspace context and reduce manual setup drift.
+Wingman Yoke should be the default integration path for workspace-aware automation because it preserves active workspace context, maintains a local SQLite mirror, and reduces manual setup drift.
+
+## Wingman Yoke
+
+Use Wingman Yoke to connect an agent or operator session to this Flight Deck workspace.
+
+Download and install:
+
+- npm package: `wingman-yoke`
+- source repo: `https://github.com/humansinstitute/wingman-yoke`
+- preferred no-install launch: `npx wingman-yoke --help` or `bunx wingman-yoke --help`
+- global install: `npm install -g wingman-yoke`
+- local clone install:
+
+```bash
+git clone https://github.com/humansinstitute/wingman-yoke.git
+cd wingman-yoke
+npm install
+```
+
+Runtime requirement:
+
+- Node.js `>= 20`
+
+Connect Yoke to this workspace:
+
+```bash
+export WINGMAN_YOKE_NSEC=nsec1...
+wingman-yoke init --token "<connection_token>"
+wingman-yoke sync
+wingman-yoke status
+```
+
+Notes:
+
+- Yoke accepts either the raw `connection_token` or the full Agent Connect JSON package.
+- Yoke stores local state by default in `~/.wingman-yoke/`.
+- If you are running from a local clone, replace `wingman-yoke` with `node src/cli.js`.
 
 ## Package fields
 
 The Agent Connect package includes:
 
+- `kind`: `coworker_agent_connect`
+- `version`: `5`
+- `generated_at`: package creation timestamp
 - `llms_url`: this document
 - `robots_url`: crawler and discovery hints
 - `service.direct_https_url`: the current SuperBased backend
@@ -24,10 +64,13 @@ The Agent Connect package includes:
 - `service.docs_url`: interactive API docs
 - `service.health_url`: service health endpoint
 - `service.service_npub`: service identity when available
+- `service.relay_urls`: relay hints when available
 - `workspace.owner_npub`: workspace owner identity
 - `workspace.owner_pubkey`: workspace owner pubkey in hex when available
 - `app.app_npub`: Flight Deck app/schema identity
+- `app.app_pubkey`: Flight Deck app pubkey in hex when available
 - `connection_token`: a SuperBased connection key for another Coworker or agent session
+- `notes`: short operational hints for importers
 
 ## How Wingman Flight Deck uses SuperBased
 
@@ -60,11 +103,17 @@ The `connection_token` is a base64-encoded JSON object shaped like:
   "direct_https_url": "https://sb4.otherstuff.studio",
   "service_npub": "npub1...",
   "workspace_owner_npub": "npub1...",
-  "app_npub": "npub1..."
+  "app_npub": "npub1...",
+  "relays": [
+    "wss://relay.example"
+  ]
 }
 ```
 
-If `workspace_owner_npub` is absent, agents should default to the current signed-in user only when that is explicitly appropriate for the target workflow.
+Notes:
+
+- `relay` may be present instead of `relays` when there is exactly one relay hint.
+- If `workspace_owner_npub` is absent, agents should default to the current signed-in user only when that is explicitly appropriate for the target workflow.
 
 ## API summary
 
@@ -104,6 +153,10 @@ Important current conventions:
 - `record_state` is usually `active` or `deleted`
 - writes are version checked
 - payloads are wrapped in owner and group payload containers
+- scope records use generic lineage fields `l1_id` through `l5_id`
+- scoped records use `scope_id` plus `scope_l1_id` through `scope_l5_id`
+- task payloads include a `references` array when available
+- report payloads use `metadata` plus a declaration `data` payload
 
 ## Flight Deck record families
 
@@ -114,11 +167,18 @@ Record families are namespaced by the app identity:
 - `<app_npub>:chat_message`
 - `<app_npub>:directory`
 - `<app_npub>:document`
+- `<app_npub>:report`
 - `<app_npub>:task`
 - `<app_npub>:schedule`
 - `<app_npub>:comment`
 - `<app_npub>:audio_note`
 - `<app_npub>:scope`
+
+Current family notes:
+
+- `scope` records now use generic depth labels `l1` through `l5` rather than semantic `product` / `project` / `deliverable` field names.
+- `task`, `document`, `directory`, and `report` records can carry scope lineage fields for filtering and materialization.
+- `report` records are first-class sync families in Flight Deck.
 
 ## Agent workflow
 
@@ -126,10 +186,12 @@ For a new agent session:
 
 1. Import or parse the Agent Connect package.
 2. Read this `llms.txt`.
-3. Prefer Wingman Yoke if present.
+3. Install or launch Wingman Yoke if you need an agent/operator CLI.
 4. Verify the backend with `service.health_url`.
 5. Inspect `service.openapi_url` before making assumptions about route shape.
-6. Use the `connection_token` to bind the agent session to the same workspace.
+6. Run `wingman-yoke init --token "<connection_token>"`.
+7. Run `wingman-yoke sync`.
+8. Use the `connection_token` directly only when Yoke is unavailable or inappropriate for the workflow.
 
 ## Compatibility
 

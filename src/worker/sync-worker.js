@@ -64,6 +64,10 @@ const SCOPE_FAMILY = recordFamilyHash('scope');
 const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
 const WRITE_BATCH_SIZE = 25;
 
+function resolveWorkspaceDbKey(ownerNpub, options = {}) {
+  return String(options.workspaceDbKey || ownerNpub || '').trim();
+}
+
 async function materializeRecordForFamily(family, record) {
   if (family === SETTINGS_FAMILY) {
     const row = await inboundWorkspaceSettings(record);
@@ -104,8 +108,8 @@ async function materializeRecordForFamily(family, record) {
 /**
  * Push all pending writes to the backend then clear them locally.
  */
-export async function flushPendingWrites(ownerNpub, onProgress) {
-  openWorkspaceDb(ownerNpub);
+export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
+  openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
   const pending = await getPendingWrites();
   if (pending.length === 0) return { pushed: 0 };
   let pushed = 0;
@@ -177,12 +181,12 @@ function familyLabel(familyHash) {
 /**
  * Pull records from backend, translate, and materialize locally.
  */
-export async function pullRecords(ownerNpub, viewerNpub = ownerNpub, onProgress) {
-  return pullRecordsForFamilies(ownerNpub, viewerNpub, DEFAULT_FAMILIES, {}, onProgress);
+export async function pullRecords(ownerNpub, viewerNpub = ownerNpub, onProgress, options = {}) {
+  return pullRecordsForFamilies(ownerNpub, viewerNpub, DEFAULT_FAMILIES, options, onProgress);
 }
 
 export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, families = DEFAULT_FAMILIES, options = {}, onProgress) {
-  openWorkspaceDb(ownerNpub);
+  openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
   const forceFull = options.forceFull === true;
   let totalPulled = 0;
   let completedFamilies = 0;
@@ -220,6 +224,7 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
           family,
           recordId: record.record_id,
           error: error?.message || String(error),
+          diagnostics: error?.diagnostics || null,
         });
       }
     }
@@ -248,8 +253,8 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
  * Returns { stale_families: string[], server_cursors: {}, heartbeatUsed: true }
  * On failure (e.g. 404 from old Tower), returns null so caller can fall back.
  */
-export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub) {
-  openWorkspaceDb(ownerNpub);
+export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub, options = {}) {
+  openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
 
   const familyCursors = {};
   for (const family of DEFAULT_FAMILIES) {
@@ -276,10 +281,22 @@ export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub) {
 
 /**
  * Run access pruning after a sync pull, catching errors so sync still succeeds.
+ * Throttled: skips if called again within PRUNE_THROTTLE_MS of the last run.
  */
+const PRUNE_THROTTLE_MS = 30_000;
+let lastPruneTime = 0;
+
+/** Reset throttle state (for testing only). */
+export function resetPruneThrottle() { lastPruneTime = 0; }
+
 async function pruneAfterSync(viewerNpub, ownerNpub) {
+  const now = Date.now();
+  if (now - lastPruneTime < PRUNE_THROTTLE_MS) {
+    return { pruned: 0 };
+  }
   try {
     const result = await pruneInaccessibleRecords(viewerNpub, ownerNpub);
+    lastPruneTime = Date.now();
     if (result.pruned > 0) {
       flightDeckLog('info', 'sync', 'pruned inaccessible local records after sync', {
         viewerNpub,
@@ -302,47 +319,58 @@ async function pruneAfterSync(viewerNpub, ownerNpub) {
  * Full sync cycle: push then pull.
  * Uses heartbeat-first approach: asks the server which families changed,
  * then only pulls stale families. Falls back to full pull if heartbeat unavailable.
+ *
+ * Access pruning only runs when records were actually pulled (pulled > 0),
+ * and is throttled to at most once per PRUNE_THROTTLE_MS to avoid blocking
+ * the main thread with repeated full-table IndexedDB scans.
  */
-export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress) {
+export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, options = {}) {
   if (!getBaseUrl()) throw new Error('Backend URL not configured');
 
   if (onProgress) onProgress({ phase: 'checking' });
 
-  const pushResult = await flushPendingWrites(ownerNpub, onProgress);
+  const pushResult = await flushPendingWrites(ownerNpub, onProgress, options);
 
   // Heartbeat: ask server which families have updates
-  const heartbeat = await heartbeatCheck(ownerNpub, viewerNpub);
+  const heartbeat = await heartbeatCheck(ownerNpub, viewerNpub, options);
 
   if (heartbeat && Array.isArray(heartbeat.stale_families)) {
     // Heartbeat succeeded — only pull stale families
     if (heartbeat.stale_families.length === 0) {
       if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: 0, currentFamily: null, pulled: 0, heartbeat: true });
       if (onProgress) onProgress({ phase: 'applying' });
-      const pruneResult = await pruneAfterSync(viewerNpub, ownerNpub);
-      return { ...pushResult, pulled: 0, heartbeatUsed: true, staleFamilies: 0, ...pruneResult };
+      // Nothing changed on server — skip pruning entirely
+      return { ...pushResult, pulled: 0, pruned: 0, heartbeatUsed: true, staleFamilies: 0 };
     }
 
     if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: heartbeat.stale_families.length, currentFamily: null, pulled: 0, heartbeat: true });
-    const pullResult = await pullRecordsForFamilies(ownerNpub, viewerNpub, heartbeat.stale_families, {}, onProgress);
+    const pullResult = await pullRecordsForFamilies(ownerNpub, viewerNpub, heartbeat.stale_families, options, onProgress);
 
     if (onProgress) onProgress({ phase: 'applying' });
-    const pruneResult = await pruneAfterSync(viewerNpub, ownerNpub);
+    // Only prune when records were actually pulled (group membership may have changed)
+    const pruneResult = pullResult.pulled > 0
+      ? await pruneAfterSync(viewerNpub, ownerNpub)
+      : { pruned: 0 };
     return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: true, staleFamilies: heartbeat.stale_families.length };
   }
 
   // Fallback: heartbeat unavailable, pull all families
   if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: DEFAULT_FAMILIES.length, currentFamily: null, pulled: 0 });
-  const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress);
+  const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress, options);
 
   if (onProgress) onProgress({ phase: 'applying' });
-  const pruneResult = await pruneAfterSync(viewerNpub, ownerNpub);
+  // Only prune when records were actually pulled
+  const pruneResult = pullResult.pulled > 0
+    ? await pruneAfterSync(viewerNpub, ownerNpub)
+    : { pruned: 0 };
   return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: false };
 }
 
 /**
  * Check if local cursors are behind the remote summary.
  */
-export async function checkStaleness(ownerNpub) {
+export async function checkStaleness(ownerNpub, options = {}) {
+  openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
   const summary = await fetchRecordsSummary(ownerNpub);
   if (!summary.available || !Array.isArray(summary.families)) return { stale: false, available: false };
 
