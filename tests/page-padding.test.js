@@ -132,6 +132,26 @@ describe('Mobile responsive padding', () => {
     // If no mobile override exists, that's fine — desktop is already 0
   });
 
+  it('.placeholder-panel must not have left/right padding', () => {
+    // .placeholder-panel is a direct child of .main-content (People section)
+    const padding = getPropertyValue('.placeholder-panel', 'padding');
+    if (padding) {
+      const parts = padding.split(/\s+/);
+      if (parts.length === 1) {
+        // Single value — must be 0 for no horizontal padding
+        // (if non-zero, it applies to all sides including left/right)
+        expect(parts[0]).toBe('0');
+      } else if (parts.length === 2) {
+        expect(parts[1]).toBe('0');
+      } else if (parts.length === 3) {
+        expect(parts[1]).toBe('0');
+      } else if (parts.length === 4) {
+        expect(parts[1]).toBe('0');
+        expect(parts[3]).toBe('0');
+      }
+    }
+  });
+
   it('no media query re-introduces left/right body padding', () => {
     // Find all body rules inside media queries and verify none add horizontal padding
     const mediaBodyRegex = /@media[^{]*\{[^}]*body\s*\{([^}]+)\}/gs;

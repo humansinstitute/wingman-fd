@@ -1321,7 +1321,7 @@ button:disabled {
 .placeholder-panel {
   border: none;
   border-radius: 0;
-  padding: 1.25rem;
+  padding: 1.25rem 0;
   background: transparent;
   box-shadow: none;
   max-width: 760px;
