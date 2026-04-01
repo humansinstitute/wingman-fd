@@ -210,7 +210,45 @@ describe('WP7: can_write vs write field naming', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. WP7 decision log exists
+// 7. Glossary disambiguation pairs in canonical contract
+// ---------------------------------------------------------------------------
+
+describe('WP7: glossary disambiguation pairs', () => {
+  let doc;
+  function getDoc() {
+    if (!doc) doc = readFile('docs/contract/group-signer-share-contract.md');
+    return doc;
+  }
+
+  it('has a glossary section', () => {
+    expect(getDoc()).toMatch(/## \d+\. Glossary/);
+  });
+
+  it('disambiguates group_id vs group_npub', () => {
+    expect(getDoc()).toMatch(/group_id.*vs.*group_npub|group_id.*group_npub/is);
+  });
+
+  it('disambiguates shares vs group_payloads', () => {
+    expect(getDoc()).toMatch(/shares.*vs.*group_payloads|shares.*group_payloads/is);
+  });
+
+  it('disambiguates scope-as-organization vs scope-as-auth', () => {
+    expect(getDoc()).toMatch(/scope.*organization/is);
+    expect(getDoc()).toMatch(/scope.*not.*authorization primitive/is);
+  });
+
+  it('disambiguates workspace session key vs group epoch key vs real user key', () => {
+    expect(getDoc()).toMatch(/workspace session key.*vs.*group epoch key|workspace session key.*group epoch key.*real user key/is);
+  });
+
+  it('disambiguates SSE advisory transport vs pull-time enforcement', () => {
+    expect(getDoc()).toMatch(/SSE.*advisory.*transport|SSE.*advisory/is);
+    expect(getDoc()).toMatch(/pull.*authoritative|pull.*enforcement/is);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. WP7 decision log exists
 // ---------------------------------------------------------------------------
 
 describe('WP7: decision log', () => {
