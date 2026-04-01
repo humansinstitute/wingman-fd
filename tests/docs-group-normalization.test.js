@@ -51,6 +51,7 @@ describe('docs translator — group_id normalization', () => {
 
     const row = await inboundDocument(record);
     expect(row.shares[0].group_id).toBe('uuid-1');
+    expect(row.shares[0].group_npub).toBe('npub_old_epoch1');
     expect(row.shares[0].key).toBe('uuid-1');
   });
 
@@ -78,7 +79,9 @@ describe('docs translator — group_id normalization', () => {
 
     const row = await inboundDirectory(record);
     expect(row.shares[0].group_id).toBe('uuid-dir');
+    expect(row.shares[0].group_npub).toBe('npub_stale_dir');
     expect(row.shares[1].via_group_id).toBe('uuid-dir');
+    expect(row.shares[1].via_group_npub).toBe('npub_stale_dir');
     expect(row.group_ids).toEqual(['uuid-dir']);
   });
 

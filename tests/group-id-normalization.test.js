@@ -147,27 +147,40 @@ describe('normalizeShareGroupRefs', () => {
     expect(result[0].key).toBe('uuid-1');
   });
 
+  it('preserves actual npub in group_npub field, not the resolved UUID', () => {
+    const shares = [
+      { type: 'group', group_npub: 'npub_old_epoch1', access: 'write' },
+    ];
+    const result = normalizeShareGroupRefs(shares, groupPayloads);
+    expect(result[0].group_id).toBe('uuid-1');
+    expect(result[0].group_npub).toBe('npub_old_epoch1');
+  });
+
   it('preserves existing group_id when already a UUID', () => {
     const shares = [
       { type: 'group', group_id: 'uuid-2', group_npub: 'npub_old_epoch2', access: 'read' },
     ];
     const result = normalizeShareGroupRefs(shares, groupPayloads);
     expect(result[0].group_id).toBe('uuid-2');
+    expect(result[0].group_npub).toBe('npub_old_epoch2');
   });
 
-  it('resolves via_group ref to UUID', () => {
+  it('resolves via_group ref to UUID and preserves npub', () => {
     const shares = [
       { type: 'person', person_npub: 'npub_person', via_group_npub: 'npub_old_epoch1', access: 'write' },
     ];
     const result = normalizeShareGroupRefs(shares, groupPayloads);
     expect(result[0].via_group_id).toBe('uuid-1');
+    expect(result[0].via_group_npub).toBe('npub_old_epoch1');
   });
 
-  it('synthesizes shares from group_payloads when dataShares is empty', () => {
+  it('synthesizes shares from group_payloads with correct npub values', () => {
     const result = normalizeShareGroupRefs([], groupPayloads);
     expect(result).toHaveLength(2);
     expect(result[0].group_id).toBe('uuid-1');
+    expect(result[0].group_npub).toBe('npub_old_epoch1');
     expect(result[1].group_id).toBe('uuid-2');
+    expect(result[1].group_npub).toBe('npub_old_epoch2');
     expect(result[0].type).toBe('group');
   });
 

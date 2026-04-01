@@ -43,7 +43,7 @@ import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
-import { pruneInaccessibleRecords } from '../access-pruner.js';
+import { pruneInaccessibleRecords, repairStaleGroupRefs } from '../access-pruner.js';
 import { flightDeckLog } from '../logging.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
@@ -320,11 +320,45 @@ async function executePrune(viewerNpub, ownerNpub) {
 }
 
 /**
+ * Build a npub→UUID repair map from locally stored groups.
+ * Maps both current_group_npub and group_npub to the stable group_id.
+ */
+async function buildNpubToUuidMap() {
+  const groups = await getAllGroups();
+  const map = new Map();
+  for (const group of groups) {
+    if (!group.group_id) continue;
+    if (group.group_npub) map.set(group.group_npub, group.group_id);
+    if (group.current_group_npub) map.set(group.current_group_npub, group.group_id);
+  }
+  return map;
+}
+
+/**
  * Run access pruning immediately — called on login / workspace selection.
  * Bypasses the hourly cooldown so stale data is cleaned up at session start.
+ * Also repairs stale group_npub refs in local records to stable UUIDs.
  */
 export async function pruneOnLogin(viewerNpub, ownerNpub, options = {}) {
   openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
+
+  // Repair stale npub refs before pruning so access checks use canonical IDs
+  try {
+    const npubToUuid = await buildNpubToUuidMap();
+    if (npubToUuid.size > 0) {
+      const repairResult = await repairStaleGroupRefs(npubToUuid);
+      if (repairResult.repaired > 0) {
+        flightDeckLog('info', 'sync', 'repaired stale group refs in local records', {
+          repaired: repairResult.repaired,
+        });
+      }
+    }
+  } catch (error) {
+    flightDeckLog('warn', 'sync', 'stale group ref repair failed', {
+      error: error?.message || String(error),
+    });
+  }
+
   return executePrune(viewerNpub, ownerNpub);
 }
 

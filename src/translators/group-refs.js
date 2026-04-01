@@ -59,16 +59,33 @@ export function extractGroupIds(groupPayloads) {
 }
 
 /**
+ * Build a map from stable group_id (UUID) to the actual group_npub (crypto identity).
+ * Used to preserve real npub values in share objects alongside stable UUIDs.
+ */
+function buildIdToNpubMap(groupPayloads) {
+  const map = new Map();
+  if (!Array.isArray(groupPayloads)) return map;
+  for (const payload of groupPayloads) {
+    if (payload?.group_id && payload?.group_npub) {
+      map.set(payload.group_id, payload.group_npub);
+    }
+  }
+  return map;
+}
+
+/**
  * Normalize share objects so group refs prefer stable UUIDs.
  * When dataShares is empty, synthesizes shares from group_payloads.
  *
- * Output shares always include:
- *   - group_id: stable UUID (canonical ref)
- *   - group_npub: kept for backward compat (may equal group_id)
+ * Output shares include:
+ *   - group_id: stable UUID (canonical product ref)
+ *   - group_npub: the actual rotating npub from group_payloads (crypto identity)
  *   - via_group_id: stable UUID for via ref
+ *   - via_group_npub: actual rotating npub for via ref
  */
 export function normalizeShareGroupRefs(dataShares = [], groupPayloads = []) {
   const groupRefMap = buildGroupRefMap(groupPayloads);
+  const idToNpub = buildIdToNpubMap(groupPayloads);
 
   if (Array.isArray(dataShares) && dataShares.length > 0) {
     return dataShares.map((share) => {
@@ -85,9 +102,9 @@ export function normalizeShareGroupRefs(dataShares = [], groupPayloads = []) {
         label: share?.label ?? '',
         person_npub: share?.person_npub ?? null,
         group_id: groupRef,
-        group_npub: groupRef,
+        group_npub: idToNpub.get(groupRef) ?? share?.group_npub ?? null,
         via_group_id: viaGroupRef,
-        via_group_npub: viaGroupRef,
+        via_group_npub: idToNpub.get(viaGroupRef) ?? share?.via_group_npub ?? null,
         inherited: share?.inherited === true,
         inherited_from_directory_id: share?.inherited_from_directory_id ?? null,
       };
@@ -104,7 +121,7 @@ export function normalizeShareGroupRefs(dataShares = [], groupPayloads = []) {
       label: '',
       person_npub: null,
       group_id: groupRef,
-      group_npub: groupRef,
+      group_npub: payload?.group_npub ?? null,
       via_group_id: null,
       via_group_npub: null,
       inherited: false,

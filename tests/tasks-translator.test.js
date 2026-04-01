@@ -130,7 +130,8 @@ describe('task translator — inbound', () => {
     expect(row.group_ids).toEqual(['group-uuid-1']);
     expect(row.shares).toEqual([
       expect.objectContaining({
-        group_npub: 'group-uuid-1',
+        group_id: 'group-uuid-1',
+        group_npub: 'npub_old_epoch_1',
       }),
     ]);
   });
