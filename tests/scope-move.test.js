@@ -11,6 +11,7 @@ import {
   separateScopeShares,
   rebuildAccessForScope,
   buildScopeMoveUpdate,
+  mergeShareLists,
 } from '../src/scope-move.js';
 
 // ---------------------------------------------------------------------------
@@ -481,5 +482,116 @@ describe('buildScopeMoveUpdate', () => {
     const result = buildScopeMoveUpdate(record, fromScope, toScope, groups, NOW);
 
     expect(result.board_group_id).toBe('g-shared');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. mergeShareLists — dedup-by-key merge helper
+// ---------------------------------------------------------------------------
+
+describe('mergeShareLists', () => {
+  it('merges two disjoint share lists', () => {
+    const a = [makeShare('g-eng')];
+    const b = [makeShare('g-design')];
+    const result = mergeShareLists(a, b);
+    expect(result).toHaveLength(2);
+  });
+
+  it('deduplicates by key, promoting access to write', () => {
+    const a = [makeShare('g-eng', 'read')];
+    const b = [makeShare('g-eng', 'write')];
+    const result = mergeShareLists(a, b);
+    expect(result).toHaveLength(1);
+    expect(result[0].access).toBe('write');
+  });
+
+  it('primary list takes priority for non-access fields', () => {
+    const a = [{ ...makeShare('g-eng', 'read'), label: 'Primary' }];
+    const b = [{ ...makeShare('g-eng', 'write'), label: 'Secondary' }];
+    const result = mergeShareLists(a, b);
+    expect(result[0].label).toBe('Primary');
+    expect(result[0].access).toBe('write');
+  });
+
+  it('handles empty inputs', () => {
+    expect(mergeShareLists([], [])).toEqual([]);
+    expect(mergeShareLists([makeShare('g-eng')], [])).toHaveLength(1);
+    expect(mergeShareLists([], [makeShare('g-eng')])).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. group_payloads alignment — verify outbound group_ids match shares
+// ---------------------------------------------------------------------------
+
+describe('scope move group_payloads alignment', () => {
+  const NOW = '2026-04-01T10:00:00.000Z';
+
+  it('group_ids after broad-to-restricted move only contain destination groups', () => {
+    const broadScope = makeScope('scope-broad', 'l1', ['g-eng', 'g-design', 'g-marketing']);
+    const restrictedScope = makeScope('scope-restricted', 'l1', ['g-eng']);
+    const groups = [makeGroup('g-eng'), makeGroup('g-design'), makeGroup('g-marketing')];
+    const record = makeRecord(
+      'task-1', 'scope-broad',
+      [makeShare('g-eng'), makeShare('g-design'), makeShare('g-marketing')],
+      ['g-eng', 'g-design', 'g-marketing'],
+      2,
+    );
+
+    const result = buildScopeMoveUpdate(record, broadScope, restrictedScope, groups, NOW);
+
+    // group_ids drives group_payloads via outboundTask → buildGroupPayloads
+    expect(result.group_ids).toEqual(['g-eng']);
+    // No stale groups remain
+    expect(result.group_ids).not.toContain('g-design');
+    expect(result.group_ids).not.toContain('g-marketing');
+    // Shares match group_ids (no mismatch)
+    const shareGroupNpubs = result.shares.filter(s => s.type === 'group').map(s => s.group_npub);
+    expect(shareGroupNpubs).toEqual(result.group_ids);
+  });
+
+  it('group_ids after restricted-to-broad move contain all destination groups', () => {
+    const restrictedScope = makeScope('scope-restricted', 'l1', ['g-eng']);
+    const broadScope = makeScope('scope-broad', 'l1', ['g-eng', 'g-design']);
+    const groups = [makeGroup('g-eng'), makeGroup('g-design')];
+    const record = makeRecord(
+      'task-1', 'scope-restricted',
+      [makeShare('g-eng')],
+      ['g-eng'],
+      1,
+    );
+
+    const result = buildScopeMoveUpdate(record, restrictedScope, broadScope, groups, NOW);
+
+    expect(result.group_ids).toContain('g-eng');
+    expect(result.group_ids).toContain('g-design');
+    const shareGroupNpubs = result.shares.filter(s => s.type === 'group').map(s => s.group_npub);
+    expect(new Set(shareGroupNpubs)).toEqual(new Set(result.group_ids));
+  });
+
+  it('shares[] and group_ids stay in sync — no silent mismatch', () => {
+    const fromScope = makeScope('scope-A', 'l1', ['g-old']);
+    const toScope = makeScope('scope-B', 'l1', ['g-new']);
+    const groups = [makeGroup('g-old'), makeGroup('g-new'), makeGroup('g-explicit')];
+    const record = makeRecord(
+      'task-1', 'scope-A',
+      [makeShare('g-old'), makeShare('g-explicit')],
+      ['g-old', 'g-explicit'],
+      3,
+    );
+
+    const result = buildScopeMoveUpdate(record, fromScope, toScope, groups, NOW);
+
+    // Every group share's group_npub must appear in group_ids
+    for (const share of result.shares.filter(s => s.type === 'group')) {
+      expect(result.group_ids).toContain(share.group_npub);
+    }
+    // Every group_id must correspond to at least one share
+    for (const groupId of result.group_ids) {
+      const hasShare = result.shares.some(
+        s => s.group_npub === groupId || s.via_group_npub === groupId,
+      );
+      expect(hasShare).toBe(true);
+    }
   });
 });

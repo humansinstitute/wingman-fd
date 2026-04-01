@@ -132,6 +132,34 @@ export function buildScopeMoveUpdate(record, fromScope, toScope, groups = [], no
   };
 }
 
+/**
+ * Merge two share lists with deduplication by key.
+ * When both lists contain the same key, access is promoted to write if either grants it.
+ *
+ * @param {Array} primaryShares - First share list (takes priority for non-access fields).
+ * @param {Array} secondaryShares - Second share list (merged in).
+ * @returns {Array} Merged shares.
+ */
+export function mergeShareLists(primaryShares = [], secondaryShares = []) {
+  const merged = new Map();
+  for (const share of primaryShares) {
+    if (share?.key) merged.set(share.key, share);
+  }
+  for (const share of secondaryShares) {
+    if (!share?.key) continue;
+    const existing = merged.get(share.key);
+    if (!existing) {
+      merged.set(share.key, share);
+    } else {
+      merged.set(share.key, {
+        ...existing,
+        access: existing.access === 'write' || share.access === 'write' ? 'write' : 'read',
+      });
+    }
+  }
+  return [...merged.values()];
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------

@@ -22,6 +22,11 @@ import {
   normalizeGroupIds,
 } from './scope-delivery.js';
 import {
+  separateScopeShares,
+  rebuildAccessForScope,
+  mergeShareLists,
+} from './scope-move.js';
+import {
   getTaskBoardScopeLabel,
   isTaskUnscoped,
   matchesTaskBoardScope,
@@ -653,8 +658,13 @@ export const taskBoardStateMixin = {
 
   buildTaskBoardAssignment(scopeId, fallbackTask = null) {
     if (scopeId === ALL_TASK_BOARD_ID || scopeId === RECENT_TASK_BOARD_ID || scopeId === UNSCOPED_TASK_BOARD_ID) {
+      // Moving to unscoped — strip old scope shares, keep explicit
       const groupId = this.getWorkspaceSettingsGroupRef();
-      const shares = groupId ? this.buildScopeDefaultShares([groupId]) : this.getDefaultPrivateShares();
+      const fromScope = fallbackTask?.scope_id ? this.scopesMap.get(fallbackTask.scope_id) : null;
+      const fromGroupIds = fromScope ? this.getScopeShareGroupIds(fromScope) : [];
+      const { explicitShares } = separateScopeShares(toRaw(fallbackTask?.shares ?? []), fromGroupIds);
+      const defaultShares = groupId ? this.buildScopeDefaultShares([groupId]) : this.getDefaultPrivateShares();
+      const merged = mergeShareLists(defaultShares, explicitShares);
       return {
         scope_id: null,
         scope_l1_id: null,
@@ -663,8 +673,8 @@ export const taskBoardStateMixin = {
         scope_l4_id: null,
         scope_l5_id: null,
         board_group_id: groupId || fallbackTask?.board_group_id || null,
-        group_ids: this.getShareGroupIds(shares),
-        shares: toRaw(shares),
+        group_ids: this.getShareGroupIds(merged),
+        shares: toRaw(merged),
       };
     }
     const scope = this.scopesMap.get(scopeId) || null;
@@ -682,12 +692,19 @@ export const taskBoardStateMixin = {
       };
     }
 
-    const groupIds = this.getScopeShareGroupIds(scope);
+    // Scope move: separate old scope shares from explicit, rebuild for destination
+    const fromScope = fallbackTask?.scope_id ? this.scopesMap.get(fallbackTask.scope_id) : null;
+    const fromGroupIds = fromScope ? this.getScopeShareGroupIds(fromScope) : [];
+    const { explicitShares } = separateScopeShares(toRaw(fallbackTask?.shares ?? []), fromGroupIds);
+    const rebuilt = rebuildAccessForScope(explicitShares, scope, this.groups);
+    const groupIds = rebuilt.group_ids.map((id) => this.resolveGroupId(id)).filter(Boolean);
+    const boardGroupId = groupIds.includes(fallbackTask?.board_group_id) ? fallbackTask.board_group_id : (groupIds[0] || null);
+
     return {
       ...buildScopeTags(scope),
-      board_group_id: groupIds[0] || null,
+      board_group_id: boardGroupId,
       group_ids: groupIds,
-      shares: this.buildScopeDefaultShares(groupIds),
+      shares: toRaw(rebuilt.shares),
     };
   },
 
@@ -730,6 +747,52 @@ export const taskBoardStateMixin = {
 
   normalizeScopeRowGroupRefs(scope) {
     return normalizeScopeRowGroupRefs(scope, (ref) => this.resolveGroupId(ref));
+  },
+
+  // --- section collapse ---
+
+  isSectionCollapsed(state) {
+    return Boolean(this.collapsedSections[state]);
+  },
+
+  toggleSectionCollapse(state) {
+    this.collapsedSections = {
+      ...this.collapsedSections,
+      [state]: !this.collapsedSections[state],
+    };
+    this.persistCollapsedSections();
+  },
+
+  persistCollapsedSections() {
+    if (typeof window === 'undefined') return;
+    const slug = this.currentWorkspaceSlug;
+    const key = slug
+      ? `coworker:${slug}:collapsed-sections`
+      : 'coworker:collapsed-sections';
+    const active = Object.fromEntries(
+      Object.entries(this.collapsedSections).filter(([, v]) => v)
+    );
+    if (Object.keys(active).length > 0) {
+      window.localStorage.setItem(key, JSON.stringify(active));
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  },
+
+  readStoredCollapsedSections() {
+    if (typeof window === 'undefined') return {};
+    const slug = this.currentWorkspaceSlug;
+    const key = slug
+      ? `coworker:${slug}:collapsed-sections`
+      : 'coworker:collapsed-sections';
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    } catch {
+      return {};
+    }
   },
 
   // --- board picker ---
