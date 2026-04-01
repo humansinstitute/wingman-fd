@@ -378,12 +378,17 @@ export async function fetchRecordsSummary(ownerNpub) {
 
 // --- Records sync ---
 
-export async function syncRecords({ owner_npub, records }) {
+export async function syncRecords({ owner_npub, records, signing_npub }) {
   const proofPayload = { owner_npub, records };
   const groupWriteTokens = {};
 
   for (const record of records) {
-    const isOwnerSignedRecord = String(record?.signature_npub || '').trim() === String(owner_npub || '').trim();
+    const sigNpub = String(record?.signature_npub || '').trim();
+    const owner = String(owner_npub || '').trim();
+    // Owner write: direct (real key matches owner) or delegated (workspace
+    // session key — Tower resolves ws_key_npub → real user for ownership).
+    const isOwnerSignedRecord = sigNpub === owner
+      || (signing_npub && sigNpub === String(signing_npub).trim());
     if (isOwnerSignedRecord) continue;
     const groupRef = String(record?.write_group_id || record?.write_group_npub || '').trim();
     if (!groupRef || groupWriteTokens[groupRef]) continue;

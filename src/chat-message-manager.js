@@ -443,8 +443,8 @@ export const chatMessageManagerMixin = {
         group_ids: [groupId],
         participant_npubs: [memberNpub, this.botNpub],
         record_state: 'active',
-        signature_npub: this.session?.npub,
-        write_group_npub: groupId,
+        signature_npub: this.signingNpub,
+        write_group_ref: groupId,
       });
 
       await addPendingWrite({
@@ -500,8 +500,8 @@ export const chatMessageManagerMixin = {
         version: nextVersion,
         previous_version: channel.version ?? 1,
         record_state: 'deleted',
-        signature_npub: this.session?.npub,
-        write_group_npub: this.getPreferredChannelWriteGroup(channel),
+        signature_npub: this.signingNpub,
+        write_group_ref: this.getPreferredChannelWriteGroup(channel),
       });
 
       await addPendingWrite({
@@ -547,7 +547,7 @@ export const chatMessageManagerMixin = {
       target_record_id: msgId,
       target_record_family_hash: recordFamilyHash('chat_message'),
       target_group_ids: channel.group_ids ?? [],
-      write_group_npub: this.getPreferredChannelWriteGroup(channel),
+      write_group_ref: this.getPreferredChannelWriteGroup(channel),
     });
 
     const localRow = {
@@ -578,8 +578,8 @@ export const chatMessageManagerMixin = {
       body,
       attachments,
       channel_group_ids: channel.group_ids ?? [],
-      write_group_npub: this.getPreferredChannelWriteGroup(channel),
-      signature_npub: this.session?.npub,
+      write_group_ref: this.getPreferredChannelWriteGroup(channel),
+      signature_npub: this.signingNpub,
     });
 
     await addPendingWrite({
@@ -627,7 +627,7 @@ export const chatMessageManagerMixin = {
       target_record_id: msgId,
       target_record_family_hash: recordFamilyHash('chat_message'),
       target_group_ids: channel.group_ids ?? [],
-      write_group_npub: this.getPreferredChannelWriteGroup(channel),
+      write_group_ref: this.getPreferredChannelWriteGroup(channel),
     });
 
     const localRow = {
@@ -657,8 +657,8 @@ export const chatMessageManagerMixin = {
       body,
       attachments,
       channel_group_ids: channel.group_ids ?? [],
-      write_group_npub: this.getPreferredChannelWriteGroup(channel),
-      signature_npub: this.session?.npub,
+      write_group_ref: this.getPreferredChannelWriteGroup(channel),
+      signature_npub: this.signingNpub,
     });
 
     await addPendingWrite({
@@ -746,10 +746,10 @@ export const chatMessageManagerMixin = {
         parent_message_id: message.parent_message_id,
         body: message.body,
         channel_group_ids: channel?.group_ids ?? [],
-        write_group_npub: this.getPreferredChannelWriteGroup(channel),
+        write_group_ref: this.getPreferredChannelWriteGroup(channel),
         version: nextVersion,
         previous_version: message.version ?? 1,
-        signature_npub: this.session?.npub,
+        signature_npub: this.signingNpub,
         record_state: 'deleted',
       });
 

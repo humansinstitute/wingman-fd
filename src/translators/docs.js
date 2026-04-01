@@ -59,7 +59,7 @@ export async function outboundDirectory({
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
-  write_group_npub = null,
+  write_group_ref = null,
   record_state = 'active',
 }) {
   const innerPayload = {
@@ -88,7 +88,7 @@ export async function outboundDirectory({
     version,
     previous_version,
     signature_npub,
-    ...buildWriteGroupFields(write_group_npub),
+    ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(innerPayload, shares),
   };
@@ -135,7 +135,7 @@ export async function outboundDocument({
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
-  write_group_npub = null,
+  write_group_ref = null,
   record_state = 'active',
 }) {
   const innerPayload = {
@@ -165,7 +165,7 @@ export async function outboundDocument({
     version,
     previous_version,
     signature_npub,
-    ...buildWriteGroupFields(write_group_npub),
+    ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(innerPayload, shares),
   };

@@ -381,8 +381,8 @@ export const scopesManagerMixin = {
     const envelope = await outboundDocument({
       ...updated,
       previous_version: doc.version ?? 1,
-      signature_npub: this.session.npub,
-      write_group_npub: updated.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: updated.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -483,8 +483,8 @@ export const scopesManagerMixin = {
     const envelope = await outboundChannel({
       ...updated,
       previous_version: ch.version ?? 1,
-      signature_npub: this.session.npub,
-      write_group_npub: updated.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: updated.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -518,8 +518,8 @@ export const scopesManagerMixin = {
       ...row,
       version: row.version ?? 1,
       previous_version: previous?.version ?? 0,
-      signature_npub: this.session?.npub,
-      write_group_npub: row.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: row.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: row.record_id,
@@ -717,8 +717,8 @@ export const scopesManagerMixin = {
 
     const envelope = await outboundScope({
       ...localRow,
-      signature_npub: this.session.npub,
-      write_group_npub: localRow.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: localRow.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: recordId,
@@ -800,8 +800,8 @@ export const scopesManagerMixin = {
     const envelope = await outboundScope({
       ...updated,
       previous_version: scope.version ?? 1,
-      signature_npub: this.session.npub,
-      write_group_npub: updated.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: updated.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -832,9 +832,9 @@ export const scopesManagerMixin = {
     const envelope = await outboundScope({
       ...updated,
       previous_version: scope.version ?? 1,
-      signature_npub: this.session.npub,
+      signature_npub: this.signingNpub,
       record_state: 'deleted',
-      write_group_npub: updated.group_ids?.[0] || null,
+      write_group_ref: updated.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: scopeId,

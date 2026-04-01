@@ -475,7 +475,7 @@ export const docsManagerMixin = {
       target_record_id: recordId,
       target_record_family_hash: recordFamilyHash('comment'),
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      write_group_npub: doc?.group_ids?.[0] || null,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     const localRow = {
       record_id: recordId,
@@ -506,8 +506,8 @@ export const docsManagerMixin = {
     const envelope = await outboundComment({
       ...localRow,
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      signature_npub: this.session.npub,
-      write_group_npub: doc?.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: recordId,
@@ -536,7 +536,7 @@ export const docsManagerMixin = {
       target_record_id: recordId,
       target_record_family_hash: recordFamilyHash('comment'),
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      write_group_npub: doc?.group_ids?.[0] || null,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     const localRow = {
       record_id: recordId,
@@ -566,8 +566,8 @@ export const docsManagerMixin = {
     const envelope = await outboundComment({
       ...localRow,
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      signature_npub: this.session.npub,
-      write_group_npub: doc?.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: recordId,
@@ -608,8 +608,8 @@ export const docsManagerMixin = {
       ...updated,
       previous_version: comment.version ?? 1,
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      signature_npub: this.session.npub,
-      write_group_npub: doc?.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1093,8 +1093,8 @@ export const docsManagerMixin = {
         scope_l4_id: row.scope_l4_id ?? null,
         scope_l5_id: row.scope_l5_id ?? null,
         shares: row.shares,
-        signature_npub: this.session?.npub,
-        write_group_npub: row.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: row.group_ids?.[0] || null,
       }),
     });
 
@@ -1157,8 +1157,8 @@ export const docsManagerMixin = {
         scope_l4_id: row.scope_l4_id ?? null,
         scope_l5_id: row.scope_l5_id ?? null,
         shares: row.shares,
-        signature_npub: this.session?.npub,
-        write_group_npub: row.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: row.group_ids?.[0] || null,
       }),
     });
 
@@ -1216,8 +1216,8 @@ export const docsManagerMixin = {
         shares,
         version: nextVersion,
         previous_version: item.version ?? 1,
-        signature_npub: this.session?.npub,
-        write_group_npub: updated.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: updated.group_ids?.[0] || null,
       }),
     });
 
@@ -1286,8 +1286,8 @@ export const docsManagerMixin = {
           shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
-          signature_npub: this.session?.npub,
-          write_group_npub: updated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: updated.group_ids?.[0] || null,
         }),
       });
 

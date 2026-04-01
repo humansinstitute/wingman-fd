@@ -517,8 +517,8 @@ export const channelsManagerMixin = {
         group_ids: [groupId],
         participant_npubs: [memberNpub, targetNpub],
         record_state: 'active',
-        signature_npub: this.session?.npub,
-        write_group_npub: groupId,
+        signature_npub: this.signingNpub,
+        write_group_ref: groupId,
       });
 
       await addPendingWrite({
@@ -567,8 +567,8 @@ export const channelsManagerMixin = {
         group_ids: [groupId],
         participant_npubs: [...new Set(participants)],
         record_state: 'active',
-        signature_npub: this.session?.npub,
-        write_group_npub: groupId,
+        signature_npub: this.signingNpub,
+        write_group_ref: groupId,
       });
 
       await addPendingWrite({

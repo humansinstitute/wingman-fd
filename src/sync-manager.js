@@ -307,7 +307,7 @@ export const syncManagerMixin = {
         version,
         previous_version: previousVersion,
         signature_npub: this.session?.npub,
-        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
       });
     }
 
@@ -324,7 +324,7 @@ export const syncManagerMixin = {
         version,
         previous_version: previousVersion,
         signature_npub: this.session?.npub,
-        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
       });
     }
 
@@ -341,7 +341,7 @@ export const syncManagerMixin = {
         version,
         previous_version: previousVersion,
         signature_npub: this.session?.npub,
-        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
       });
     }
 
@@ -403,7 +403,7 @@ export const syncManagerMixin = {
       previous_version: 0,
       target_group_ids: targetGroupIds,
       signature_npub: this.session?.npub,
-      write_group_npub: null,
+      write_group_ref: null,
     });
   },
 

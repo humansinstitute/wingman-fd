@@ -84,7 +84,7 @@ export async function outboundChatMessage({
   body,
   attachments = [],
   channel_group_ids,
-  write_group_npub = null,
+  write_group_ref = null,
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
@@ -111,7 +111,7 @@ export async function outboundChatMessage({
     version,
     previous_version,
     signature_npub: signature_npub,
-    ...buildWriteGroupFields(write_group_npub),
+    ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(channel_group_ids || [], innerPayload),
   };
@@ -135,7 +135,7 @@ export async function outboundChannel({
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
-  write_group_npub = null,
+  write_group_ref = null,
   record_state = 'active',
 }) {
   const innerPayload = {
@@ -163,7 +163,7 @@ export async function outboundChannel({
     version,
     previous_version,
     signature_npub,
-    ...buildWriteGroupFields(write_group_npub),
+    ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(group_ids || [], innerPayload),
   };

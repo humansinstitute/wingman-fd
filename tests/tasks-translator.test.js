@@ -206,7 +206,7 @@ describe('task translator — outbound', () => {
       owner_npub: 'npub_owner',
       title: 'Legacy group task',
       group_ids: ['group-uuid-1'],
-      write_group_npub: 'npub1grouprefexample',
+      write_group_ref: 'npub1grouprefexample',
     });
 
     expect(envelope.write_group_id).toBeUndefined();

@@ -677,7 +677,7 @@ export const workspaceManagerMixin = {
         version: nextVersion,
         previous_version: Math.max(0, nextVersion - 1),
         signature_npub: this.session?.npub || workspaceOwnerNpub,
-        write_group_npub: writeGroupRef,
+        write_group_ref: writeGroupRef,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -769,7 +769,7 @@ export const workspaceManagerMixin = {
       version: nextVersion,
       previous_version: Math.max(0, nextVersion - 1),
       signature_npub: this.session.npub,
-      write_group_npub: writeGroupRef,
+      write_group_ref: writeGroupRef,
     });
     await addPendingWrite({
       record_id: recordId,

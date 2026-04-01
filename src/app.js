@@ -255,6 +255,10 @@ export function initApp() {
     backgroundSyncTimer: null,
     backgroundSyncInFlight: false,
     syncBackoffMs: 0,
+    sseConnected: false,
+    _sseConnecting: false,
+    _sseCallbackRegistered: false,
+    catchUpSyncActive: false,
     hasBootstrappedUnreadTracking: false,
     visibilityHandler: null,
     lastGroupsRefreshAt: 0,
@@ -1088,6 +1092,8 @@ export function initApp() {
     async bootstrapSelectedWorkspace(options = {}) {
       if (!this.selectedWorkspaceKey && !this.currentWorkspaceOwnerNpub) return;
       await this.refreshGroups();
+      // Fetch ws_key → user_npub mappings for display identity resolution
+      this.refreshWorkspaceKeyMappings().catch(() => {});
       if (options.runAccessPrune === true) {
         this.runAccessPruneOnLogin().catch(() => {});
       }
@@ -2498,8 +2504,8 @@ export function initApp() {
 
         const envelope = await outboundSchedule({
           ...localRow,
-          signature_npub: this.session.npub,
-          write_group_npub: groupId,
+          signature_npub: this.signingNpub,
+          write_group_ref: groupId,
         });
         await addPendingWrite({
           record_id: localRow.record_id,
@@ -2566,8 +2572,8 @@ export function initApp() {
         const envelope = await outboundSchedule({
           ...updated,
           previous_version: current.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: writeGroupId,
+          signature_npub: this.signingNpub,
+          write_group_ref: writeGroupId,
         });
         await addPendingWrite({
           record_id: updated.record_id,
@@ -2615,8 +2621,8 @@ export function initApp() {
         const envelope = await outboundSchedule({
           ...updated,
           previous_version: schedule.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: updated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: updated.group_ids?.[0] || null,
         });
         await addPendingWrite({
           record_id: updated.record_id,
@@ -2671,8 +2677,8 @@ export function initApp() {
 
       const envelope = await outboundTask({
         ...localRow,
-        signature_npub: this.session.npub,
-        write_group_npub: localRow.board_group_id || localRow.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: localRow.board_group_id || localRow.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -2687,8 +2693,8 @@ export function initApp() {
       const envelope = await outboundTask({
         ...updatedTask,
         previous_version: previousTask?.version ?? 0,
-        signature_npub: this.session?.npub,
-        write_group_npub: updatedTask.board_group_id || updatedTask.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: updatedTask.board_group_id || updatedTask.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: updatedTask.record_id,
@@ -2828,8 +2834,8 @@ export function initApp() {
 
       const envelope = await outboundTask({
         ...localRow,
-        signature_npub: this.session.npub,
-        write_group_npub: localRow.board_group_id || localRow.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: localRow.board_group_id || localRow.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -2979,9 +2985,9 @@ export function initApp() {
       const envelope = await outboundTask({
         ...updated,
         previous_version: task.version ?? 1,
-        signature_npub: this.session.npub,
+        signature_npub: this.signingNpub,
         record_state: 'deleted',
-        write_group_npub: updated.board_group_id || updated.group_ids?.[0] || null,
+        write_group_ref: updated.board_group_id || updated.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: task.record_id,
@@ -3158,7 +3164,7 @@ export function initApp() {
         target_record_id: recordId,
         target_record_family_hash: recordFamilyHash('comment'),
         target_group_ids: toRaw(task?.group_ids ?? []),
-        write_group_npub: task?.board_group_id || task?.group_ids?.[0] || null,
+        write_group_ref: task?.board_group_id || task?.group_ids?.[0] || null,
       });
 
       const localRow = {
@@ -3185,8 +3191,8 @@ export function initApp() {
       const envelope = await outboundComment({
         ...localRow,
         target_group_ids: toRaw(task?.group_ids ?? []),
-        signature_npub: this.session.npub,
-        write_group_npub: task?.board_group_id || task?.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: task?.board_group_id || task?.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -3463,8 +3469,8 @@ export function initApp() {
             version: nextVersion,
             previous_version: item.version ?? 1,
             record_state: 'deleted',
-            signature_npub: this.session?.npub,
-            write_group_npub: item.group_ids?.[0] || null,
+            signature_npub: this.signingNpub,
+            write_group_ref: item.group_ids?.[0] || null,
           }),
         });
       }
@@ -3561,8 +3567,8 @@ export function initApp() {
         const subEnvelope = await outboundTask({
           ...subUpdated,
           previous_version: sub.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: subUpdated.board_group_id || subUpdated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: subUpdated.board_group_id || subUpdated.group_ids?.[0] || null,
         });
         await addPendingWrite({
           record_id: sub.record_id,
@@ -3574,8 +3580,8 @@ export function initApp() {
       const envelope = await outboundTask({
         ...updated,
         previous_version: task.version ?? 1,
-        signature_npub: this.session.npub,
-        write_group_npub: updated.board_group_id || updated.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: updated.board_group_id || updated.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: taskId,
@@ -3766,8 +3772,8 @@ export function initApp() {
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: updated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: updated.group_ids?.[0] || null,
         })
         : await outboundDocument({
           record_id: updated.record_id,
@@ -3784,8 +3790,8 @@ export function initApp() {
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: updated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: updated.group_ids?.[0] || null,
         });
 
       await addPendingWrite({
@@ -4083,9 +4089,9 @@ export function initApp() {
           envelope: await outboundDirectory({
             ...updated,
             previous_version: directory.version ?? 1,
-            signature_npub: this.session.npub,
+            signature_npub: this.signingNpub,
             shares,
-            write_group_npub: updated.group_ids?.[0] || null,
+            write_group_ref: updated.group_ids?.[0] || null,
           }),
         });
       }
@@ -4107,9 +4113,9 @@ export function initApp() {
           envelope: await outboundDocument({
             ...updated,
             previous_version: doc.version ?? 1,
-            signature_npub: this.session.npub,
+            signature_npub: this.signingNpub,
             shares,
-            write_group_npub: updated.group_ids?.[0] || null,
+            write_group_ref: updated.group_ids?.[0] || null,
           }),
         });
       }
