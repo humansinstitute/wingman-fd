@@ -11,10 +11,22 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-q2muZ5BF.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DNyXtBuY.css">
+  <script type="module" crossorigin src="/assets/index-3sorwWxD.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CQbRmJvm.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
+  <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
+  <template x-if="$store.chat.catchUpSyncActive">
+    <div class="catchup-overlay">
+      <div class="catchup-modal">
+        <div class="catchup-title">Catching up...</div>
+        <div class="sync-progress-bar-track" style="width:220px;margin:12px auto;">
+          <div class="sync-progress-bar-fill" :style="'width:' + $store.chat.syncProgressPercent() + '%'"></div>
+        </div>
+        <div class="catchup-label" x-text="$store.chat.syncProgressLabel()"></div>
+      </div>
+    </div>
+  </template>
   <main class="app-shell">
     <template x-if="$store.chat.error">
       <div class="error-bar" x-text="$store.chat.error"></div>
@@ -1011,12 +1023,12 @@
           <template x-if="!$store.chat.showTaskDetail && $store.chat.taskViewMode === 'kanban'">
             <div class="kanban-board">
               <template x-for="col in $store.chat.boardColumns" :key="col.state">
-                <div class="kanban-column" :class="`kanban-col-${col.state}`">
-                  <div class="kanban-column-header">
+                <div class="kanban-column" :class="{ [`kanban-col-${col.state}`]: true, 'kanban-column-collapsed': $store.chat.isSectionCollapsed(col.state) }">
+                  <div class="kanban-column-header" @click="$store.chat.toggleSectionCollapse(col.state)" style="cursor: pointer;">
                     <span class="kanban-column-title" x-text="col.label"></span>
-                    <span class="kanban-column-count" x-text="col.tasks.length"></span>
+                    <span class="kanban-column-count" @click.stop="$store.chat.selectColumnTasks(col.state)" x-text="col.tasks.length" title="Select all tasks in this column"></span>
                   </div>
-                  <div class="kanban-column-body"
+                  <div class="kanban-column-body" x-show="!$store.chat.isSectionCollapsed(col.state)"
                     @dragover.prevent="col.state !== 'summary' && $store.chat.handleTaskDragOver($event, col.state)"
                     @dragleave="$store.chat.handleTaskDragLeave($event)"
                     @drop.prevent="$store.chat.handleTaskDrop($event, col.state)"
@@ -1099,11 +1111,11 @@
             <div class="task-list-view">
               <template x-for="group in $store.chat.listGroupedTasks" :key="group.state">
                 <div class="task-list-group">
-                  <div class="task-list-group-header" :class="`task-list-group-${group.state}`">
+                  <div class="task-list-group-header" :class="`task-list-group-${group.state}`" @click="$store.chat.toggleSectionCollapse(group.state)" style="cursor: pointer;">
                     <span class="task-list-group-label" x-text="group.label"></span>
-                    <span class="kanban-column-count" x-text="group.tasks.length"></span>
+                    <span class="kanban-column-count" @click.stop="$store.chat.selectColumnTasks(group.state)" x-text="group.tasks.length" title="Select all tasks in this group"></span>
                   </div>
-                  <div class="task-list-rows">
+                  <div class="task-list-rows" x-show="!$store.chat.isSectionCollapsed(group.state)">
                     <template x-for="task in group.tasks" :key="task.record_id">
                       <div>
                         <div
@@ -1182,8 +1194,8 @@
                   <button
                     type="button"
                     class="task-copy-btn"
-                    @click="$store.chat.copyTaskLink($store.chat.editingTask.record_id)"
-                    x-text="$store.chat.copiedTaskLinkId === $store.chat.editingTask.record_id ? 'Copied link' : 'Copy link'"
+                    @click="if ($store.chat.editingTask?.record_id) $store.chat.copyTaskLink($store.chat.editingTask.record_id)"
+                    x-text="$store.chat.editingTask?.record_id && $store.chat.copiedTaskLinkId === $store.chat.editingTask.record_id ? 'Copied link' : 'Copy link'"
                   ></button>
                   <div class="doc-actions-menu task-actions-menu" x-data="{ open: false }" @click.outside="open = false">
                     <button type="button" class="doc-actions-toggle" title="More actions" aria-label="More actions" @click="open = !open">
@@ -1196,9 +1208,9 @@
                     <div class="doc-actions-popover" x-show="open" x-cloak x-transition>
                       <button
                         type="button"
-                        @click="$store.chat.openRecordStatusModal({ familyId: 'task', recordId: $store.chat.editingTask.record_id, label: $store.chat.editingTask.title || 'Task' }); open = false"
+                        @click="if ($store.chat.editingTask?.record_id) $store.chat.openRecordStatusModal({ familyId: 'task', recordId: $store.chat.editingTask.record_id, label: $store.chat.editingTask.title || 'Task' }); open = false"
                       >Check status</button>
-                      <button type="button" class="doc-actions-delete" @click="if(confirm('Delete this task?')) $store.chat.deleteTask($store.chat.editingTask.record_id); open = false">Delete task</button>
+                      <button type="button" class="doc-actions-delete" @click="if($store.chat.editingTask?.record_id && confirm('Delete this task?')) $store.chat.deleteTask($store.chat.editingTask.record_id); open = false">Delete task</button>
                     </div>
                   </div>
                 </div>
@@ -1388,7 +1400,7 @@
                   <div class="subtask-list-field">
                     <label class="task-field-label">Subtasks</label>
                     <div class="subtask-list">
-                      <template x-for="st in $store.chat.getSubtasks($store.chat.editingTask.record_id)" :key="st.record_id">
+                      <template x-for="st in ($store.chat.editingTask?.record_id ? $store.chat.getSubtasks($store.chat.editingTask.record_id) : [])" :key="st.record_id">
                         <div class="subtask-row" @click="$store.chat.openTaskDetail(st.record_id)">
                           <span class="progress-dot" :style="`background: ${$store.chat.stateColor(st.state)}`"></span>
                           <span class="subtask-title" x-text="st.title"></span>
@@ -1400,10 +1412,10 @@
                           <input
                             type="text"
                             x-model="$store.chat.newSubtaskTitle"
-                            @keydown.enter.prevent="$store.chat.addSubtask($store.chat.editingTask.record_id)"
+                            @keydown.enter.prevent="if ($store.chat.editingTask?.record_id) $store.chat.addSubtask($store.chat.editingTask.record_id)"
                             placeholder="Add subtask..."
                           />
-                          <button type="button" @click="$store.chat.addSubtask($store.chat.editingTask.record_id)">+</button>
+                          <button type="button" @click="if ($store.chat.editingTask?.record_id) $store.chat.addSubtask($store.chat.editingTask.record_id)">+</button>
                         </div>
                       </template>
                     </div>
@@ -1444,7 +1456,7 @@
                     <textarea
                       x-model="$store.chat.newTaskCommentBody"
                       @input="$store.chat.handleMentionInput($event.target)"
-                      @keydown="$store.chat.handleComposerKeydown($event, () => $store.chat.addTaskComment($store.chat.editingTask.record_id))"
+                      @keydown="$store.chat.handleComposerKeydown($event, () => { if ($store.chat.editingTask?.record_id) $store.chat.addTaskComment($store.chat.editingTask.record_id); })"
                       @paste="$store.chat.handleTaskCommentPaste($event)"
                       placeholder="Add a comment..."
                       rows="2"
@@ -1453,7 +1465,7 @@
                       <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('task-comment')" title="Record voice note">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
                       </button>
-                      <button type="button" @click="$store.chat.addTaskComment($store.chat.editingTask.record_id)" :disabled="((!$store.chat.newTaskCommentBody.trim() && $store.chat.taskCommentAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newTaskCommentBody))">Post</button>
+                      <button type="button" @click="if ($store.chat.editingTask?.record_id) $store.chat.addTaskComment($store.chat.editingTask.record_id)" :disabled="!$store.chat.editingTask?.record_id || ((!$store.chat.newTaskCommentBody.trim() && $store.chat.taskCommentAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newTaskCommentBody))">Post</button>
                     </div>
                   </div>
                   <div class="audio-draft-list" x-show="$store.chat.taskCommentAudioDrafts.length > 0">
@@ -1519,6 +1531,7 @@
               </summary>
               <div class="chat-channel-menu-popover">
                 <button type="button" @click="$store.chat.openChannelSettings(); $event.target.closest('details').open = false">Channel settings</button>
+                <button type="button" @click="$store.chat.openRecordStatusModal({ familyId: 'channel', recordId: $store.chat.selectedChannelId, label: $store.chat.getChannelLabel($store.chat.selectedChannel) || 'Channel' }); $event.target.closest('details').open = false">Check sync status</button>
               </div>
             </details>
           </div>
@@ -4046,6 +4059,7 @@
                     <div class="trigger-info">
                       <strong x-text="trigger.name"></strong>
                       <span class="trigger-type-badge" x-text="$store.chat.triggerTypeLabel(trigger.triggerType)"></span>
+                      <span class="trigger-bot-label" x-show="trigger.triggerType === 'chat_channel_message'" x-text="'Channel: ' + $store.chat.getTriggerChannelLabel(trigger)"></span>
                       <span class="trigger-bot-label" x-text="'Bot: ' + $store.chat.getSenderName(trigger.botNpub || '')"></span>
                     </div>
                     <div class="trigger-actions">
@@ -4082,10 +4096,19 @@
               <h4>Add Trigger</h4>
               <div class="trigger-form-row">
                 <label class="settings-field-label">When</label>
-                <select x-model="$store.chat.newTriggerType">
+                <select x-model="$store.chat.newTriggerType" @change="$store.chat.onTriggerTypeChange()">
                   <option value="manual">Manual (fire button)</option>
                   <option value="chat_bot_tagged">Bot is @tagged anywhere</option>
                   <option value="chat_channel_message">Chat: Any message in channel</option>
+                </select>
+              </div>
+              <div class="trigger-form-row" x-show="$store.chat.newTriggerType === 'chat_channel_message'">
+                <label class="settings-field-label">Channel</label>
+                <select x-model="$store.chat.newTriggerChannelId">
+                  <option value="">Any channel</option>
+                  <template x-for="channel in $store.chat.triggerChannelOptions" :key="`trigger-channel-${channel.id}`">
+                    <option :value="channel.id" x-text="channel.label"></option>
+                  </template>
                 </select>
               </div>
               <div class="trigger-form-row">
@@ -4109,8 +4132,8 @@
                   type="text"
                   x-show="!$store.chat.newTriggerBotNpub"
                   x-model="$store.chat.newTriggerBotQuery"
-                  placeholder="Type a name or paste npub1..."
-                  @keydown.enter.prevent="if ($store.chat.newTriggerBotQuery.trim().startsWith('npub1')) $store.chat.selectTriggerBot($store.chat.newTriggerBotQuery.trim())"
+                  placeholder="Type a name, paste npub1..., or paste a hex pubkey"
+                  @keydown.enter.prevent="$store.chat.handleTriggerBotEnter()"
                 />
                 <ul class="docs-share-suggestions" x-show="$store.chat.triggerBotSuggestions.length > 0 && !$store.chat.newTriggerBotNpub">
                   <template x-for="person in $store.chat.triggerBotSuggestions" :key="`trigger-bot-${person.npub}`">
@@ -4672,13 +4695,25 @@
                     <strong x-text="$store.chat.getRecordStatusFamilyLabel($store.chat.recordStatusFamilyId)"></strong>
                   </div>
                 <div class="record-status-metric">
+                  <span class="record-status-label">Local version</span>
+                  <strong x-text="$store.chat.recordStatusLocalPresent ? ($store.chat.recordStatusLocalVersion || 1) : 'Missing'"></strong>
+                </div>
+                <div class="record-status-metric">
                   <span class="record-status-label">Tower versions</span>
                   <strong x-text="$store.chat.recordStatusTowerVersionCount"></strong>
+                </div>
+                <div class="record-status-metric">
+                  <span class="record-status-label">Tower latest</span>
+                  <strong x-text="$store.chat.recordStatusTowerLatestVersion || 0"></strong>
                 </div>
                 <div class="record-status-metric">
                   <span class="record-status-label">Local copy</span>
                   <strong x-text="$store.chat.recordStatusLocalPresent ? 'Present' : 'Missing'"></strong>
                 </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Local sync</span>
+                    <strong x-text="$store.chat.recordStatusLocalPresent ? ($store.chat.recordStatusLocalSyncStatus || 'unknown') : 'Missing'"></strong>
+                  </div>
                   <div class="record-status-metric">
                     <span class="record-status-label">Last Tower update</span>
                     <strong x-text="$store.chat.recordStatusTowerUpdatedAt ? $store.chat.formatRelativeTime($store.chat.recordStatusTowerUpdatedAt) : 'Unknown'"></strong>
@@ -4707,7 +4742,7 @@
                 <span x-show="$store.chat.recordStatusBusy">Checking...</span>
               </button>
               <button type="button" class="btn-confirm" @click="$store.chat.forcePushRecordStatusTarget()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canForcePushRecordStatusTarget()">
-                <span x-show="!$store.chat.recordStatusSyncBusy">Force push</span>
+                <span x-show="!$store.chat.recordStatusSyncBusy">Force submit</span>
                 <span x-show="$store.chat.recordStatusSyncBusy">Pushing...</span>
               </button>
             </div>
