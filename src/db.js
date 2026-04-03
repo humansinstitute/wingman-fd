@@ -20,6 +20,14 @@ sharedDb.version(1).stores({
   address_book:        'npub, last_used_at',
 });
 
+sharedDb.version(2).stores({
+  app_settings:        '++id',
+  storage_image_cache: '&object_id, cached_at',
+  profiles:            'pubkey',
+  address_book:        'npub, last_used_at',
+  workspace_keys:      '&workspace_owner_npub, user_npub, ws_key_npub',
+});
+
 // ---------------------------------------------------------------------------
 // Workspace DB — one per workspace identity key.
 // Contains ALL record / sync tables.
@@ -246,10 +254,19 @@ export async function getWorkspaceSettings(workspaceOwnerNpub) {
 
 export async function getWorkspaceSettingsSnapshot(workspaceDbKey, workspaceOwnerNpub) {
   if (!workspaceDbKey || !workspaceOwnerNpub) return null;
+  // Reuse the already-open workspace DB when the key matches to avoid
+  // creating (and schema-parsing) a throwaway Dexie instance on every call.
+  if (_currentWorkspaceDbKey === workspaceDbKey && _currentWorkspaceDb) {
+    try {
+      return await _currentWorkspaceDb.workspace_settings.get(workspaceOwnerNpub);
+    } catch {
+      return null;
+    }
+  }
   const tempDb = createWorkspaceDb(workspaceDbKey);
   try {
     await tempDb.open();
-    return tempDb.workspace_settings.get(workspaceOwnerNpub);
+    return await tempDb.workspace_settings.get(workspaceOwnerNpub);
   } catch {
     return null;
   } finally {

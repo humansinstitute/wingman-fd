@@ -515,7 +515,7 @@ export const docsManagerMixin = {
       envelope,
     });
     this._fireMentionTriggers(body, `doc comment on "${doc.title}"`);
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
   },
 
   async addDocCommentReply() {
@@ -575,7 +575,7 @@ export const docsManagerMixin = {
       envelope,
     });
     this._fireMentionTriggers(body, `doc comment reply on "${doc.title}"`);
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
   },
 
   async setDocCommentStatus(commentId, nextStatus) {
@@ -616,7 +616,7 @@ export const docsManagerMixin = {
       record_family_hash: envelope.record_family_hash,
       envelope,
     });
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
     if (status === 'resolved') {
       this.selectedDocCommentId = null;
       this.newDocCommentReplyBody = '';
@@ -1100,7 +1100,7 @@ export const docsManagerMixin = {
 
     await this.refreshDirectories();
     this.navigateToFolder(recordId);
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
   },
 
   async createDocument(title = 'Untitled document') {
@@ -1164,7 +1164,7 @@ export const docsManagerMixin = {
 
     await this.refreshDocuments();
     this.openDoc(recordId);
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
   },
 
   async saveSelectedDirectoryItem() {
@@ -1221,7 +1221,7 @@ export const docsManagerMixin = {
       }),
     });
 
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
     await this.refreshDirectories();
     await this.refreshDocuments();
     this.docEditorSharesDirty = false;
@@ -1303,7 +1303,7 @@ export const docsManagerMixin = {
         }
       }
 
-      await this.performSync({ silent: autosave, showBusy: !autosave });
+      await this.flushAndBackgroundSync();
       await this.refreshDirectories();
       await this.refreshDocuments();
       this.docEditorSharesDirty = false;

@@ -13,6 +13,7 @@ import {
 let activeSessionNpub = null;
 const groupKeysByNpub = new Map();
 const groupKeysById = new Map();
+let _bootstrapLock = null;
 let lastBootstrapDiagnostics = {
   attempted: 0,
   loaded: 0,
@@ -99,6 +100,13 @@ function rememberGroupKey(groupEntry) {
   }
 }
 
+export function cacheGroupKey(groupEntry) {
+  if (!groupEntry?.group_npub || !groupEntry?.nsec) {
+    throw new Error('group_npub and nsec are required to cache a group key');
+  }
+  rememberGroupKey(groupEntry);
+}
+
 function buildLoadedGroupKeyDiagnostics() {
   const loadedById = Array.from(groupKeysById.entries()).map(([group_id, keyring]) => {
     const keys = Array.from(keyring.values());
@@ -121,19 +129,47 @@ function buildLoadedGroupKeyDiagnostics() {
 }
 
 export async function bootstrapWrappedGroupKeys(entries = []) {
-  clearGroupKeyCache();
+  // Serialize concurrent calls — only one bootstrap runs at a time.
+  // Later callers wait for the in-flight bootstrap to finish, then run theirs.
+  while (_bootstrapLock) await _bootstrapLock;
+
+  let unlock;
+  _bootstrapLock = new Promise((resolve) => { unlock = resolve; });
+
+  try {
+    return await _bootstrapWrappedGroupKeysInner(entries);
+  } finally {
+    _bootstrapLock = null;
+    unlock();
+  }
+}
+
+async function _bootstrapWrappedGroupKeysInner(entries) {
+  const newKeysByNpub = new Map();
+  const newKeysById = new Map();
+  const failures = [];
+
   for (const entry of entries) {
     if (!entry?.group_npub || !entry?.wrapped_group_nsec) continue;
-  }
-
-  const failures = [];
-  for (const entry of entries) {
     try {
       const nsec = await personalDecryptFromNpub(entry.wrapped_by_npub, entry.wrapped_group_nsec);
-      rememberGroupKey({
-        ...entry,
+      const secret = decodeNsec(nsec);
+      const key = {
+        group_id: entry.group_id,
+        group_npub: entry.group_npub,
+        name: entry.name || '',
+        key_version: entry.key_version ?? 1,
         nsec,
-      });
+        secret,
+        secretHex: bytesToHex(secret),
+        pubkeyHex: secretToPubkey(secret),
+      };
+      newKeysByNpub.set(entry.group_npub, key);
+      if (entry.group_id) {
+        const keyring = newKeysById.get(entry.group_id) ?? new Map();
+        keyring.set(key.key_version, key);
+        newKeysById.set(entry.group_id, keyring);
+      }
     } catch (error) {
       failures.push({
         group_id: entry.group_id || null,
@@ -145,6 +181,23 @@ export async function bootstrapWrappedGroupKeys(entries = []) {
     }
   }
 
+  // Merge new keys into the existing cache rather than replacing.
+  // Keys that decrypted successfully overwrite their previous version.
+  // Keys that failed to decrypt are left untouched if they were previously
+  // loaded — this prevents transient failures from wiping working keys.
+  // Keys not present in the new set at all are also preserved (defensive).
+  if (newKeysByNpub.size > 0) {
+    for (const [k, v] of newKeysByNpub) groupKeysByNpub.set(k, v);
+    for (const [k, v] of newKeysById) {
+      const existing = groupKeysById.get(k);
+      if (existing) {
+        for (const [ver, key] of v) existing.set(ver, key);
+      } else {
+        groupKeysById.set(k, v);
+      }
+    }
+  }
+
   const loadedDiagnostics = buildLoadedGroupKeyDiagnostics();
   lastBootstrapDiagnostics = {
     attempted: entries.length,
@@ -153,6 +206,10 @@ export async function bootstrapWrappedGroupKeys(entries = []) {
     loadedById: loadedDiagnostics.loadedById,
     loadedByNpub: loadedDiagnostics.loadedByNpub,
   };
+
+  if (failures.length > 0) {
+    console.warn('[group-keys] bootstrap failures:', failures.length, 'of', entries.length, failures);
+  }
 
   return {
     attempted: entries.length,

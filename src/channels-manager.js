@@ -31,6 +31,7 @@ import {
 import {
   bootstrapWrappedGroupKeys,
   buildWrappedMemberKeys,
+  cacheGroupKey,
   createGroupIdentity,
   getLastGroupKeyBootstrapDiagnostics,
   wrapKnownGroupKeyForMember,
@@ -265,6 +266,15 @@ export const channelsManagerMixin = {
 
     await upsertGroup(group);
     await this.refreshGroups();
+    // Keep the freshly created epoch-1 key locally even if the follow-up
+    // /groups/keys bootstrap path lags or fails for this render cycle.
+    cacheGroupKey({
+      group_id: group.group_id,
+      group_npub: group.group_npub,
+      name: group.name,
+      key_version: group.current_epoch ?? 1,
+      nsec: groupIdentity.nsec,
+    });
     await this.rememberPeople(uniqueMembers, 'group');
     return group;
   },
@@ -314,6 +324,13 @@ export const channelsManagerMixin = {
     if (options.refresh !== false) {
       await this.refreshGroups();
     }
+    cacheGroupKey({
+      group_id: updatedGroup.group_id,
+      group_npub: updatedGroup.group_npub,
+      name: updatedGroup.name,
+      key_version: updatedGroup.current_epoch ?? group.current_epoch + 1,
+      nsec: groupIdentity.nsec,
+    });
     return updatedGroup;
   },
 
@@ -527,7 +544,7 @@ export const channelsManagerMixin = {
         envelope,
       });
 
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.selectChannel(channelId, { syncRoute: false });
       this.closeNewChannelModal();
     } catch (e) {
@@ -577,7 +594,7 @@ export const channelsManagerMixin = {
         envelope,
       });
 
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.selectChannel(channelId, { syncRoute: false });
       this.closeNewChannelModal();
     } catch (e) {

@@ -21,6 +21,7 @@ import { connectSettingsManagerMixin } from './connect-settings-manager.js';
 import { unreadStoreMixin } from './unread-store.js';
 import {
   taskBoardStateMixin,
+  dedupeTasksByRecordId,
   UNSCOPED_TASK_BOARD_ID,
   WEEKDAY_OPTIONS,
 } from './task-board-state.js';
@@ -136,6 +137,7 @@ import {
   setActiveSessionNpub,
   wrapKnownGroupKeyForMember,
 } from './crypto/group-keys.js';
+import { getActiveWorkspaceKeyNpub } from './crypto/workspace-keys.js';
 import { findWorkspaceByKey, mergeWorkspaceEntries, workspaceFromToken, findWorkspaceBySlug } from './workspaces.js';
 import { parseRouteLocation } from './route-helpers.js';
 import { extractInviteToken } from './invite-link.js';
@@ -185,6 +187,17 @@ function getReportDerivedCache(cacheStore, store) {
   return created;
 }
 
+function mergeTaskIntoList(tasks = [], nextTask) {
+  const recordId = String(nextTask?.record_id || '').trim();
+  if (!recordId) return Array.isArray(tasks) ? [...tasks] : [];
+  const current = Array.isArray(tasks) ? tasks : [];
+  const existingIndex = current.findIndex((task) => task?.record_id === recordId);
+  if (existingIndex === -1) return [...current, nextTask];
+  const merged = [...current];
+  merged[existingIndex] = nextTask;
+  return merged;
+}
+
 export function initApp() {
   const initialRoute = typeof window === 'undefined'
     ? { section: 'status' }
@@ -204,6 +217,9 @@ export function initApp() {
     ownerNpub: '',
     botNpub: '',
     session: null,
+    get signingNpub() {
+      return getActiveWorkspaceKeyNpub() || this.session?.npub || null;
+    },
     settingsTab: 'workspace',
     navSection: initialRoute.section,
     calendarViews: CALENDAR_VIEWS,
@@ -321,6 +337,7 @@ export function initApp() {
     boardPickerQuery: '',
     showBoardDescendantTasks: false,
     taskViewMode: 'kanban',
+    collapsedSections: {},
     taskBoardScopeSetupInFlight: false,
     newTaskTitle: '',
     newSubtaskTitle: '',
@@ -490,8 +507,11 @@ export function initApp() {
     recordStatusError: null,
     recordStatusNotice: '',
     recordStatusTowerVersionCount: 0,
+    recordStatusTowerLatestVersion: 0,
     recordStatusTowerUpdatedAt: '',
     recordStatusLocalPresent: false,
+    recordStatusLocalVersion: 0,
+    recordStatusLocalSyncStatus: '',
     recordStatusPendingWriteCount: 0,
     recordStatusWriteGroupRef: '',
     recordStatusWriteGroupLabel: '',
@@ -506,6 +526,7 @@ export function initApp() {
     newTriggerType: 'manual',
     newTriggerName: '',
     newTriggerId: '',
+    newTriggerChannelId: '',
     newTriggerBotNpub: '',
     newTriggerBotQuery: '',
     triggerMessage: {},
@@ -1098,6 +1119,7 @@ export function initApp() {
         this.runAccessPruneOnLogin().catch(() => {});
       }
       this.selectedBoardId = this.readStoredTaskBoardId();
+      this.collapsedSections = this.readStoredCollapsedSections();
       this.validateSelectedBoardId();
       await this.applyRouteFromLocation();
       await this.refreshSyncStatus();
@@ -1621,8 +1643,8 @@ export function initApp() {
       if (activeSection !== 'tasks' && activeSection !== 'calendar') {
         this.tasks = [];
         this.taskComments = [];
-        this.editingTask = null;
         this.showTaskDetail = false;
+        this.editingTask = null;
       }
       if (activeSection !== 'docs') {
         this.documents = [];
@@ -2040,17 +2062,27 @@ export function initApp() {
       // Skip if we already have cached data and no new records were pulled
       if (this.statusRecentChanges.length > 0 && !options.force && !options.hasNewData) return;
       const sinceIso = new Date(Date.now() - this.getStatusRangeMs()).toISOString();
-      const messages = await getRecentChatMessagesSince(sinceIso);
-      const documents = await getRecentDocumentChangesSince(sinceIso);
-      const directories = await getRecentDirectoryChangesSince(sinceIso);
-      const reports = await getRecentReportChangesSince(sinceIso);
-      const tasks = await getRecentTaskChangesSince(sinceIso);
-      const schedules = await getRecentScheduleChangesSince(sinceIso);
-      const comments = await getRecentCommentsSince(sinceIso);
+      const [messages, documents, directories, reports, tasks, schedules, comments] = await Promise.all([
+        getRecentChatMessagesSince(sinceIso),
+        getRecentDocumentChangesSince(sinceIso),
+        getRecentDirectoryChangesSince(sinceIso),
+        getRecentReportChangesSince(sinceIso),
+        getRecentTaskChangesSince(sinceIso),
+        getRecentScheduleChangesSince(sinceIso),
+        getRecentCommentsSince(sinceIso),
+      ]);
       const items = [];
 
+      // Batch-load channels for messages instead of one query per message
+      const messageChannelIds = [...new Set(messages.map((m) => m.channel_id).filter(Boolean))];
+      const channelMap = new Map();
+      await Promise.all(messageChannelIds.map(async (channelId) => {
+        const ch = await getChannelById(channelId);
+        if (ch) channelMap.set(channelId, ch);
+      }));
+
       for (const message of messages) {
-        const channel = await getChannelById(message.channel_id);
+        const channel = channelMap.get(message.channel_id);
         if (!channel || channel.record_state === 'deleted') continue;
 
         this.resolveChatProfile(message.sender_npub);
@@ -2145,9 +2177,17 @@ export function initApp() {
         });
       }
 
-      for (const comment of comments) {
-        if (!String(comment.target_record_family_hash || '').endsWith(':task')) continue;
-        const task = await getTaskById(comment.target_record_id);
+      // Batch-load tasks for comments instead of one query per comment
+      const taskComments = comments.filter((c) => String(c.target_record_family_hash || '').endsWith(':task'));
+      const commentTaskIds = [...new Set(taskComments.map((c) => c.target_record_id).filter(Boolean))];
+      const taskMap = new Map();
+      await Promise.all(commentTaskIds.map(async (taskId) => {
+        const t = await getTaskById(taskId);
+        if (t) taskMap.set(taskId, t);
+      }));
+
+      for (const comment of taskComments) {
+        const task = taskMap.get(comment.target_record_id);
         if (!task || task.record_state === 'deleted') continue;
 
         this.resolveChatProfile(comment.sender_npub);
@@ -2296,24 +2336,25 @@ export function initApp() {
         const normalized = this.normalizeTaskRowScopeRefs(normalizedGroups);
         normalizedTasks.push(normalized);
       }
-      if (!sameListBySignature(this.tasks, normalizedTasks, (task) => [
+      const dedupedTasks = dedupeTasksByRecordId(normalizedTasks);
+      if (!sameListBySignature(this.tasks, dedupedTasks, (task) => [
         String(task?.record_id || ''),
         String(task?.updated_at || ''),
         String(task?.version ?? ''),
         String(task?.record_state || ''),
         String(task?.state || ''),
       ].join('|'))) {
-        this.tasks = normalizedTasks;
+        this.tasks = dedupedTasks;
       }
       // Resolve assignee profiles for display but do NOT write back to
       // Dexie (address book) from a liveQuery handler — that creates a
       // reactive cascade.  Profile resolution is fire-and-forget here.
-      const assignedNpubs = [...new Set(normalizedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
+      const assignedNpubs = [...new Set(dedupedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
       for (const npub of assignedNpubs) {
         this.resolveChatProfile(npub);
       }
       this.selectedTaskIds = this.selectedTaskIds.filter((taskId) =>
-        normalizedTasks.some((task) => task.record_id === taskId && task.record_state !== 'deleted' && !this.isParentTask(taskId))
+        dedupedTasks.some((task) => task.record_id === taskId && task.record_state !== 'deleted' && !this.isParentTask(taskId))
       );
       this.normalizeTaskFilterTags();
       this.updatePageTitle();
@@ -2512,7 +2553,7 @@ export function initApp() {
           record_family_hash: envelope.record_family_hash,
           envelope,
         });
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
         await this.refreshSchedules();
         this.resetNewScheduleForm();
         this.showNewScheduleModal = false;
@@ -2580,7 +2621,7 @@ export function initApp() {
           record_family_hash: envelope.record_family_hash,
           envelope,
         });
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
         await this.refreshSchedules();
         this.cancelEditSchedule();
       } catch (err) {
@@ -2629,7 +2670,7 @@ export function initApp() {
           record_family_hash: envelope.record_family_hash,
           envelope,
         });
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
       } catch (err) {
         this.error = `Failed to delete schedule: ${err.message}`;
       }
@@ -2672,7 +2713,7 @@ export function initApp() {
       };
 
       await upsertTask(localRow);
-      this.tasks = [...this.tasks, localRow];
+      this.tasks = mergeTaskIntoList(this.tasks, localRow);
       this.newTaskTitle = '';
 
       const envelope = await outboundTask({
@@ -2685,7 +2726,7 @@ export function initApp() {
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshTasks();
     },
 
@@ -2743,7 +2784,7 @@ export function initApp() {
       }
 
       if (options.sync !== false) {
-        await this.performSync({ silent: options.silent !== false });
+        await this.flushAndBackgroundSync();
       }
       if (options.refresh) {
         await this.refreshTasks();
@@ -2829,7 +2870,7 @@ export function initApp() {
       };
 
       await upsertTask(localRow);
-      this.tasks = [...this.tasks, localRow];
+      this.tasks = mergeTaskIntoList(this.tasks, localRow);
       this.newSubtaskTitle = '';
 
       const envelope = await outboundTask({
@@ -2842,7 +2883,7 @@ export function initApp() {
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshTasks();
     },
 
@@ -2934,7 +2975,7 @@ export function initApp() {
           }
         }
       }
-      await this.performSync({ silent: true });
+      await this.flushAndBackgroundSync();
       await this.refreshTasks();
     },
 
@@ -2966,7 +3007,7 @@ export function initApp() {
         this.closeTaskDetail();
       }
 
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
     },
 
     async _softDeleteTask(task) {
@@ -3023,12 +3064,12 @@ export function initApp() {
 
     closeTaskDetail(options = {}) {
       this.stopTaskCommentsLiveQuery();
+      this.showTaskDetail = false;
       this.activeTaskId = null;
       this.editingTask = null;
       this.taskAssigneeQuery = '';
       this.taskScopeCascadePending = false;
       this.taskScopeCascadeMessage = '';
-      this.showTaskDetail = false;
       this.taskComments = [];
       if (options.syncRoute !== false) this.syncRoute();
     },
@@ -3200,7 +3241,7 @@ export function initApp() {
         envelope,
       });
       this._fireMentionTriggers(body, `task comment on "${task?.title || taskId}"`);
-      await this.performSync({ silent: true });
+      await this.flushAndBackgroundSync();
     },
 
     // --- Scope management (extracted to scopes-manager.js) ---
@@ -3266,6 +3307,19 @@ export function initApp() {
       this.selectedTaskIds = [...new Set([...this.selectedTaskIds, ...visibleTaskIds])];
     },
 
+    selectColumnTasks(columnState) {
+      const col = this.boardColumns.find((c) => c.state === columnState)
+        || this.listGroupedTasks.find((g) => g.state === columnState);
+      if (!col) return;
+      const colIds = col.tasks.map((t) => t.record_id);
+      const allSelected = colIds.length > 0 && colIds.every((id) => this.selectedTaskIds.includes(id));
+      if (allSelected) {
+        this.selectedTaskIds = this.selectedTaskIds.filter((id) => !colIds.includes(id));
+      } else {
+        this.selectedTaskIds = [...new Set([...this.selectedTaskIds, ...colIds])];
+      }
+    },
+
     clearSelectedTasks() {
       this.selectedTaskIds = [];
     },
@@ -3301,7 +3355,7 @@ export function initApp() {
           if (!patch) continue;
           await this.applyTaskPatch(taskId, patch, { sync: false });
         }
-        await this.performSync({ silent: true });
+        await this.flushAndBackgroundSync();
         await this.refreshTasks();
         this.clearSelectedTasks();
       } finally {
@@ -3409,7 +3463,7 @@ export function initApp() {
           });
         }
         this.closeDocMoveModal();
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
         await this.refreshDirectories();
         await this.refreshDocuments();
         this.clearSelectedDocs();
@@ -3495,7 +3549,7 @@ export function initApp() {
           confirmMessage: `Delete ${this.selectedDocIds.length} document${this.selectedDocIds.length === 1 ? '' : 's'}?`,
         });
         if (!removed) return;
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
         await this.refreshDirectories();
         await this.refreshDocuments();
         this.clearSelectedDocs();
@@ -3588,7 +3642,7 @@ export function initApp() {
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
-      await this.performSync({ silent: true });
+      await this.flushAndBackgroundSync();
       await this.refreshTasks();
     },
 
@@ -3801,7 +3855,7 @@ export function initApp() {
       });
 
       if (options.sync !== false) {
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
       }
       if (options.refresh !== false) {
         await this.refreshDirectories();
@@ -4122,7 +4176,7 @@ export function initApp() {
 
       // Navigate up to parent
       this.navigateToFolder(dir.parent_directory_id || null);
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshDirectories();
       await this.refreshDocuments();
     },
@@ -4139,7 +4193,7 @@ export function initApp() {
         confirmMessage: 'Delete this document?',
       });
       if (!removed) return;
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshDirectories();
       await this.refreshDocuments();
       const [first] = this.filteredDocRows;

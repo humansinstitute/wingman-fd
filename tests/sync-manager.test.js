@@ -27,6 +27,8 @@ vi.mock('../src/db.js', () => ({
   upsertTask: vi.fn(async () => {}),
   upsertDocument: vi.fn(async () => {}),
   upsertDirectory: vi.fn(async () => {}),
+  upsertChannel: vi.fn(async () => {}),
+  upsertMessage: vi.fn(async () => {}),
   getCommentsByTarget: vi.fn(async () => []),
   upsertComment: vi.fn(async () => {}),
 }));
@@ -37,11 +39,29 @@ vi.mock('../src/sync-worker-client.js', () => ({
   pruneOnLogin: vi.fn(),
   startWorkerFlushTimer: vi.fn(),
   stopWorkerFlushTimer: vi.fn(),
+  connectSSE: vi.fn(),
+  disconnectSSE: vi.fn(),
+  setSSEStatusCallback: vi.fn(),
+  flushNow: vi.fn(),
+}));
+
+vi.mock('../src/auth/nostr.js', () => ({
+  createNip98AuthHeaderForSecret: vi.fn(),
+}));
+
+vi.mock('../src/crypto/workspace-keys.js', () => ({
+  getActiveWorkspaceKeySecretForAuth: vi.fn(() => null),
+  isWorkspaceKeyRegistered: vi.fn(() => false),
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
+
+vi.mock('../src/translators/chat.js', () => ({
+  outboundChannel: vi.fn(async (payload) => ({ ...payload, record_family_hash: 'family:channel' })),
+  outboundChatMessage: vi.fn(async (payload) => ({ ...payload, record_family_hash: 'family:chat_message' })),
+}));
 
 // ---------------------------------------------------------------------------
 // Helper: create a fake store with all mixin methods applied
@@ -91,8 +111,11 @@ function createStore(overrides = {}) {
     recordStatusError: null,
     recordStatusNotice: '',
     recordStatusTowerVersionCount: 0,
+    recordStatusTowerLatestVersion: 0,
     recordStatusTowerUpdatedAt: '',
     recordStatusLocalPresent: false,
+    recordStatusLocalVersion: 0,
+    recordStatusLocalSyncStatus: '',
     recordStatusPendingWriteCount: 0,
     recordStatusWriteGroupRef: '',
     recordStatusWriteGroupLabel: '',
@@ -214,6 +237,49 @@ describe('repair UI', () => {
     });
     fn();
     expect(store.repairSelectedFamilyIds).toEqual([]);
+  });
+});
+
+describe('record status actions', () => {
+  it('enables force submit for pending local changes even when Tower already has versions', () => {
+    const store = createStore({
+      recordStatusTargetId: 'msg-1',
+      recordStatusFamilyId: 'chat_message',
+      recordStatusLocalPresent: true,
+      recordStatusTowerVersionCount: 1,
+      recordStatusTowerLatestVersion: 1,
+      recordStatusLocalVersion: 2,
+      recordStatusLocalSyncStatus: 'failed',
+      recordStatusPendingWriteCount: 0,
+    });
+    expect(store.canForcePushRecordStatusTarget()).toBe(true);
+  });
+
+  it('builds chat message force-submit envelopes from the channel group', async () => {
+    const store = createStore({
+      session: { npub: 'npub1viewer' },
+      signingNpub: 'npub1workspacekey',
+      workspaceOwnerNpub: 'npub1owner',
+      recordStatusTowerLatestVersion: 3,
+      channels: [{
+        record_id: 'ch-1',
+        owner_npub: 'npub1owner',
+        group_ids: ['group-1'],
+        participant_npubs: ['npub1viewer'],
+      }],
+    });
+    const envelope = await store.buildRecordStatusEnvelope({
+      record_id: 'msg-1',
+      channel_id: 'ch-1',
+      body: 'hello',
+      attachments: [],
+      record_state: 'active',
+      version: 2,
+    }, 'chat_message', { bootstrap: false });
+
+    expect(envelope.version).toBe(4);
+    expect(envelope.previous_version).toBe(3);
+    expect(envelope.channel_group_ids).toEqual(['group-1']);
   });
 });
 
@@ -665,7 +731,7 @@ describe('record status modal', () => {
 
     await fn({ familyId: 'document', recordId: 'doc-1', label: 'Doc One' });
 
-    expect(store.recordStatusNotice).toBe('Doc One is missing on Tower. You can force push this local record.');
+    expect(store.recordStatusNotice).toBe('Doc One is missing on Tower. You can force submit this local snapshot as version 1.');
     expect(store.recordStatusTowerVersionCount).toBe(0);
   });
 
@@ -706,7 +772,7 @@ describe('record status modal', () => {
 
     expect(store.recordStatusWriteGroupRef).toBe('group-1');
     expect(store.recordStatusWriteGroupLabel).toBe('Scope Writers');
-    expect(store.recordStatusNotice).toBe('Task One is missing on Tower. You can force push this local record.');
+    expect(store.recordStatusNotice).toBe('Task One is missing on Tower. You can force submit this local snapshot as version 1.');
   });
 
   it('force-pushes the current local snapshot plus local comments as fresh v1 records and clears stale pending writes', async () => {
@@ -928,7 +994,7 @@ describe('record status modal', () => {
     });
     expect(removeRecordStatusPendingWrite).not.toHaveBeenCalled();
     expect(store.documents[0].version).toBe(1);
-    expect(store.recordStatusNotice).toContain('new Documents version 1');
+    expect(store.recordStatusNotice).toContain('Documents version 1');
   });
 });
 
@@ -972,7 +1038,7 @@ describe('syncNow', () => {
       performSync,
       ensureBackgroundSync,
     });
-    await expect(fn()).resolves.not.toThrow();
+    await fn();
     expect(ensureBackgroundSync).toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import { setBaseUrl } from './api.js';
 import { getExtensionPublicKey, signEventWithExtension } from './auth/nostr.js';
 import { exportDecryptedKeys, getActiveSessionNpub } from './crypto/group-keys.js';
+import { exportWorkspaceKeyForWorker } from './crypto/workspace-keys.js';
 
 const REQUEST_TYPE = 'sync-worker:request';
 const PROGRESS_TYPE = 'sync-worker:progress';
@@ -8,6 +9,9 @@ const RESPONSE_TYPE = 'sync-worker:response';
 const AUTH_REQUEST_TYPE = 'sync-worker:auth-request';
 const AUTH_RESPONSE_TYPE = 'sync-worker:auth-response';
 const BOOTSTRAP_KEYS_TYPE = 'sync-worker:bootstrap-keys';
+const SSE_STATUS_TYPE = 'sync-worker:sse-status';
+
+let _sseStatusCallback = null;
 
 let workerInstance = null;
 let nextRequestId = 1;
@@ -123,6 +127,13 @@ function handleWorkerMessage(event) {
     return;
   }
 
+  if (message.type === SSE_STATUS_TYPE) {
+    if (typeof _sseStatusCallback === 'function') {
+      _sseStatusCallback(message);
+    }
+    return;
+  }
+
   if (message.type !== RESPONSE_TYPE) return;
 
   const request = pendingRequests.get(message.id);
@@ -211,6 +222,7 @@ function syncKeysToWorker(worker) {
       type: BOOTSTRAP_KEYS_TYPE,
       sessionNpub: getActiveSessionNpub(),
       keys: exportDecryptedKeys(),
+      wsKey: exportWorkspaceKeyForWorker(),
     });
   } catch {
     /* ignore — keys will be missing and records will quarantine */
@@ -306,6 +318,14 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, opt
   return enqueue('runSync', { ownerNpub, viewerNpub, options }, onProgress);
 }
 
+/**
+ * Flush pending writes to Tower without pulling or running a heartbeat.
+ * Returns { pushed } — much faster than runSync for write-then-continue flows.
+ */
+export async function flushOnly(ownerNpub, onProgress, options = {}) {
+  return enqueue('flushOnly', { ownerNpub, options }, onProgress);
+}
+
 export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, families = [], options = {}, onProgress) {
   return enqueue('pullRecordsForFamilies', { ownerNpub, viewerNpub, families, options }, onProgress);
 }
@@ -316,4 +336,40 @@ export async function pruneOnLogin(viewerNpub, ownerNpub, options = {}) {
 
 export async function checkStaleness(ownerNpub, options = {}) {
   return enqueue('checkStaleness', { ownerNpub, options });
+}
+
+// --- SSE control ---
+
+export function setSSEStatusCallback(callback) {
+  _sseStatusCallback = callback;
+}
+
+export function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey) {
+  const worker = ensureWorkerInstance();
+  if (!worker) return;
+  syncKeysToWorker(worker);
+  try {
+    worker.postMessage({
+      type: 'sync-worker:sse-connect',
+      ownerNpub,
+      viewerNpub,
+      backendUrl,
+      token,
+      workspaceDbKey,
+    });
+  } catch { /* ignore */ }
+}
+
+export function disconnectSSE() {
+  if (!workerInstance) return;
+  try {
+    workerInstance.postMessage({ type: 'sync-worker:sse-disconnect' });
+  } catch { /* ignore */ }
+}
+
+export function flushNow() {
+  if (!workerInstance) return;
+  try {
+    workerInstance.postMessage({ type: 'sync-worker:flush-now' });
+  } catch { /* ignore */ }
 }

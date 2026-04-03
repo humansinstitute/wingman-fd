@@ -2,6 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/auth/nostr.js', () => ({
   createNip98AuthHeader: vi.fn(async (requestUrl, method) => `NIP98 ${method} ${requestUrl}`),
+  createNip98AuthHeaderForSecret: vi.fn(async (requestUrl, method) => `NIP98-SECRET ${method} ${requestUrl}`),
+}));
+
+vi.mock('../src/crypto/workspace-keys.js', () => ({
+  getActiveWorkspaceKeySecretForAuth: vi.fn(() => null),
+  getActiveWorkspaceKeyNpub: vi.fn(() => null),
+}));
+
+vi.mock('../src/crypto/group-keys.js', () => ({
+  createGroupWriteAuthHeader: vi.fn(async (groupRef) => `proof:${groupRef}`),
+  getActiveSessionNpub: vi.fn(() => null),
 }));
 
 describe('workspace API host binding', () => {

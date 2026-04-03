@@ -2,7 +2,14 @@ import { finalizeEvent, nip44, SimplePool } from 'nostr-tools';
 import { getMemorySecret, decodeNpub } from './auth/nostr.js';
 
 const TRIGGER_KIND = 9256;
-const RELAYS = ['wss://relay.primal.net', 'wss://relay.damus.io'];
+const RELAYS = [
+  'wss://relay.primal.net',
+  'wss://relay.damus.io',
+  'wss://relay.nsec.app',
+  'wss://nos.lol',
+  'wss://relay.getalby.com/v1',
+  'wss://nostr.mineracks.com',
+];
 
 function normalizeSecret(secret) {
   if (secret instanceof Uint8Array) return secret;

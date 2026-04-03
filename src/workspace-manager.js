@@ -342,6 +342,12 @@ export const workspaceManagerMixin = {
 
     if (String(existing?.avatarUrl || '').trim()) return;
 
+    // Persistent guard: don't re-attempt hydration for keys we already tried.
+    // This prevents the hot loop where Alpine re-renders call getWorkspaceAvatar,
+    // which calls this function, which creates a throwaway Dexie instance every time.
+    if (!this._workspaceProfileHydratedKeys) this._workspaceProfileHydratedKeys = new Set();
+    if (this._workspaceProfileHydratedKeys.has(workspaceKey)) return;
+
     const pending = this.workspaceProfileHydrationPromises?.[workspaceKey];
     if (pending) return pending;
 
@@ -381,6 +387,8 @@ export const workspaceManagerMixin = {
     try {
       await loadPromise;
     } finally {
+      // Mark as attempted so we never re-run for this key during this session.
+      this._workspaceProfileHydratedKeys.add(workspaceKey);
       const next = { ...(this.workspaceProfileHydrationPromises || {}) };
       delete next[workspaceKey];
       this.workspaceProfileHydrationPromises = next;
@@ -779,7 +787,7 @@ export const workspaceManagerMixin = {
     // Perform immediate sync so the caller gets feedback on push failures.
     // If sync fails, the pending write remains in Dexie for the next cycle.
     try {
-      await this.performSync({ silent: true });
+      await this.flushAndBackgroundSync();
     } catch (syncError) {
       flightDeckLog('warn', 'settings', 'harness settings sync failed, will retry', {
         error: syncError?.message || String(syncError),
@@ -810,6 +818,9 @@ export const workspaceManagerMixin = {
       this.backendUrl = normalizeBackendUrl(workspace.directHttpsUrl || this.backendUrl || guessDefaultBackendUrl());
       this.ownerNpub = workspace.workspaceOwnerNpub;
       setBaseUrl(this.backendUrl);
+
+      // Reset hydration cache so the new workspace can hydrate fresh
+      if (this._workspaceProfileHydratedKeys) this._workspaceProfileHydratedKeys.clear();
 
       if (previousWorkspaceKey && previousWorkspaceKey !== workspace.workspaceKey) {
         await clearRuntimeData();

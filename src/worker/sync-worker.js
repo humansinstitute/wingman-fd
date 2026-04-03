@@ -11,6 +11,7 @@
 import {
   openWorkspaceDb,
   getWorkspaceDb,
+  getAllGroups,
   getPendingWrites,
   removePendingWrite,
   upsertWorkspaceSettings,
@@ -129,8 +130,9 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       recordIds: batch.map((pw) => pw.record_id),
       families: [...new Set(batch.map((pw) => pw.record_family_hash))],
     });
+    let result;
     try {
-      await syncRecords({
+      result = await syncRecords({
         owner_npub: ownerNpub,
         records: envelopes,
       });
@@ -152,10 +154,38 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       );
     }
 
+    // Handle Tower rejections — remove rejected pending writes so they
+    // don't block every future sync cycle. Log them for diagnosis.
+    const rejectedIds = new Set();
+    if (Array.isArray(result?.rejected) && result.rejected.length > 0) {
+      for (const rej of result.rejected) {
+        if (rej.record_id) rejectedIds.add(rej.record_id);
+      }
+      flightDeckLog('warn', 'sync', 'Tower rejected records in batch — clearing stale pending writes', {
+        ownerNpub,
+        rejectedCount: result.rejected.length,
+        acceptedCount: (result.synced ?? 0),
+        rejected: result.rejected,
+      });
+    }
+
+    // Deferred records = group key not available yet. Keep their pending
+    // writes so they retry on the next sync cycle when keys may be loaded.
+    const deferredIds = new Set(Array.isArray(result?.deferred) ? result.deferred : []);
+    if (deferredIds.size > 0) {
+      flightDeckLog('warn', 'sync', 'deferred records — group key not loaded, will retry', {
+        ownerNpub,
+        deferredCount: deferredIds.size,
+        deferredRecordIds: [...deferredIds],
+      });
+    }
+
     for (const pw of batch) {
+      // Keep deferred pending writes for retry on next cycle
+      if (deferredIds.has(pw.record_id)) continue;
       await removePendingWrite(pw.row_id);
     }
-    pushed += batch.length;
+    pushed += batch.length - rejectedIds.size - deferredIds.size;
     if (onProgress) onProgress({ phase: 'pushing', pushed, pushTotal: pending.length });
     flightDeckLog('info', 'sync', 'pending write batch flushed', {
       ownerNpub,
@@ -276,7 +306,10 @@ export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub, options 
 }
 
 /**
- * Access pruning — runs at most once per hour, persisted in IndexedDB.
+ * Client-side access pruning — a convenience optimization, not a security boundary.
+ * Tower enforces read access authoritatively on every pull via group_payloads and
+ * epoch keys. This local prune removes records the viewer can no longer decrypt,
+ * keeping the Dexie cache lean. Runs at most once per hour, persisted in IndexedDB.
  *
  * Pruning only happens:
  *  1. On login / workspace selection (explicit call to pruneOnLogin)
@@ -320,8 +353,9 @@ async function executePrune(viewerNpub, ownerNpub) {
 }
 
 /**
- * Build a npub→UUID repair map from locally stored groups.
- * Maps both current_group_npub and group_npub to the stable group_id.
+ * Build a repair map from rotating group_npub values to stable group_id UUIDs.
+ * Maps both the current and historical group_npub (rotating crypto identity)
+ * to the canonical group_id (stable product identity) for local-state migration.
  */
 async function buildNpubToUuidMap() {
   const groups = await getAllGroups();

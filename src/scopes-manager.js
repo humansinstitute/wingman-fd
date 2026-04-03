@@ -283,7 +283,7 @@ export const scopesManagerMixin = {
         for (const item of this.activeDocScopeTargets) {
           await this.updateDocScope(item, this.docScopeModalSelectedId, { sync: false });
         }
-        await this.performSync({ silent: true });
+        await this.flushAndBackgroundSync();
       } else if (this.docScopeTargetType === 'directory') {
         await this.updateDirectoryScope(target, this.docScopeModalSelectedId);
       } else {
@@ -390,7 +390,7 @@ export const scopesManagerMixin = {
       envelope,
     });
     if (options.sync !== false) {
-      await this.performSync({ silent: true });
+      await this.flushAndBackgroundSync();
     }
   },
 
@@ -430,7 +430,7 @@ export const scopesManagerMixin = {
       updated_at: new Date().toISOString(),
     });
     await this.queueDirectoryRecord(updated, dir);
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
   },
 
   async selectScopeForChannel(scopeId) {
@@ -491,7 +491,7 @@ export const scopesManagerMixin = {
       record_family_hash: envelope.record_family_hash,
       envelope,
     });
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
   },
 
   // --- directory helpers ---
@@ -726,7 +726,7 @@ export const scopesManagerMixin = {
       envelope,
     });
     await this.ensureScopeDirectoryChain(localRow);
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
     await this.refreshDirectories();
     await this.refreshScopes();
   },
@@ -809,7 +809,7 @@ export const scopesManagerMixin = {
       envelope,
     });
     await this.ensureScopeDirectoryChain(updated);
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
     await this.refreshDirectories();
   },
 
@@ -841,7 +841,7 @@ export const scopesManagerMixin = {
       record_family_hash: envelope.record_family_hash,
       envelope,
     });
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
   },
 
   getAvailableParents(level) {

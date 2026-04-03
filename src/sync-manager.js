@@ -19,12 +19,15 @@ import {
   upsertTask,
   upsertDocument,
   upsertDirectory,
+  upsertChannel,
+  upsertMessage,
   getCommentsByTarget,
   upsertComment,
 } from './db.js';
 import { fetchRecordHistory, syncRecords } from './api.js';
 import {
   runSync,
+  flushOnly,
   pullRecordsForFamilies,
   pruneOnLogin,
   startWorkerFlushTimer,
@@ -34,6 +37,7 @@ import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
 import { outboundTask } from './translators/tasks.js';
 import { outboundDocument, outboundDirectory } from './translators/docs.js';
+import { outboundChannel, outboundChatMessage } from './translators/chat.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import { outboundComment } from './translators/comments.js';
 
@@ -166,6 +170,13 @@ export const syncManagerMixin = {
     return this.getLocalRecordsForStatusFamily(familyId).find((record) => record?.record_id === recordId) ?? null;
   },
 
+  getRecordStatusChannelForRecord(localRecord, familyId) {
+    if (!localRecord) return null;
+    if (familyId === 'channel') return localRecord;
+    if (familyId !== 'chat_message') return null;
+    return this.channels.find((channel) => channel?.record_id === localRecord.channel_id) ?? null;
+  },
+
   async getRecordStatusPendingWrites() {
     return getPendingWrites();
   },
@@ -187,6 +198,10 @@ export const syncManagerMixin = {
     if (!localRecord) return '';
     if (familyId === 'task') {
       return String(localRecord.board_group_id || localRecord.group_ids?.[0] || '').trim();
+    }
+    if (familyId === 'chat_message') {
+      const channel = this.getRecordStatusChannelForRecord(localRecord, familyId);
+      return String(channel?.group_ids?.[0] || '').trim();
     }
     return String(localRecord.group_ids?.[0] || '').trim();
   },
@@ -242,6 +257,25 @@ export const syncManagerMixin = {
     };
   },
 
+  getRecordStatusLocalVersion(localRecord) {
+    const version = Number(localRecord?.version ?? 0);
+    return Number.isFinite(version) && version > 0 ? version : 0;
+  },
+
+  getRecordStatusSubmitVersion(localRecord, options = {}) {
+    const bootstrap = options.bootstrap === true;
+    if (bootstrap) {
+      return { version: 1, previousVersion: 0 };
+    }
+    const latestTowerVersion = Math.max(0, Number(this.recordStatusTowerLatestVersion ?? 0) || 0);
+    const fallbackLocalVersion = Math.max(1, this.getRecordStatusLocalVersion(localRecord) || 1);
+    const version = latestTowerVersion > 0 ? latestTowerVersion + 1 : fallbackLocalVersion;
+    return {
+      version,
+      previousVersion: Math.max(0, version - 1),
+    };
+  },
+
   describeRecordStatusGroup(groupRef) {
     const resolvedGroupRef = typeof this.resolveGroupId === 'function' ? this.resolveGroupId(groupRef) : String(groupRef || '').trim();
     if (!resolvedGroupRef) return { ref: '', label: '', keyLoaded: false };
@@ -263,6 +297,8 @@ export const syncManagerMixin = {
     const familyHash = getSyncFamily(familyId)?.hash;
 
     this.recordStatusLocalPresent = Boolean(rawLocalRecord);
+    this.recordStatusLocalVersion = this.getRecordStatusLocalVersion(rawLocalRecord);
+    this.recordStatusLocalSyncStatus = String(rawLocalRecord?.sync_status || '').trim() || 'unknown';
     this.recordStatusWriteGroupRef = groupInfo.ref;
     this.recordStatusWriteGroupLabel = groupInfo.label;
     this.recordStatusWriteGroupKeyLoaded = groupInfo.keyLoaded;
@@ -275,7 +311,16 @@ export const syncManagerMixin = {
       this.recordStatusTargetId
       && this.recordStatusFamilyId
       && this.recordStatusLocalPresent
-      && this.recordStatusTowerVersionCount === 0
+      && (
+        this.recordStatusTowerVersionCount === 0
+        || this.recordStatusPendingWriteCount > 0
+        || this.recordStatusLocalSyncStatus === 'pending'
+        || this.recordStatusLocalSyncStatus === 'failed'
+        || (
+          Number(this.recordStatusLocalVersion || 0) > 0
+          && Number(this.recordStatusLocalVersion || 0) !== Number(this.recordStatusTowerLatestVersion || 0)
+        )
+      )
     );
   },
 
@@ -284,10 +329,14 @@ export const syncManagerMixin = {
 
     const bootstrap = options.bootstrap === true;
     const effectiveLocalRecord = this.buildRecordStatusLocalRecord(localRecord, familyId, { bootstrap });
-    const ownerNpub = localRecord.owner_npub || this.workspaceOwnerNpub;
-    const isOwnerWrite = String(this.session?.npub || '').trim() === String(ownerNpub || '').trim();
-    const version = bootstrap ? 1 : (localRecord.version ?? 1);
-    const previousVersion = bootstrap ? 0 : Math.max(0, version - 1);
+    const channelRecord = this.getRecordStatusChannelForRecord(effectiveLocalRecord, familyId);
+    const ownerNpub = effectiveLocalRecord.owner_npub || channelRecord?.owner_npub || this.workspaceOwnerNpub;
+    const { version, previousVersion } = this.getRecordStatusSubmitVersion(effectiveLocalRecord, { bootstrap });
+    const signatureNpub = this.signingNpub || this.session?.npub || ownerNpub;
+    // owner_npub is a workspace service identity, not a person's npub.
+    // All writes are non-owner and need write_group_ref for Tower auth.
+    const realUserNpub = String(this.session?.npub || '').trim();
+    const isOwnerWrite = realUserNpub === String(ownerNpub || '').trim();
 
     if (familyId === 'task') {
       const candidateGroupIds = Array.isArray(effectiveLocalRecord.group_ids) ? effectiveLocalRecord.group_ids : [];
@@ -306,7 +355,7 @@ export const syncManagerMixin = {
         shares: nextShares,
         version,
         previous_version: previousVersion,
-        signature_npub: this.session?.npub,
+        signature_npub: signatureNpub,
         write_group_ref: isOwnerWrite ? null : writeGroupNpub,
       });
     }
@@ -323,7 +372,7 @@ export const syncManagerMixin = {
         shares,
         version,
         previous_version: previousVersion,
-        signature_npub: this.session?.npub,
+        signature_npub: signatureNpub,
         write_group_ref: isOwnerWrite ? null : writeGroupNpub,
       });
     }
@@ -340,8 +389,43 @@ export const syncManagerMixin = {
         shares,
         version,
         previous_version: previousVersion,
-        signature_npub: this.session?.npub,
+        signature_npub: signatureNpub,
         write_group_ref: isOwnerWrite ? null : writeGroupNpub,
+      });
+    }
+
+    if (familyId === 'channel') {
+      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      if (!writeGroupRef) throw new Error('Channel is missing a writable group.');
+      return outboundChannel({
+        ...effectiveLocalRecord,
+        owner_npub: ownerNpub,
+        group_ids: effectiveLocalRecord.group_ids ?? [],
+        participant_npubs: effectiveLocalRecord.participant_npubs ?? [],
+        version,
+        previous_version: previousVersion,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
+      });
+    }
+
+    if (familyId === 'chat_message') {
+      if (!channelRecord) throw new Error('Chat message channel is missing locally.');
+      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      if (!writeGroupRef) throw new Error('Chat message channel is missing a writable group.');
+      return outboundChatMessage({
+        record_id: effectiveLocalRecord.record_id,
+        owner_npub: ownerNpub,
+        channel_id: effectiveLocalRecord.channel_id,
+        parent_message_id: effectiveLocalRecord.parent_message_id ?? null,
+        body: effectiveLocalRecord.body ?? '',
+        attachments: Array.isArray(effectiveLocalRecord.attachments) ? effectiveLocalRecord.attachments : [],
+        channel_group_ids: channelRecord.group_ids ?? [],
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
+        version,
+        previous_version: previousVersion,
+        signature_npub: signatureNpub,
+        record_state: effectiveLocalRecord.record_state ?? 'active',
       });
     }
 
@@ -375,6 +459,19 @@ export const syncManagerMixin = {
     if (familyId === 'directory') {
       await upsertDirectory(nextRecord);
       if (typeof this.patchDirectoryLocal === 'function') this.patchDirectoryLocal(nextRecord);
+      return;
+    }
+
+    if (familyId === 'channel') {
+      await upsertChannel(nextRecord);
+      this.channels = this.channels.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
+    }
+
+    if (familyId === 'chat_message') {
+      await upsertMessage(nextRecord);
+      if (typeof this.patchMessageLocal === 'function') this.patchMessageLocal(nextRecord);
+      else this.messages = this.messages.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
     }
   },
 
@@ -419,6 +516,7 @@ export const syncManagerMixin = {
     this.recordStatusError = null;
     this.recordStatusNotice = '';
     this.recordStatusTowerVersionCount = 0;
+    this.recordStatusTowerLatestVersion = 0;
     this.recordStatusTowerUpdatedAt = '';
     await this.refreshRecordStatusLocalContext();
 
@@ -435,8 +533,11 @@ export const syncManagerMixin = {
     this.recordStatusError = null;
     this.recordStatusNotice = '';
     this.recordStatusTowerVersionCount = 0;
+    this.recordStatusTowerLatestVersion = 0;
     this.recordStatusTowerUpdatedAt = '';
     this.recordStatusLocalPresent = false;
+    this.recordStatusLocalVersion = 0;
+    this.recordStatusLocalSyncStatus = '';
     this.recordStatusPendingWriteCount = 0;
     this.recordStatusWriteGroupRef = '';
     this.recordStatusWriteGroupLabel = '';
@@ -468,6 +569,10 @@ export const syncManagerMixin = {
         viewer_npub: this.session.npub,
       });
       const versions = Array.isArray(result?.versions) ? result.versions : [];
+      const latestVersionNumber = versions.reduce((latest, current) => {
+        const version = Number(current?.version ?? 0) || 0;
+        return version > latest ? version : latest;
+      }, 0);
       const latestVersion = versions.reduce((latest, current) => {
         if (!latest) return current;
         const currentTime = Date.parse(current?.updated_at || '') || 0;
@@ -476,12 +581,13 @@ export const syncManagerMixin = {
       }, null);
 
       this.recordStatusTowerVersionCount = versions.length;
+      this.recordStatusTowerLatestVersion = latestVersionNumber;
       this.recordStatusTowerUpdatedAt = latestVersion?.updated_at || '';
       await this.refreshRecordStatusLocalContext();
 
       if (versions.length === 0) {
         if (this.recordStatusLocalPresent) {
-          this.recordStatusNotice = `${targetLabel} is missing on Tower. You can force push this local record.`;
+          this.recordStatusNotice = `${targetLabel} is missing on Tower. You can force submit this local snapshot as version 1.`;
         } else {
           this.recordStatusError = `${targetLabel} is not on Tower for the current workspace/user view.`;
         }
@@ -511,27 +617,25 @@ export const syncManagerMixin = {
       this.recordStatusError = 'No local record is available to push.';
       return;
     }
-    if (this.recordStatusTowerVersionCount > 0) {
-      this.recordStatusError = 'Tower already has this record. A force push is only for records missing on Tower.';
-      return;
-    }
     if (!this.workspaceOwnerNpub || !this.session?.npub) {
       this.recordStatusError = 'Configure workspace sync first.';
       return;
     }
 
     const familyLabel = this.getRecordStatusFamilyLabel(familyId);
+    const bootstrap = this.recordStatusTowerVersionCount === 0;
+    const { version: submittedVersion } = this.getRecordStatusSubmitVersion(localRecord, { bootstrap });
     this.recordStatusSyncBusy = true;
     this.recordStatusError = null;
     try {
       const targetFamilyHash = getSyncFamily(familyId)?.hash || null;
-      const relatedComments = targetFamilyHash
+      const relatedComments = bootstrap && targetFamilyHash
         ? await this.getRecordStatusRelatedComments(recordId, targetFamilyHash)
         : [];
       const relevantRecordIds = new Set([recordId, ...relatedComments.map((comment) => comment.record_id)]);
       const pendingWrites = (await this.getRecordStatusPendingWrites())
         .filter((row) => relevantRecordIds.has(row.record_id));
-      const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, { bootstrap: true });
+      const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, { bootstrap });
       const commentEnvelopes = [];
       const targetGroupIds = Array.isArray(localRecord.group_ids) ? [...localRecord.group_ids] : [];
 
@@ -553,7 +657,7 @@ export const syncManagerMixin = {
         if (row?.row_id != null) await this.removeRecordStatusPendingWrite(row.row_id);
       }
 
-      await this.markRecordStatusLocalRecordSynced(familyId, localRecord, { version: 1 });
+      await this.markRecordStatusLocalRecordSynced(familyId, localRecord, { version: submittedVersion });
       await this.markRecordStatusCommentsSynced(relatedComments);
       await this.checkRecordStatusOnTower();
       if (!this.recordStatusError) {
@@ -561,8 +665,8 @@ export const syncManagerMixin = {
           ? ` Recreated ${relatedComments.length} local ${relatedComments.length === 1 ? 'comment' : 'comments'} too.`
           : '';
         this.recordStatusNotice = pendingWrites.length > 0
-          ? `Force-pushed the current local snapshot as a new ${familyLabel} version 1 and cleared ${pendingWrites.length} stale pending ${pendingWrites.length === 1 ? 'write' : 'writes'}.${commentSuffix}`
-          : `Force-pushed the current local snapshot as a new ${familyLabel} version 1.${commentSuffix}`;
+          ? `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion} and cleared ${pendingWrites.length} stale pending ${pendingWrites.length === 1 ? 'write' : 'writes'}.${commentSuffix}`
+          : `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion}.${commentSuffix}`;
       }
     } catch (error) {
       this.recordStatusError = error?.message || 'Failed to force push this record to Tower.';
@@ -648,6 +752,17 @@ export const syncManagerMixin = {
     if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
       startWorkerFlushTimer(this.workspaceOwnerNpub, this.backendUrl, this.workspaceDbKey);
     }
+    // Show catch-up overlay when data is stale:
+    // - first sync ever (no lastSuccessAt)
+    // - returning after a long break (10+ hours)
+    // - SSE catch-up-required (handled separately via catchUpSyncActive = true)
+    if (runSoon && this.session?.npub && this.backendUrl) {
+      const STALE_THRESHOLD_MS = 10 * 60 * 60 * 1000; // 10 hours
+      const lastSync = this.syncSession.lastSuccessAt;
+      if (!lastSync || (Date.now() - lastSync) > STALE_THRESHOLD_MS) {
+        this.catchUpSyncActive = true;
+      }
+    }
     this.scheduleBackgroundSync(runSoon ? 50 : null);
   },
 
@@ -675,6 +790,7 @@ export const syncManagerMixin = {
       });
     } finally {
       this.backgroundSyncInFlight = false;
+      this.catchUpSyncActive = false;
       this.scheduleBackgroundSync(this.syncBackoffMs || null);
     }
   },
@@ -818,6 +934,33 @@ export const syncManagerMixin = {
       // performSync already surfaced the error state
     }
     this.ensureBackgroundSync();
+  },
+
+  /**
+   * Flush pending writes to Tower and schedule a background sync.
+   * Much faster than performSync — does NOT heartbeat or pull, so the
+   * caller returns almost immediately after the write reaches the server.
+   * SSE + the next background tick handle inbound updates.
+   */
+  async flushAndBackgroundSync() {
+    if (!this.session?.npub || !this.backendUrl) return { pushed: 0 };
+    try {
+      const result = await flushOnly(this.workspaceOwnerNpub, null, {
+        backendUrl: this.backendUrl,
+        workspaceDbKey: this.workspaceDbKey,
+      });
+      if ((result?.pushed ?? 0) > 0) {
+        await this.refreshSyncStatus({ refreshUnread: false });
+      }
+      return result;
+    } catch (error) {
+      flightDeckLog('error', 'sync', 'flush-only failed, falling back to background sync', {
+        error: error?.message || String(error),
+      });
+      return { pushed: 0 };
+    } finally {
+      this.ensureBackgroundSync(true);
+    }
   },
 
   async refreshSyncStatus(options = {}) {

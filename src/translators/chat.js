@@ -73,8 +73,9 @@ export async function inboundChatMessage(record) {
 /**
  * Build a V4 record envelope for a new chat message.
  *
- * The channel's group_ids are copied into group_payloads so the backend
- * can fan the message out to all group members.
+ * The channel's group_ids are used to build group_payloads — per-group
+ * encrypted delivery blobs. Tower stores these and grants read access to
+ * members who hold a valid epoch key, but never decrypts the content.
  */
 export async function outboundChatMessage({
   record_id,

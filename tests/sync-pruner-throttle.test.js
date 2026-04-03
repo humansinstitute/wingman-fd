@@ -6,10 +6,35 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 // In-memory sync_state store for the pruner's IndexedDB-backed cooldown
 const syncStateStore = {};
+let fakeNow = Date.parse('2026-03-31T00:00:00Z');
+let dateNowSpy;
 
 vi.mock('../src/db.js', () => ({
   openWorkspaceDb: vi.fn(),
-  getWorkspaceDb: vi.fn(() => ({})),
+  getWorkspaceDb: vi.fn(() => ({
+    chat_messages: {
+      where: vi.fn(() => ({
+        above: vi.fn(() => ({
+          first: vi.fn(async () => null),
+          toArray: vi.fn(async () => []),
+        })),
+      })),
+    },
+    documents: {
+      where: vi.fn(() => ({
+        above: vi.fn(() => ({
+          first: vi.fn(async () => null),
+        })),
+      })),
+    },
+    tasks: {
+      toArray: vi.fn(async () => []),
+    },
+    channels: {
+      toArray: vi.fn(async () => []),
+    },
+  })),
+  getSharedDb: vi.fn(() => ({ workspace_keys: {} })),
   getPendingWrites: vi.fn(async () => []),
   removePendingWrite: vi.fn(),
   upsertWorkspaceSettings: vi.fn(),
@@ -27,6 +52,8 @@ vi.mock('../src/db.js', () => ({
   setSyncState: vi.fn(async (key, value) => { syncStateStore[key] = value; }),
   upsertSyncQuarantineEntry: vi.fn(),
   deleteSyncQuarantineEntry: vi.fn(),
+  getReadCursorsByKeys: vi.fn(async () => []),
+  getReadCursorsByPrefix: vi.fn(async () => []),
   getAllGroups: vi.fn(async () => []),
 }));
 
@@ -40,8 +67,10 @@ vi.mock('../src/api.js', () => ({
 
 // Track pruneInaccessibleRecords calls
 const pruneSpy = vi.fn(async () => ({ pruned: 0 }));
+const repairSpy = vi.fn(async () => ({ repaired: 0 }));
 vi.mock('../src/access-pruner.js', () => ({
   pruneInaccessibleRecords: (...args) => pruneSpy(...args),
+  repairStaleGroupRefs: (...args) => repairSpy(...args),
 }));
 
 vi.mock('../src/logging.js', () => ({
@@ -58,14 +87,14 @@ const { fetchHeartbeat, fetchRecords } = await import('../src/api.js');
 describe('sync-worker pruner throttle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-03-31T00:00:00Z'));
+    fakeNow = Date.parse('2026-03-31T00:00:00Z');
+    dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
     // Clear persisted prune state
     for (const key of Object.keys(syncStateStore)) delete syncStateStore[key];
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    dateNowSpy?.mockRestore();
   });
 
   it('skips pruning when heartbeat reports 0 stale families', async () => {
@@ -108,12 +137,12 @@ describe('sync-worker pruner throttle', () => {
     expect(pruneSpy).toHaveBeenCalledTimes(1);
 
     // Second sync 5 minutes later → should be throttled (< 1 hour)
-    vi.advanceTimersByTime(5 * 60 * 1000);
+    fakeNow += 5 * 60 * 1000;
     await runSync('owner', 'viewer', vi.fn());
     expect(pruneSpy).toHaveBeenCalledTimes(1); // still 1
 
     // Third sync 1 hour after first → should run again
-    vi.advanceTimersByTime(60 * 60 * 1000);
+    fakeNow += 60 * 60 * 1000;
     await runSync('owner', 'viewer', vi.fn());
     expect(pruneSpy).toHaveBeenCalledTimes(2);
   });
@@ -149,6 +178,25 @@ describe('sync-worker pruner throttle', () => {
 
     expect(pruneSpy).toHaveBeenCalledOnce();
     expect(pruneSpy).toHaveBeenCalledWith('viewer', 'owner');
+  });
+
+  it('pruneOnLogin attempts stale group ref repair before pruning', async () => {
+    const { getAllGroups } = await import('../src/db.js');
+    getAllGroups.mockResolvedValueOnce([
+      {
+        group_id: 'group-1',
+        group_npub: 'npub-group-1',
+        current_group_npub: 'npub-group-current-1',
+      },
+    ]);
+
+    await pruneOnLogin('viewer', 'owner');
+
+    expect(repairSpy).toHaveBeenCalledOnce();
+    expect(repairSpy).toHaveBeenCalledWith(new Map([
+      ['npub-group-1', 'group-1'],
+      ['npub-group-current-1', 'group-1'],
+    ]));
   });
 
   it('pruneOnLogin persists last-prune timestamp', async () => {

@@ -248,7 +248,89 @@ describe('WP7: glossary disambiguation pairs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. WP7 decision log exists
+// 8. Inline comments in Tower record validation
+// ---------------------------------------------------------------------------
+
+describe('WP7: Tower records.ts inline comments', () => {
+  let src;
+  function getSrc() {
+    if (!src) src = readFile('wingman-tower/src/services/records.ts');
+    return src;
+  }
+
+  it('resolveWriteGroup documents preference for write_group_id (stable UUID)', () => {
+    expect(getSrc()).toMatch(/resolveWriteGroup[\s\S]*?write_group_id.*stable.*UUID|Prefers write_group_id.*stable UUID/i);
+  });
+
+  it('resolvePayloadGroup documents group_id as stable UUID and group_npub as rotating', () => {
+    expect(getSrc()).toMatch(/resolvePayloadGroup[\s\S]*?group_id.*stable.*UUID/i);
+    expect(getSrc()).toMatch(/resolvePayloadGroup[\s\S]*?group_npub.*rotating/i);
+  });
+
+  it('group payload insert comment distinguishes from shares', () => {
+    expect(getSrc()).toMatch(/Insert group payloads.*not shares|group payloads.*encrypted delivery/i);
+  });
+
+  it('SSE emit comment says advisory', () => {
+    expect(getSrc()).toMatch(/advisory.*SSE|SSE.*advisory/i);
+  });
+
+  it('syncRecords JSDoc documents signer roles', () => {
+    // signerNpub documented as possibly workspace session key
+    expect(getSrc()).toMatch(/signerNpub.*ws_key_npub|signerNpub.*workspace/i);
+    // userNpub documented as resolved real identity
+    expect(getSrc()).toMatch(/userNpub.*real.*user|userNpub.*resolved.*real/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. Inline comments in FD translators
+// ---------------------------------------------------------------------------
+
+describe('WP7: FD translator inline comments', () => {
+  it('buildGroupPayloads JSDoc distinguishes from shares', () => {
+    const src = readFile('wingman-fd/src/translators/record-crypto.js');
+    expect(src).toMatch(/buildGroupPayloads[\s\S]*?not shares|group_payloads.*encrypted delivery.*not shares/i);
+  });
+
+  it('chat outbound comment explains group_payloads correctly', () => {
+    const src = readFile('wingman-fd/src/translators/chat.js');
+    // Should NOT say "fan the message out" — Tower doesn't fan out by reading payloads.
+    // Should say something about encrypted delivery / read access via epoch keys.
+    const chatSection = src.split('outboundChatMessage')[0]?.split('outbound')[1] || '';
+    expect(chatSection).not.toMatch(/fan.*out/i);
+  });
+
+  it('group-refs.js documents group_id vs group_npub in JSDoc', () => {
+    const src = readFile('wingman-fd/src/translators/group-refs.js');
+    expect(src).toMatch(/group_id.*stable.*UUID/i);
+    expect(src).toMatch(/group_npub.*rotating/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. Inline comments in FD sync worker
+// ---------------------------------------------------------------------------
+
+describe('WP7: FD sync worker inline comments', () => {
+  it('access pruning comment clarifies client-side convenience, not security boundary', () => {
+    const src = readFile('wingman-fd/src/worker/sync-worker.js');
+    expect(src).toMatch(/convenience|not.*security.*boundary/i);
+  });
+
+  it('npub→UUID repair map comment distinguishes rotating vs stable', () => {
+    const src = readFile('wingman-fd/src/worker/sync-worker.js');
+    expect(src).toMatch(/rotating.*group_npub.*stable.*group_id|group_npub.*rotating.*group_id.*stable/i);
+  });
+
+  it('sync-worker-runner SSE section says advisory', () => {
+    const src = readFile('wingman-fd/src/worker/sync-worker-runner.js');
+    expect(src).toMatch(/SSE advisory/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11. WP7 decision log exists
 // ---------------------------------------------------------------------------
 
 describe('WP7: decision log', () => {

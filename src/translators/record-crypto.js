@@ -1,4 +1,4 @@
-import { personalDecryptFromNpub, personalEncryptForNpub } from '../auth/nostr.js';
+import { personalDecryptFromNpub, personalEncryptForNpub, localDecryptFromNpub, localEncryptForNpub } from '../auth/nostr.js';
 import {
   decryptPayloadForGroup,
   encryptPayloadForGroup,
@@ -7,6 +7,10 @@ import {
   getLoadedGroupKeyDiagnostics,
   hasGroupKey,
 } from '../crypto/group-keys.js';
+import {
+  getActiveWorkspaceKey,
+  getActiveWorkspaceKeyNpub,
+} from '../crypto/workspace-keys.js';
 
 function parsePayloadJson(raw) {
   if (typeof raw !== 'string') return raw;
@@ -52,14 +56,34 @@ function describeRecordGroupPayloads(record) {
 }
 
 export async function encryptOwnerPayload(ownerNpub, payload) {
+  const wsKey = getActiveWorkspaceKey();
+  if (wsKey?.secret) {
+    // Encrypt with workspace session key (fast, no signer bridge needed)
+    const senderNpub = getActiveSessionNpub() || getActiveWorkspaceKeyNpub();
+    return {
+      ciphertext: JSON.stringify({
+        encrypted_by_npub: getActiveWorkspaceKeyNpub(),
+        ciphertext: localEncryptForNpub(wsKey.secret, senderNpub, JSON.stringify(payload)),
+        ws_key_epoch: wsKey.epoch,
+      }),
+    };
+  }
+  // Fallback: encrypt with real signer (pre-migration or no workspace key)
   return {
     ciphertext: await personalEncryptForNpub(ownerNpub, JSON.stringify(payload)),
   };
 }
 
-export function buildGroupPayloads(groupNpubs, payload, canWriteByGroup = null) {
+/**
+ * Build per-group encrypted delivery payloads from a list of group refs.
+ * Each ref may be a stable group_id (UUID) or a rotating group_npub —
+ * the group key store resolves either form to the current epoch key.
+ *
+ * These are group_payloads (encrypted delivery), not shares (policy metadata).
+ */
+export function buildGroupPayloads(groupRefs, payload, canWriteByGroup = null) {
   const plaintext = JSON.stringify(payload);
-  const uniqueGroups = [...new Set((groupNpubs || []).map((value) => String(value || '').trim()).filter(Boolean))];
+  const uniqueGroups = [...new Set((groupRefs || []).map((value) => String(value || '').trim()).filter(Boolean))];
   const senderNpub = getActiveSessionNpub();
   if (!senderNpub) throw new Error('No active session available for group payload encryption.');
 
@@ -90,9 +114,27 @@ export function buildGroupPayloads(groupNpubs, payload, canWriteByGroup = null) 
 export async function decryptRecordPayload(record) {
   const ownerCiphertext = record.owner_payload?.ciphertext ?? record.owner_payload;
   const viewerNpub = getActiveSessionNpub();
+  const wsKey = getActiveWorkspaceKey();
+  const wsKeyNpub = getActiveWorkspaceKeyNpub();
   const errors = [];
   const payloadDiagnostics = describeRecordGroupPayloads(record);
 
+  // --- Workspace session key owner-payload path ---
+  // If the record was signed by our workspace key, decrypt with it (fast, no bridge).
+  if (wsKey?.secret && wsKeyNpub && ownerCiphertext) {
+    const ownerEnvelope = parseCiphertextEnvelope(ownerCiphertext);
+    if (ownerEnvelope?.encrypted_by_npub === wsKeyNpub) {
+      try {
+        const senderNpub = ownerEnvelope.encrypted_by_npub;
+        const decrypted = localDecryptFromNpub(wsKey.secret, senderNpub, ownerEnvelope.ciphertext);
+        return parsePayloadJson(decrypted);
+      } catch (error) {
+        errors.push(`ws-owner:${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  // --- Legacy real-signer owner-payload path ---
   if (viewerNpub && viewerNpub === record.owner_npub && ownerCiphertext) {
     try {
       let decrypted = ownerCiphertext;

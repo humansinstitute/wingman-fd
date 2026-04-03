@@ -3,11 +3,21 @@
   --surface: #ffffff;
   --surface-hover: #f8fafc;
   --surface-muted: #f8fafc;
+  --bg-elevated: #f8fafc;
+  --bg-hover: #f1f5f9;
+  --bg-soft: #f8fafc;
   --border: #e5e7eb;
   --border-strong: #0f172a;
   --muted: #6b7280;
+  --text-muted: #6b7280;
   --text: #111827;
   --accent: #3b82f6;
+  --color-bg: #ffffff;
+  --color-bg-raised: #f8fafc;
+  --color-border: #e5e7eb;
+  --color-text: #111827;
+  --color-text-dim: #6b7280;
+  --color-accent: #3b82f6;
   --danger: #ef4444;
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -360,6 +370,37 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+}
+
+/* Catch-up sync overlay */
+.catchup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+.catchup-modal {
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 12px;
+  padding: 32px 40px;
+  text-align: center;
+  min-width: 280px;
+}
+.catchup-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text, #e0e0e0);
+  margin-bottom: 4px;
+}
+.catchup-label {
+  font-size: 0.82rem;
+  color: var(--text-muted, #888);
+  margin-top: 6px;
 }
 
 .sync-progress-bar-track {
@@ -823,9 +864,22 @@ button:disabled {
 }
 
 /* --- Connect modal --- */
-.connect-modal { width: min(92vw, 480px); text-align: left; }
-.connect-modal h2 { text-align: center; margin: 0 0 0.35rem; }
-.connect-modal > div > p { text-align: center; margin: 0 0 1rem; color: var(--muted); font-size: 0.92rem; }
+.connect-modal {
+  width: min(92vw, 480px);
+  text-align: left;
+  color: var(--text);
+}
+.connect-modal h2 {
+  text-align: center;
+  margin: 0 0 0.35rem;
+  color: #111827;
+}
+.connect-modal > div > p {
+  text-align: center;
+  margin: 0 0 1rem;
+  color: #475569;
+  font-size: 0.92rem;
+}
 .connect-hosts-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
 .connect-host-row { width: 100%; text-align: left; border: 1px solid var(--border); border-radius: 10px; background: var(--bg, #fff); padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.15rem; cursor: pointer; transition: border-color 0.15s; }
 .connect-host-row:hover:not(:disabled) { border-color: var(--accent, #2563eb); }
@@ -833,23 +887,46 @@ button:disabled {
 .connect-host-label { font-weight: 600; color: #1e293b; }
 .connect-host-url { font-size: 0.82rem; color: #64748b; }
 .connect-manual-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
-.connect-manual-form label span { display: block; font-size: 0.84rem; font-weight: 500; margin-bottom: 0.25rem; }
-.connect-manual-form input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.92rem; }
+.connect-manual-form label span { display: block; font-size: 0.84rem; font-weight: 600; margin-bottom: 0.25rem; color: #1f2937; }
+.connect-manual-form input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.92rem; color: var(--text); }
 .connect-token-fallback { margin: 0.75rem 0; text-align: center; }
 .connect-token-toggle { background: none; border: none; color: var(--muted); font-size: 0.84rem; cursor: pointer; text-decoration: underline; padding: 0.25rem; }
 .connect-token-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .connect-back-link { background: none; border: none; color: var(--accent, #2563eb); font-size: 0.88rem; cursor: pointer; text-decoration: underline; padding: 0; margin-left: 0.5rem; }
 .connect-workspace-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
-.connect-workspace-row { width: 100%; text-align: left; border: 1px solid var(--border); border-radius: 10px; background: var(--bg, #fff); padding: 0.7rem 0.8rem; display: flex; flex-direction: column; gap: 0.2rem; cursor: pointer; transition: border-color 0.15s; }
-.connect-workspace-row:hover { border-color: #0f766e; }
-.connect-workspace-name { font-weight: 600; }
-.connect-workspace-meta { font-size: 0.84rem; color: var(--muted); }
+.connect-workspace-row {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1e293b;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+.connect-workspace-row:hover {
+  border-color: #0f766e;
+  background: #f8fffe;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.08);
+}
+.connect-workspace-name {
+  font-weight: 700;
+  color: #111827;
+}
+.connect-workspace-meta {
+  font-size: 0.84rem;
+  color: #475569;
+}
 .connect-workspace-loading, .connect-workspace-empty { text-align: center; color: var(--muted); padding: 1rem 0; }
 .connect-create-workspace { border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.5rem; }
-.connect-create-workspace strong { display: block; margin-bottom: 0.5rem; }
+.connect-create-workspace strong { display: block; margin-bottom: 0.5rem; color: #111827; }
 .connect-create-form { display: flex; flex-direction: column; gap: 0.5rem; }
-.connect-create-form label span { display: block; font-size: 0.84rem; font-weight: 500; margin-bottom: 0.25rem; }
-.connect-create-form input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.92rem; }
+.connect-create-form label span { display: block; font-size: 0.84rem; font-weight: 600; margin-bottom: 0.25rem; color: #1f2937; }
+.connect-create-form input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.92rem; color: var(--text); }
 
 .update-banner {
   position: fixed;
@@ -6664,6 +6741,44 @@ button:disabled {
   border-radius: var(--radius-sm);
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
+}
+
+/* Collapsed kanban column — narrow vertical strip with rotated label */
+.kanban-column-collapsed {
+  min-width: 2.2rem;
+  max-width: 2.2rem;
+  flex: 0 0 2.2rem;
+  min-height: 200px;
+  overflow: hidden;
+}
+
+.kanban-column-collapsed .kanban-column-header {
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.25rem;
+  border-bottom: none;
+  border-left: 2px solid var(--border);
+  height: 100%;
+}
+
+.kanban-col-summary.kanban-column-collapsed .kanban-column-header { border-left-color: #a78bfa; }
+.kanban-col-new.kanban-column-collapsed .kanban-column-header { border-left-color: #ccc; }
+.kanban-col-ready.kanban-column-collapsed .kanban-column-header { border-left-color: #ffcfc3; }
+.kanban-col-in_progress.kanban-column-collapsed .kanban-column-header { border-left-color: #cdbdff; }
+.kanban-col-review.kanban-column-collapsed .kanban-column-header { border-left-color: #fcd34d; }
+.kanban-col-done.kanban-column-collapsed .kanban-column-header { border-left-color: #b0e2b8; }
+
+.kanban-column-collapsed .kanban-column-title {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  white-space: nowrap;
+  font-size: 0.7rem;
+}
+
+.kanban-column-collapsed .kanban-column-count {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.3rem;
 }
 
 /* Column accent colors */

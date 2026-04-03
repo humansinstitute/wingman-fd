@@ -38,6 +38,29 @@ import {
 import { toRaw } from './utils/state-helpers.js';
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Shallow-compare two arrays of primitives or share objects (avoids JSON.stringify). */
+function sameShallowArray(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      // For object entries (shares), compare by stringified key fields only
+      if (typeof a[i] === 'object' && typeof b[i] === 'object') {
+        const ak = a[i], bk = b[i];
+        if ((ak?.group_npub ?? null) !== (bk?.group_npub ?? null)
+          || (ak?.via_group_npub ?? null) !== (bk?.via_group_npub ?? null)) return false;
+      } else {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -60,6 +83,41 @@ const EMPTY_ARRAY = Object.freeze([]);
 const scopesMapCache = new WeakMap();
 const taskGraphCache = new WeakMap();
 const taskBoardDerivedCache = new WeakMap();
+
+function chooseTaskRecord(current, candidate) {
+  const currentVersion = Number(current?.version ?? 0);
+  const candidateVersion = Number(candidate?.version ?? 0);
+  if (candidateVersion !== currentVersion) {
+    return candidateVersion > currentVersion ? candidate : current;
+  }
+  const currentUpdatedAt = String(current?.updated_at || '');
+  const candidateUpdatedAt = String(candidate?.updated_at || '');
+  if (candidateUpdatedAt !== currentUpdatedAt) {
+    return candidateUpdatedAt > currentUpdatedAt ? candidate : current;
+  }
+  return current;
+}
+
+export function dedupeTasksByRecordId(tasks = []) {
+  if (!Array.isArray(tasks) || tasks.length <= 1) return Array.isArray(tasks) ? tasks : [];
+  const deduped = [];
+  const indexByRecordId = new Map();
+  for (const task of tasks) {
+    const recordId = String(task?.record_id || '').trim();
+    if (!recordId) {
+      deduped.push(task);
+      continue;
+    }
+    const existingIndex = indexByRecordId.get(recordId);
+    if (existingIndex === undefined) {
+      indexByRecordId.set(recordId, deduped.length);
+      deduped.push(task);
+      continue;
+    }
+    deduped[existingIndex] = chooseTaskRecord(deduped[existingIndex], task);
+  }
+  return deduped;
+}
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -286,8 +344,8 @@ export function normalizeTaskRowGroupRefs(task, resolverFn) {
     : task.shares;
 
   const changed = nextBoardId !== (task.board_group_id ?? null)
-    || JSON.stringify(nextGroupIds) !== JSON.stringify(task.group_ids || [])
-    || JSON.stringify(nextShares) !== JSON.stringify(task.shares || []);
+    || !sameShallowArray(nextGroupIds, task.group_ids || [])
+    || !sameShallowArray(nextShares, task.shares || []);
 
   if (!changed) return task;
 
@@ -341,8 +399,8 @@ export function normalizeScheduleRowGroupRefs(schedule, resolverFn) {
     : schedule.shares;
 
   const changed = nextAssignedGroupId !== (schedule.assigned_group_id ?? null)
-    || JSON.stringify(nextGroupIds) !== JSON.stringify(schedule.group_ids || [])
-    || JSON.stringify(nextShares) !== JSON.stringify(schedule.shares || []);
+    || !sameShallowArray(nextGroupIds, schedule.group_ids || [])
+    || !sameShallowArray(nextShares, schedule.shares || []);
 
   if (!changed) return schedule;
 
@@ -412,9 +470,12 @@ export function computeFilteredTasks(boardScopedTasks, query, filterTags, assign
 }
 
 export function computeBoardColumns(activeTasks, doneTasks, summaryTasks) {
+  const normalizedSummaryTasks = dedupeTasksByRecordId(summaryTasks);
+  const normalizedActiveTasks = dedupeTasksByRecordId(activeTasks);
+  const normalizedDoneTasks = dedupeTasksByRecordId(doneTasks);
   const cols = [];
-  if (summaryTasks.length > 0) {
-    cols.push({ state: 'summary', label: 'Summary', tasks: summaryTasks });
+  if (normalizedSummaryTasks.length > 0) {
+    cols.push({ state: 'summary', label: 'Summary', tasks: normalizedSummaryTasks });
   }
   const states = ['new', 'ready', 'in_progress', 'review', 'done'];
   const labels = {
@@ -426,8 +487,8 @@ export function computeBoardColumns(activeTasks, doneTasks, summaryTasks) {
   };
   for (const state of states) {
     const tasks = state === 'done'
-      ? doneTasks
-      : activeTasks.filter(t => t.state === state);
+      ? normalizedDoneTasks
+      : normalizedActiveTasks.filter(t => t.state === state);
     cols.push({ state, label: labels[state], tasks });
   }
   return cols;

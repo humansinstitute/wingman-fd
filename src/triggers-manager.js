@@ -5,7 +5,12 @@
  * and should be spread into the store definition.
  */
 
+import { pubkeyToNpub } from './auth/nostr.js';
 import { signAndPublishTrigger, npubToHex } from './nostr-trigger.js';
+
+function isHexPubkey(value) {
+  return /^[0-9a-f]{64}$/i.test(String(value || '').trim());
+}
 
 // ---------------------------------------------------------------------------
 // Mixin — methods that use `this` (the Alpine store)
@@ -15,6 +20,16 @@ export const triggersManagerMixin = {
 
   get triggerBotSuggestions() {
     return this.findPeopleSuggestions(this.newTriggerBotQuery, []);
+  },
+
+  get triggerChannelOptions() {
+    return (this.channels || [])
+      .filter((channel) => channel?.record_state !== 'deleted')
+      .map((channel) => ({
+        id: String(channel.record_id || ''),
+        label: this.getChannelLabel(channel),
+      }))
+      .filter((channel) => channel.id);
   },
 
   triggerTypeLabel(type) {
@@ -36,24 +51,88 @@ export const triggersManagerMixin = {
     this.newTriggerBotQuery = '';
   },
 
+  onTriggerTypeChange() {
+    if (this.newTriggerType !== 'chat_channel_message') {
+      this.newTriggerChannelId = '';
+    }
+  },
+
+  getTriggerChannelLabel(trigger) {
+    const channelId = String(trigger?.channel_id || '').trim();
+    if (!channelId) return 'Any channel';
+    const channel = (this.channels || []).find((candidate) => candidate?.record_id === channelId);
+    return channel ? this.getChannelLabel(channel) : `Channel ${channelId}`;
+  },
+
+  async resolveTriggerBotInput({ confirmHex = false } = {}) {
+    const selectedNpub = this.newTriggerBotNpub.trim();
+    if (selectedNpub) return selectedNpub;
+
+    const query = this.newTriggerBotQuery.trim();
+    if (!query) return '';
+
+    if (query.startsWith('npub1')) {
+      this.selectTriggerBot(query);
+      return query;
+    }
+
+    if (isHexPubkey(query)) {
+      const candidateNpub = await pubkeyToNpub(query.toLowerCase());
+      if (confirmHex) {
+        const confirmed = window.confirm(
+          `You entered a hex pubkey for the bot.\n\nUse this npub instead?\n${candidateNpub}`,
+        );
+        if (!confirmed) return '';
+      }
+      this.selectTriggerBot(candidateNpub);
+      return candidateNpub;
+    }
+
+    const normalizedQuery = query.toLowerCase();
+    const suggestions = this.triggerBotSuggestions;
+    const exactMatch = suggestions.find((person) => {
+      const label = String(person.label || '').trim().toLowerCase();
+      const subtitle = String(person.subtitle || '').trim().toLowerCase();
+      return label === normalizedQuery || subtitle === normalizedQuery;
+    });
+    const fallbackMatch = suggestions.length === 1 ? suggestions[0] : null;
+    const match = exactMatch || fallbackMatch;
+
+    if (match?.npub) {
+      this.selectTriggerBot(match.npub);
+      return match.npub;
+    }
+
+    return '';
+  },
+
+  async handleTriggerBotEnter() {
+    this.triggerError = null;
+    const botNpub = await this.resolveTriggerBotInput({ confirmHex: true });
+    if (!botNpub && this.newTriggerBotQuery.trim()) {
+      this.triggerError = 'Select a bot from suggestions, paste an npub, or confirm the hex pubkey conversion.';
+    }
+  },
+
   async addTrigger() {
     this.triggerError = null;
     const name = this.newTriggerName.trim();
     const triggerId = this.newTriggerId.trim();
     const triggerType = this.newTriggerType;
+    const channelId = triggerType === 'chat_channel_message'
+      ? String(this.newTriggerChannelId || '').trim()
+      : '';
 
-    // Allow direct npub entry: if no bot was selected from suggestions,
-    // check if the query field contains a valid npub
-    let botNpub = this.newTriggerBotNpub.trim();
-    if (!botNpub) {
-      const query = this.newTriggerBotQuery.trim();
-      if (query.startsWith('npub1')) {
-        botNpub = query;
-      }
+    if (!name || !triggerId) {
+      this.triggerError = 'Name and Trigger ID are required.';
+      return;
     }
 
-    if (!name || !triggerId || !botNpub) {
-      this.triggerError = 'Name, Trigger ID, and Bot are all required.';
+    const botNpub = await this.resolveTriggerBotInput({ confirmHex: true });
+    if (!botNpub) {
+      this.triggerError = this.newTriggerBotQuery.trim()
+        ? 'Select a bot from suggestions, paste an npub, or confirm the hex pubkey conversion.'
+        : 'Bot is required.';
       return;
     }
 
@@ -70,6 +149,7 @@ export const triggersManagerMixin = {
       name,
       triggerType,
       trigger_id: triggerId,
+      ...(channelId ? { channel_id: channelId } : {}),
       botNpub,
       botPubkeyHex,
       enabled: true,
@@ -90,6 +170,7 @@ export const triggersManagerMixin = {
     this.newTriggerType = 'manual';
     this.newTriggerName = '';
     this.newTriggerId = '';
+    this.newTriggerChannelId = '';
     this.newTriggerBotNpub = '';
     this.newTriggerBotQuery = '';
     this.triggerSuccess = `Trigger "${name}" added.`;
@@ -151,9 +232,15 @@ export const triggersManagerMixin = {
     }
   },
 
-  async _checkTriggerRules(eventType, botPubkeyHex, contextMessage) {
+  async _checkTriggerRules(eventType, botPubkeyHex, contextMessage, eventMeta = {}) {
+    const channelId = String(eventMeta?.channelId || '').trim();
     const triggers = (this.workspaceTriggers || []).filter(
-      (t) => t.enabled && t.triggerType === eventType && t.botPubkeyHex === botPubkeyHex,
+      (t) => t.enabled
+        && t.triggerType === eventType
+        && t.botPubkeyHex === botPubkeyHex
+        && (eventType !== 'chat_channel_message'
+          || !String(t.channel_id || '').trim()
+          || String(t.channel_id || '').trim() === channelId),
     );
 
     for (const trigger of triggers) {
@@ -173,7 +260,8 @@ export const triggersManagerMixin = {
     }
   },
 
-  _fireMentionTriggers(content, context) {
+  _fireMentionTriggers(content, context, options = {}) {
+    const channelId = String(options?.channelId || '').trim();
     const mentionRegex = /@\[.*?\]\(mention:person:([^\)]+)\)/g;
     const mentionedNpubs = [];
     let match;
@@ -193,7 +281,8 @@ export const triggersManagerMixin = {
       // chat_channel_message: any message in a channel (only for chat context)
       if (trigger.triggerType === 'chat_channel_message' && context.startsWith('chat #')) {
         this._checkTriggerRules('chat_channel_message', trigger.botPubkeyHex,
-          `New message in ${context}: ${content.slice(0, 200)}`);
+          `New message in ${context}: ${content.slice(0, 200)}`,
+          { channelId });
       }
     }
   },

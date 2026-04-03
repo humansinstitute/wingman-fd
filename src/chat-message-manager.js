@@ -453,7 +453,7 @@ export const chatMessageManagerMixin = {
         envelope,
       });
 
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.selectChannel(channelId, { syncRoute: false });
     } catch (e) {
       this.error = e.message;
@@ -510,11 +510,10 @@ export const chatMessageManagerMixin = {
         envelope,
       });
 
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshChannels();
       this.selectedChannelId = this.selectedChannelId ?? this.channels[0]?.record_id ?? null;
       await this.refreshMessages({ scrollToLatest: true });
-      this.ensureBackgroundSync(true);
     } catch (error) {
       this.error = error?.message || 'Failed to delete channel';
     }
@@ -570,33 +569,32 @@ export const chatMessageManagerMixin = {
     this.messageAudioDrafts = [];
     this.scheduleComposerAutosize('message');
 
-    const envelope = await outboundChatMessage({
-      record_id: msgId,
-      owner_npub: channel.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-      channel_id: this.selectedChannelId,
-      parent_message_id: null,
-      body,
-      attachments,
-      channel_group_ids: channel.group_ids ?? [],
-      write_group_ref: this.getPreferredChannelWriteGroup(channel),
-      signature_npub: this.signingNpub,
-    });
-
-    await addPendingWrite({
-      record_id: msgId,
-      record_family_hash: recordFamilyHash('chat_message'),
-      envelope,
-    });
-
-    this._fireMentionTriggers(body, `chat #${channel.label || channel.record_id}`);
-
     try {
-      await this.performSync({ silent: false });
+      const envelope = await outboundChatMessage({
+        record_id: msgId,
+        owner_npub: channel.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
+        channel_id: this.selectedChannelId,
+        parent_message_id: null,
+        body,
+        attachments,
+        channel_group_ids: channel.group_ids ?? [],
+        write_group_ref: this.getPreferredChannelWriteGroup(channel),
+        signature_npub: this.signingNpub,
+      });
+
+      await addPendingWrite({
+        record_id: msgId,
+        record_family_hash: recordFamilyHash('chat_message'),
+        envelope,
+      });
+
+      this._fireMentionTriggers(body, `chat #${channel.label || channel.record_id}`, {
+        channelId: this.selectedChannelId,
+      });
+      await this.flushAndBackgroundSync();
     } catch (error) {
       await this.setMessageSyncStatus(msgId, 'failed');
       this.error = error?.message || 'Failed to sync message';
-    } finally {
-      this.ensureBackgroundSync(true);
     }
   },
 
@@ -649,33 +647,32 @@ export const chatMessageManagerMixin = {
     this.threadAudioDrafts = [];
     this.scheduleComposerAutosize('thread');
 
-    const envelope = await outboundChatMessage({
-      record_id: msgId,
-      owner_npub: channel.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
-      channel_id: this.selectedChannelId,
-      parent_message_id: this.activeThreadId,
-      body,
-      attachments,
-      channel_group_ids: channel.group_ids ?? [],
-      write_group_ref: this.getPreferredChannelWriteGroup(channel),
-      signature_npub: this.signingNpub,
-    });
-
-    await addPendingWrite({
-      record_id: msgId,
-      record_family_hash: recordFamilyHash('chat_message'),
-      envelope,
-    });
-
-    this._fireMentionTriggers(body, `chat #${channel.label || channel.record_id}`);
-
     try {
-      await this.performSync({ silent: false });
+      const envelope = await outboundChatMessage({
+        record_id: msgId,
+        owner_npub: channel.owner_npub || this.workspaceOwnerNpub || this.session?.npub,
+        channel_id: this.selectedChannelId,
+        parent_message_id: this.activeThreadId,
+        body,
+        attachments,
+        channel_group_ids: channel.group_ids ?? [],
+        write_group_ref: this.getPreferredChannelWriteGroup(channel),
+        signature_npub: this.signingNpub,
+      });
+
+      await addPendingWrite({
+        record_id: msgId,
+        record_family_hash: recordFamilyHash('chat_message'),
+        envelope,
+      });
+
+      this._fireMentionTriggers(body, `chat #${channel.label || channel.record_id}`, {
+        channelId: this.selectedChannelId,
+      });
+      await this.flushAndBackgroundSync();
     } catch (error) {
       await this.setMessageSyncStatus(msgId, 'failed');
       this.error = error?.message || 'Failed to sync reply';
-    } finally {
-      this.ensureBackgroundSync(true);
     }
   },
 
@@ -760,9 +757,8 @@ export const chatMessageManagerMixin = {
       });
     }
 
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
     this.closeThread();
     await this.refreshMessages();
-    this.ensureBackgroundSync(true);
   },
 };

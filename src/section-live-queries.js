@@ -9,7 +9,7 @@ import {
   getReportById,
   getWindowedReportsByOwner,
   getTaskById,
-  getWindowedTasksByOwner,
+  getTasksByOwner,
   getSchedulesByOwner,
   getScopesByOwner,
   getCommentsByTarget,
@@ -126,7 +126,7 @@ function buildWorkspaceSpecs(store) {
       return [
         {
           key: 'tasks:tasks',
-          query: () => getWindowedTasksByOwner(ownerNpub),
+          query: () => getTasksByOwner(ownerNpub),
           onNext: (tasks) => store.applyTasks(tasks),
         },
         {
@@ -139,7 +139,7 @@ function buildWorkspaceSpecs(store) {
       return [
         {
           key: 'calendar:tasks',
-          query: () => getWindowedTasksByOwner(ownerNpub),
+          query: () => getTasksByOwner(ownerNpub),
           onNext: (tasks) => store.applyTasks(tasks),
         },
         {
