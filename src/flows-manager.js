@@ -229,6 +229,23 @@ export const flowsManagerMixin = {
     return pending.filter((a) => a.scope_id === scopeId);
   },
 
+  get approvalHistory() {
+    const scopeId = this.selectedBoardId;
+    let list = this.approvals.filter((a) => a.record_state !== 'deleted');
+    if (scopeId) list = list.filter((a) => a.scope_id === scopeId);
+    list.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+    return list;
+  },
+
+  get filteredApprovalHistory() {
+    const q = (this.approvalHistoryFilter || '').toLowerCase().trim();
+    if (!q) return this.approvalHistory;
+    return this.approvalHistory.filter((a) =>
+      (a.title || '').toLowerCase().includes(q) ||
+      (a.brief || '').toLowerCase().includes(q),
+    );
+  },
+
   // --- approval rendering helpers (used by the detail modal template) ---
 
   approvalBriefHtml(approval) {

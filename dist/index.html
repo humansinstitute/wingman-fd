@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-B-H1_cxU.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-EdwOt2sy.css">
+  <script type="module" crossorigin src="/assets/index-B1eIHjzN.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-C8ECGa7M.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -3790,7 +3790,10 @@
           <div class="flows-section">
             <div class="flows-header">
               <h2>Flows</h2>
-              <button type="button" class="btn-primary" @click="$store.chat.showFlowEditor = true; $store.chat.editingFlowId = null">New Flow</button>
+              <div class="flows-header-actions">
+                <button type="button" class="btn-secondary" @click="$store.chat.showApprovalHistory = true; $store.chat.approvalHistoryFilter = ''">Approval History</button>
+                <button type="button" class="btn-primary" @click="$store.chat.showFlowEditor = true; $store.chat.editingFlowId = null">New Flow</button>
+              </div>
             </div>
 
             <!-- Pending approvals banner -->
@@ -4223,6 +4226,48 @@
               <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Reject</button>
               <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Improve</button>
               <input type="text" x-model="$store.chat.approvalDecisionNote" placeholder="Decision note (optional)" class="approval-decision-input" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Approval history modal -->
+        <div class="approval-history-overlay" x-show="$store.chat.showApprovalHistory" x-cloak @click.self="$store.chat.showApprovalHistory = false" style="display:none">
+          <div class="approval-history-modal">
+            <div class="approval-history-header">
+              <h2>Approval History</h2>
+              <button type="button" class="btn-close" @click="$store.chat.showApprovalHistory = false">Close</button>
+            </div>
+            <div class="approval-history-filter">
+              <input type="text" x-model="$store.chat.approvalHistoryFilter" placeholder="Filter by title or brief..." class="approval-history-search" />
+            </div>
+            <div class="approval-history-body">
+              <div class="approval-history-empty" x-show="$store.chat.filteredApprovalHistory.length === 0">
+                <p x-text="$store.chat.approvalHistoryFilter ? 'No approvals match your filter.' : 'No approvals found.'"></p>
+              </div>
+              <table class="approval-history-table" x-show="$store.chat.filteredApprovalHistory.length > 0">
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Status</th>
+                    <th>Confidence</th>
+                    <th>Mode</th>
+                    <th>Decision</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="a in $store.chat.filteredApprovalHistory" :key="a.record_id">
+                    <tr class="approval-history-row" @click="$store.chat.activeApprovalId = a.record_id; $store.chat.showApprovalDetail = true; $store.chat.showApprovalHistory = false">
+                      <td class="approval-history-title" x-text="a.title || 'Untitled'"></td>
+                      <td><span class="approval-status-badge" :class="'approval-status-' + (a.status || 'unknown')" x-text="a.status || 'unknown'"></span></td>
+                      <td x-text="a.confidence_score != null ? Math.round(a.confidence_score * 100) + '%' : '—'"></td>
+                      <td x-text="a.approval_mode === 'agent' ? 'Agent' : 'Manual'"></td>
+                      <td class="approval-history-note" x-text="(a.decision_note || '—').slice(0, 80)"></td>
+                      <td class="approval-history-date" x-text="a.updated_at ? new Date(a.updated_at).toLocaleDateString() : '—'"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

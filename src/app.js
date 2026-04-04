@@ -335,6 +335,8 @@ export function initApp() {
     showApprovalDetail: false,
     activeApprovalId: null,
     approvalDecisionNote: '',
+    showApprovalHistory: false,
+    approvalHistoryFilter: '',
     activeTaskId: null,
     tasks: [],
     schedules: [],
