@@ -421,6 +421,10 @@
             </span>
             <span class="sidebar-label">Schedules</span>
           </li>
+          <li :class="{ active: $store.chat.navSection === 'flows' }" @click="$store.chat.navigateTo('flows'); $store.chat.refreshFlows(); $store.chat.refreshApprovals()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <span class="sidebar-label">Flows</span>
+          </li>
           <li :class="{ active: $store.chat.navSection === 'scopes' }" @click="$store.chat.navigateTo('scopes')">
             <span class="sidebar-icon" aria-hidden="true">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -707,9 +711,31 @@
             </section>
 
             <aside class="flightdeck-side-column">
-              <section class="flightdeck-side-panel">
-                <h3>Approvals</h3>
-                <p>Approvals will gather the decisions that need a quick yes, no, or unblock from you. Use this space for sign-offs, delegated reviews, and any work waiting on your call.</p>
+              <section class="flightdeck-side-panel flightdeck-approvals-panel">
+                <h3>Approvals <span class="flightdeck-approvals-count" x-show="$store.chat.pendingApprovalsByScope.length > 0" x-text="$store.chat.pendingApprovalsByScope.length"></span></h3>
+                <div x-show="$store.chat.pendingApprovalsByScope.length === 0">
+                  <p class="flightdeck-approvals-empty">No pending approvals.</p>
+                </div>
+                <div class="flightdeck-approvals-list" x-show="$store.chat.pendingApprovalsByScope.length > 0">
+                  <template x-for="approval in $store.chat.pendingApprovalsByScope" :key="approval.record_id">
+                    <article class="flightdeck-approval-card" @click="$store.chat.activeApprovalId = approval.record_id; $store.chat.showApprovalDetail = true">
+                      <div class="flightdeck-approval-card-header">
+                        <strong x-text="approval.title || 'Untitled approval'"></strong>
+                        <span class="flightdeck-approval-confidence" x-show="approval.confidence_score != null" x-text="Math.round((approval.confidence_score || 0) * 100) + '%'"></span>
+                      </div>
+                      <p class="flightdeck-approval-brief" x-text="(approval.brief || '').slice(0, 120) + ((approval.brief || '').length > 120 ? '...' : '')"></p>
+                      <div class="flightdeck-approval-card-meta">
+                        <span class="flightdeck-approval-mode-badge" x-text="approval.approval_mode === 'agent' ? 'Agent review' : 'Manual'"></span>
+                        <span x-show="approval.task_ids && approval.task_ids.length > 1" x-text="approval.task_ids.length + ' tasks'"></span>
+                      </div>
+                      <div class="flightdeck-approval-card-actions" @click.stop>
+                        <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id)">Approve</button>
+                        <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id)">Reject</button>
+                        <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, prompt('Improvement notes:') || '')">Improve</button>
+                      </div>
+                    </article>
+                  </template>
+                </div>
               </section>
               <section class="flightdeck-side-panel">
                 <h3>Coming Up</h3>
@@ -3718,6 +3744,247 @@
               </template>
             </div>
           </div>
+          </div>
+        </template>
+
+        <template x-if="$store.chat.navSection === 'flows'">
+          <div class="flows-section">
+            <div class="flows-header">
+              <h2>Flows</h2>
+              <button type="button" class="btn-primary" @click="$store.chat.showFlowEditor = true; $store.chat.editingFlowId = null">New Flow</button>
+            </div>
+
+            <!-- Pending approvals banner -->
+            <section class="flows-approvals-banner" x-show="$store.chat.pendingApprovalsByScope.length > 0">
+              <h3>Pending Approvals</h3>
+              <div class="flows-approval-cards">
+                <template x-for="approval in $store.chat.pendingApprovalsByScope" :key="approval.record_id">
+                  <article class="flows-approval-card" @click="$store.chat.activeApprovalId = approval.record_id; $store.chat.showApprovalDetail = true">
+                    <div class="flows-approval-card-top">
+                      <strong x-text="approval.title || 'Untitled'"></strong>
+                      <span class="flows-approval-confidence" x-show="approval.confidence_score != null" x-text="Math.round((approval.confidence_score || 0) * 100) + '%'"></span>
+                    </div>
+                    <p class="flows-approval-brief" x-text="(approval.brief || '').slice(0, 200)"></p>
+                    <div class="flows-approval-meta">
+                      <span x-text="approval.approval_mode === 'agent' ? 'Agent review' : 'Manual'"></span>
+                      <span x-show="approval.task_ids && approval.task_ids.length > 1" x-text="approval.task_ids.length + ' tasks'"></span>
+                    </div>
+                    <div class="flows-approval-actions" @click.stop>
+                      <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id)">Approve</button>
+                      <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id)">Reject</button>
+                      <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, prompt('Improvement notes:') || '')">Improve</button>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </section>
+
+            <!-- Flow list -->
+            <section class="flows-list-section">
+              <div class="flows-empty" x-show="$store.chat.flowsByScope.length === 0 && !$store.chat.showFlowEditor">
+                <p>No flows defined for this scope. Create a flow to set up an automation pipeline.</p>
+              </div>
+              <div class="flows-grid" x-show="$store.chat.flowsByScope.length > 0">
+                <template x-for="flow in $store.chat.flowsByScope" :key="flow.record_id">
+                  <article class="flow-card" @click="$store.chat.editingFlowId = flow.record_id; $store.chat.showFlowEditor = true">
+                    <div class="flow-card-header">
+                      <h3 x-text="flow.title || 'Untitled flow'"></h3>
+                      <span class="flow-step-count" x-text="(flow.steps || []).length + ' steps'"></span>
+                    </div>
+                    <p class="flow-card-description" x-text="(flow.description || '').slice(0, 120)"></p>
+                    <div class="flow-card-steps">
+                      <template x-for="step in (flow.steps || []).slice(0, 5)" :key="step.step_number">
+                        <span class="flow-step-chip" :class="'flow-step-mode-' + (step.approval_mode || 'auto')">
+                          <span x-text="step.step_number"></span>
+                          <span x-text="step.title"></span>
+                        </span>
+                      </template>
+                      <span x-show="(flow.steps || []).length > 5" class="flow-step-more">+<span x-text="(flow.steps || []).length - 5"></span> more</span>
+                    </div>
+                    <div class="flow-card-footer">
+                      <button type="button" class="btn-small btn-danger" @click.stop="if (confirm('Delete this flow?')) $store.chat.deleteFlow(flow.record_id)">Delete</button>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </section>
+
+            <!-- Flow editor modal -->
+            <div class="flow-editor-overlay" x-show="$store.chat.showFlowEditor" x-transition.opacity @click.self="$store.chat.showFlowEditor = false" x-cloak
+              x-data="{
+                get flow() {
+                  const id = $store.chat.editingFlowId;
+                  if (!id) return { title: '', description: '', steps: [], next_flow_id: null };
+                  return $store.chat.flows.find(f => f.record_id === id) || { title: '', description: '', steps: [], next_flow_id: null };
+                },
+                formTitle: '',
+                formDescription: '',
+                formSteps: [],
+                formNextFlowId: null,
+                init() {
+                  this.formTitle = this.flow.title || '';
+                  this.formDescription = this.flow.description || '';
+                  this.formSteps = JSON.parse(JSON.stringify(this.flow.steps || []));
+                  this.formNextFlowId = this.flow.next_flow_id || null;
+                },
+                addStep() {
+                  this.formSteps.push({
+                    step_number: this.formSteps.length + 1,
+                    title: '',
+                    instruction: '',
+                    approval_mode: 'manual',
+                    whitelist_approvers: null,
+                    artifacts_expected: [],
+                  });
+                },
+                removeStep(idx) {
+                  this.formSteps.splice(idx, 1);
+                  this.formSteps.forEach((s, i) => s.step_number = i + 1);
+                },
+                async save() {
+                  const scopeAssignment = {
+                    scope_id: $store.chat.selectedBoardId || null,
+                    scope_l1_id: $store.chat.selectedBoardScope?.l1_id || $store.chat.selectedBoardId || null,
+                    scope_l2_id: $store.chat.selectedBoardScope?.l2_id || null,
+                    scope_l3_id: $store.chat.selectedBoardScope?.l3_id || null,
+                    scope_l4_id: $store.chat.selectedBoardScope?.l4_id || null,
+                    scope_l5_id: $store.chat.selectedBoardScope?.l5_id || null,
+                  };
+                  if ($store.chat.editingFlowId) {
+                    await $store.chat.updateFlow($store.chat.editingFlowId, {
+                      title: this.formTitle,
+                      description: this.formDescription,
+                      steps: this.formSteps,
+                      next_flow_id: this.formNextFlowId,
+                    });
+                  } else {
+                    await $store.chat.createFlow({
+                      title: this.formTitle,
+                      description: this.formDescription,
+                      steps: this.formSteps,
+                      next_flow_id: this.formNextFlowId,
+                      ...scopeAssignment,
+                      group_ids: [],
+                    });
+                  }
+                  $store.chat.showFlowEditor = false;
+                  await $store.chat.refreshFlows();
+                },
+              }"
+            >
+              <div class="flow-editor-panel">
+                <h2 x-text="$store.chat.editingFlowId ? 'Edit Flow' : 'New Flow'"></h2>
+                <div class="flow-editor-fields">
+                  <label>Title
+                    <input type="text" x-model="formTitle" placeholder="Flow title" />
+                  </label>
+                  <label>Description
+                    <textarea x-model="formDescription" rows="3" placeholder="What does this flow do?"></textarea>
+                  </label>
+                </div>
+
+                <div class="flow-editor-steps">
+                  <h3>Steps</h3>
+                  <template x-for="(step, idx) in formSteps" :key="idx">
+                    <div class="flow-editor-step">
+                      <div class="flow-editor-step-header">
+                        <span class="flow-step-number" x-text="step.step_number"></span>
+                        <input type="text" x-model="step.title" placeholder="Step title" class="flow-step-title-input" />
+                        <select x-model="step.approval_mode" class="flow-step-mode-select">
+                          <option value="auto">Auto</option>
+                          <option value="manual">Manual</option>
+                          <option value="agent">Agent</option>
+                        </select>
+                        <button type="button" class="btn-small btn-danger" @click="removeStep(idx)">x</button>
+                      </div>
+                      <textarea x-model="step.instruction" rows="2" placeholder="Step instruction..." class="flow-step-instruction"></textarea>
+                    </div>
+                  </template>
+                  <button type="button" class="btn-small" @click="addStep()">+ Add Step</button>
+                </div>
+
+                <div class="flow-editor-actions">
+                  <button type="button" class="btn-primary" @click="save()">Save</button>
+                  <button type="button" @click="$store.chat.showFlowEditor = false">Cancel</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Approval detail modal -->
+            <div class="approval-detail-overlay" x-show="$store.chat.showApprovalDetail" x-transition.opacity @click.self="$store.chat.showApprovalDetail = false" x-cloak
+              x-data="{
+                get approval() {
+                  const id = $store.chat.activeApprovalId;
+                  return $store.chat.approvals.find(a => a.record_id === id) || null;
+                },
+              }"
+            >
+              <div class="approval-detail-panel" x-show="approval">
+                <div class="approval-detail-header">
+                  <h2 x-text="approval?.title || 'Approval'"></h2>
+                  <button type="button" @click="$store.chat.showApprovalDetail = false">Close</button>
+                </div>
+
+                <div class="approval-detail-status-row">
+                  <span class="approval-status-badge" :style="'background:' + ({pending:'#fbbf24',approved:'#34d399',rejected:'#f87171',needs_revision:'#a78bfa'}[approval?.status] || '#9ca3af')"
+                    x-text="{pending:'Pending',approved:'Approved',rejected:'Rejected',needs_revision:'Needs Revision'}[approval?.status] || approval?.status"></span>
+                  <span x-show="approval?.confidence_score != null" x-text="'Confidence: ' + Math.round((approval?.confidence_score || 0) * 100) + '%'"></span>
+                  <span x-show="approval?.approval_mode" x-text="approval?.approval_mode === 'agent' ? 'Agent review' : 'Manual review'"></span>
+                </div>
+
+                <!-- Brief -->
+                <div class="approval-detail-section">
+                  <h3>Brief</h3>
+                  <p x-text="approval?.brief || 'No brief provided.'"></p>
+                </div>
+
+                <!-- Agent review -->
+                <div class="approval-detail-section" x-show="approval?.agent_review_note">
+                  <h3>Agent Review</h3>
+                  <p><strong x-text="approval?.agent_review_by ? 'Reviewed by: ' + approval.agent_review_by.slice(0, 16) + '...' : ''"></strong></p>
+                  <p x-text="approval?.agent_review_note"></p>
+                </div>
+
+                <!-- Linked tasks -->
+                <div class="approval-detail-section" x-show="approval?.task_ids?.length > 0">
+                  <h3>Linked Tasks (<span x-text="approval?.task_ids?.length || 0"></span>)</h3>
+                  <ul class="approval-linked-tasks">
+                    <template x-for="taskId in (approval?.task_ids || [])" :key="taskId">
+                      <li>
+                        <span x-text="($store.chat.tasks.find(t => t.record_id === taskId)?.title) || taskId.slice(0, 12) + '...'"></span>
+                        <span class="approval-task-state" x-text="$store.chat.tasks.find(t => t.record_id === taskId)?.state || 'unknown'"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+
+                <!-- Artifact refs -->
+                <div class="approval-detail-section" x-show="approval?.artifact_refs?.length > 0">
+                  <h3>Artifacts</h3>
+                  <ul class="approval-artifact-list">
+                    <template x-for="ref in (approval?.artifact_refs || [])" :key="ref.record_id">
+                      <li x-text="ref.record_id.slice(0, 12) + '...' + ' (' + (ref.record_family_hash || '').split(':').pop() + ')'"></li>
+                    </template>
+                  </ul>
+                </div>
+
+                <!-- Decision -->
+                <div class="approval-detail-section" x-show="approval?.decision_note">
+                  <h3>Decision Note</h3>
+                  <p x-text="approval?.decision_note"></p>
+                  <p x-show="approval?.approved_by" x-text="'Decided by: ' + (approval?.approved_by || '').slice(0, 16) + '...'"></p>
+                  <p x-show="approval?.approved_at" x-text="'At: ' + (approval?.approved_at || '')"></p>
+                </div>
+
+                <!-- Actions -->
+                <div class="approval-detail-actions" x-show="approval?.status === 'pending'">
+                  <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Approve</button>
+                  <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Reject</button>
+                  <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Improve</button>
+                  <input type="text" x-model="$store.chat.approvalDecisionNote" placeholder="Decision note (optional)" class="approval-decision-input" />
+                </div>
+              </div>
+            </div>
           </div>
         </template>
 

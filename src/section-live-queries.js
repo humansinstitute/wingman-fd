@@ -13,6 +13,8 @@ import {
   getSchedulesByOwner,
   getScopesByOwner,
   getCommentsByTarget,
+  getFlowsByOwner,
+  getApprovalsByStatus,
 } from './db.js';
 import { recordFamilyHash } from './translators/chat.js';
 
@@ -89,6 +91,11 @@ function buildWorkspaceSpecs(store) {
           key: 'status:scopes',
           query: () => getScopesByOwner(ownerNpub),
           onNext: (scopes) => store.applyScopes(scopes),
+        },
+        {
+          key: 'status:approvals',
+          query: () => getApprovalsByStatus('pending'),
+          onNext: (approvals) => { store.approvals = approvals; },
         },
       ];
     case 'chat':
@@ -178,6 +185,24 @@ function buildWorkspaceSpecs(store) {
       return [
         {
           key: 'scopes:scopes',
+          query: () => getScopesByOwner(ownerNpub),
+          onNext: (scopes) => store.applyScopes(scopes),
+        },
+      ];
+    case 'flows':
+      return [
+        {
+          key: 'flows:flows',
+          query: () => getFlowsByOwner(ownerNpub),
+          onNext: (flows) => { store.flows = flows; },
+        },
+        {
+          key: 'flows:approvals',
+          query: () => getApprovalsByStatus('pending'),
+          onNext: (approvals) => { store.approvals = approvals; },
+        },
+        {
+          key: 'flows:scopes',
           query: () => getScopesByOwner(ownerNpub),
           onNext: (scopes) => store.applyScopes(scopes),
         },

@@ -44,7 +44,7 @@ describe('section live query plan', () => {
     });
 
     expect(plan.shared).toEqual(['address-book']);
-    expect(plan.workspace).toEqual(['status:reports', 'status:scopes']);
+    expect(plan.workspace).toEqual(['status:reports', 'status:scopes', 'status:approvals']);
     expect(plan.detail).toEqual([]);
   });
 
