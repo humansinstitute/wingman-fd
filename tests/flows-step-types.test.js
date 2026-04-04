@@ -6,6 +6,8 @@ import {
   defaultStepForType,
   isJobDispatchStep,
   isApprovalStep,
+  parseTagList,
+  formatTagList,
 } from '../src/flows-manager.js';
 
 // ---------------------------------------------------------------------------
@@ -94,6 +96,42 @@ describe('isJobDispatchStep / isApprovalStep', () => {
   it('identifies approval steps', () => {
     expect(isApprovalStep({ type: 'approval' })).toBe(true);
     expect(isApprovalStep({ type: 'job_dispatch' })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tag list helpers (for whitelist_approvers and artifacts_expected inputs)
+// ---------------------------------------------------------------------------
+
+describe('parseTagList', () => {
+  it('splits comma-separated values and trims whitespace', () => {
+    expect(parseTagList('npub1pete, group:mgmt , npub1bob'))
+      .toEqual(['npub1pete', 'group:mgmt', 'npub1bob']);
+  });
+
+  it('filters out empty segments', () => {
+    expect(parseTagList('a,, b, ,c')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('returns empty array for empty/null input', () => {
+    expect(parseTagList('')).toEqual([]);
+    expect(parseTagList(null)).toEqual([]);
+    expect(parseTagList(undefined)).toEqual([]);
+  });
+
+  it('handles single value with no commas', () => {
+    expect(parseTagList('npub1pete')).toEqual(['npub1pete']);
+  });
+});
+
+describe('formatTagList', () => {
+  it('joins array into comma-separated string', () => {
+    expect(formatTagList(['npub1pete', 'group:mgmt'])).toBe('npub1pete, group:mgmt');
+  });
+
+  it('returns empty string for null/empty', () => {
+    expect(formatTagList(null)).toBe('');
+    expect(formatTagList([])).toBe('');
   });
 });
 

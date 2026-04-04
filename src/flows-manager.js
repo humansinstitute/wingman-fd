@@ -161,6 +161,26 @@ export function defaultStepForType(type, stepNumber) {
 }
 
 // ---------------------------------------------------------------------------
+// Tag list helpers (whitelist_approvers, artifacts_expected UI binding)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a comma-separated string into a trimmed array, filtering empties.
+ */
+export function parseTagList(str) {
+  if (!str) return [];
+  return str.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Format an array into a comma-separated display string.
+ */
+export function formatTagList(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return '';
+  return arr.join(', ');
+}
+
+// ---------------------------------------------------------------------------
 // Mixin — applied to Alpine store via applyMixins()
 // ---------------------------------------------------------------------------
 

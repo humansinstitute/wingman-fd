@@ -327,6 +327,8 @@ export function initApp() {
     approvals: [],
     editingFlowId: null,
     showFlowEditor: false,
+    showFlowStartConfirm: false,
+    flowStartTarget: null,
     showApprovalDetail: false,
     activeApprovalId: null,
     approvalDecisionNote: '',

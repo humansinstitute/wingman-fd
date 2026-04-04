@@ -9182,6 +9182,57 @@ button:disabled {
   background: #2563eb;
 }
 
+/* Flow start confirmation dialog */
+.flow-start-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1010;
+  background: rgba(15, 23, 42, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.flow-start-confirm-panel {
+  background: #fff;
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
+}
+.flow-start-confirm-panel h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+.flow-start-confirm-body p {
+  margin: 0 0 0.5rem;
+  font-size: 0.88rem;
+}
+.flow-start-confirm-detail {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  margin-bottom: 0.5rem;
+}
+.flow-start-confirm-label {
+  color: #64748b;
+}
+.flow-start-confirm-type {
+  font-size: 0.72rem;
+}
+.flow-start-confirm-info {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.flow-start-confirm-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+}
+
 .flow-scope-field {
   position: relative;
 }
