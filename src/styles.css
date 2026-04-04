@@ -9632,6 +9632,27 @@ button:disabled {
   color: #3730a3;
 }
 
+.flightdeck-approvals-history-link {
+  text-align: center;
+  padding-top: 0.6rem;
+}
+
+.btn-link-subtle {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 0.3rem 1rem;
+  font-size: 0.78rem;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.btn-link-subtle:hover {
+  background: #f8fafc;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+
 .flows-header-actions {
   display: flex;
   gap: 0.5rem;
