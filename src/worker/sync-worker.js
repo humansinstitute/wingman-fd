@@ -214,27 +214,41 @@ export async function pullRecords(ownerNpub, viewerNpub = ownerNpub, onProgress,
 export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, families = DEFAULT_FAMILIES, options = {}, onProgress) {
   openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
   const forceFull = options.forceFull === true;
-  let totalPulled = 0;
-  let completedFamilies = 0;
   const totalFamilies = families.length;
 
   if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies, currentFamily: null, pulled: 0 });
 
-  for (const family of families) {
+  // Read all cursors upfront, then fetch all families in parallel.
+  const cursorEntries = await Promise.all(
+    families.map(async (family) => {
+      const sinceKey = `sync_since:${family}`;
+      const since = forceFull ? null : await getSyncState(sinceKey);
+      return { family, sinceKey, since };
+    })
+  );
+
+  // Fetch all families from Tower concurrently.
+  const fetchResults = await Promise.all(
+    cursorEntries.map(async ({ family, since }) => {
+      const result = await fetchRecords({
+        owner_npub: ownerNpub,
+        viewer_npub: viewerNpub,
+        record_family_hash: family,
+        since: since ?? undefined,
+      });
+      return { family, records: result.records ?? result ?? [] };
+    })
+  );
+
+  // Materialize results sequentially per family (Dexie writes are ordered).
+  let totalPulled = 0;
+  let completedFamilies = 0;
+
+  for (let i = 0; i < fetchResults.length; i++) {
+    const { family, records } = fetchResults[i];
+    const { sinceKey, since } = cursorEntries[i];
     const label = familyLabel(family);
-    if (onProgress) onProgress({ phase: 'pulling', completedFamilies, totalFamilies, currentFamily: label, pulled: totalPulled });
 
-    const sinceKey = `sync_since:${family}`;
-    const since = forceFull ? null : await getSyncState(sinceKey);
-
-    const result = await fetchRecords({
-      owner_npub: ownerNpub,
-      viewer_npub: viewerNpub,
-      record_family_hash: family,
-      since: since ?? undefined,
-    });
-
-    const records = result.records ?? result ?? [];
     let latestApplied = since ?? '';
     let appliedCount = 0;
     let skippedCount = 0;
@@ -282,12 +296,10 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
 export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub, options = {}) {
   openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
 
-  const familyCursors = {};
-  for (const family of DEFAULT_FAMILIES) {
-    const sinceKey = `sync_since:${family}`;
-    const cursor = await getSyncState(sinceKey);
-    familyCursors[family] = cursor || null;
-  }
+  const cursorPairs = await Promise.all(
+    DEFAULT_FAMILIES.map(async (family) => [family, await getSyncState(`sync_since:${family}`) || null])
+  );
+  const familyCursors = Object.fromEntries(cursorPairs);
 
   try {
     const result = await fetchHeartbeat({
