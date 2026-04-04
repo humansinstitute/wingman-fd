@@ -21,6 +21,7 @@ import { outboundFlow } from './translators/flows.js';
 import { outboundApproval } from './translators/approvals.js';
 import { outboundTask } from './translators/tasks.js';
 import { toRaw } from './utils/state-helpers.js';
+import { buildFirstStepDescription } from './task-flow-helpers.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -379,7 +380,7 @@ export const flowsManagerMixin = {
 
   // --- manual flow start ---
 
-  async startFlowRun(flowId) {
+  async startFlowRun(flowId, runContext = '') {
     const flow = this.flows.find((f) => f.record_id === flowId);
     if (!flow || !this.session?.npub) return null;
     if (!Array.isArray(flow.steps) || flow.steps.length === 0) return null;
@@ -390,11 +391,12 @@ export const flowsManagerMixin = {
     const now = new Date().toISOString();
     const ownerNpub = this.workspaceOwnerNpub;
 
+    const stepDesc = firstStep.goals || firstStep.description || firstStep.instruction || '';
     const task = {
       record_id: taskId,
       owner_npub: ownerNpub,
       title: firstStep.title || flow.title,
-      description: firstStep.goals || firstStep.description || firstStep.instruction || '',
+      description: buildFirstStepDescription(stepDesc, runContext),
       state: 'ready',
       priority: 'rock',
       parent_task_id: null,

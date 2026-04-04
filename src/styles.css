@@ -9218,6 +9218,121 @@ button:disabled {
   justify-content: flex-end;
   margin-top: 0.75rem;
 }
+/* Flow start context field */
+.flow-start-context-field {
+  margin: 0.5rem 0;
+}
+.flow-start-context-hint {
+  font-weight: 400;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.flow-start-context-input {
+  width: 100%;
+  font-size: 0.85rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 0.5rem;
+  resize: vertical;
+  font-family: inherit;
+}
+.flow-start-context-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+/* Task flow linkage display */
+.task-flow-linkage {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.task-flow-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+.task-flow-reference {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+.task-flow-active-run {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+.task-flow-badge-icon {
+  font-size: 0.7rem;
+}
+.task-flow-badge-label {
+  font-weight: 500;
+}
+.task-flow-step-label {
+  font-size: 0.72rem;
+  color: #64748b;
+  margin-left: 0.15rem;
+}
+.task-flow-state-label {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  margin-left: 0.25rem;
+}
+/* Flow attach picker */
+.task-flow-attach {
+  position: relative;
+}
+.task-flow-attach-btn {
+  font-size: 0.82rem;
+  color: #64748b;
+  background: none;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+}
+.task-flow-attach-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+.task-flow-picker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 120;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+  min-width: 200px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 0.25rem 0;
+  margin-top: 0.25rem;
+}
+.task-flow-picker-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #334155;
+}
+.task-flow-picker-option:hover {
+  background: #f1f5f9;
+}
+.task-flow-picker-empty {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
 
 .flow-scope-field {
   position: relative;

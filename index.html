@@ -1392,6 +1392,39 @@
                     </div>
                   </div>
 
+                  <!-- Flow linkage -->
+                  <div class="task-field task-field-wide" x-data="{ get flowInfo() { return $store.chat.getEditingTaskFlowInfo(); } }">
+                    <label class="task-field-label">Flow</label>
+                    <template x-if="flowInfo">
+                      <div class="task-flow-linkage">
+                        <span class="task-flow-badge" :class="flowInfo.isActiveRun ? 'task-flow-active-run' : 'task-flow-reference'">
+                          <span class="task-flow-badge-icon" x-text="flowInfo.isActiveRun ? '▶' : '🔗'"></span>
+                          <span class="task-flow-badge-label" x-text="flowInfo.flowTitle || flowInfo.flowId.slice(0, 8)"></span>
+                          <template x-if="flowInfo.isActiveRun && flowInfo.flowStep">
+                            <span class="task-flow-step-label" x-text="'Step ' + flowInfo.flowStep"></span>
+                          </template>
+                          <span class="task-flow-state-label" x-text="flowInfo.isActiveRun ? 'Active run' : 'Reference'"></span>
+                        </span>
+                        <button type="button" class="task-inline-clear-btn" @click="$store.chat.detachFlowFromEditingTask()" title="Detach flow">x</button>
+                      </div>
+                    </template>
+                    <template x-if="!flowInfo">
+                      <div class="task-flow-attach" @click.outside="$store.chat.showFlowPicker = false">
+                        <button type="button" class="task-flow-attach-btn" @click="$store.chat.showFlowPicker = !$store.chat.showFlowPicker">Attach flow...</button>
+                        <div class="task-flow-picker" x-show="$store.chat.showFlowPicker" x-cloak x-transition>
+                          <template x-for="flow in ($store.chat.flows || []).filter(f => f.record_state !== 'deleted')" :key="flow.record_id">
+                            <button type="button" class="task-flow-picker-option" @click="$store.chat.attachFlowToEditingTask(flow.record_id)">
+                              <span x-text="flow.title || flow.record_id.slice(0, 8)"></span>
+                            </button>
+                          </template>
+                          <div class="task-flow-picker-empty" x-show="($store.chat.flows || []).filter(f => f.record_state !== 'deleted').length === 0">
+                            No flows available.
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+
                   <!-- Description -->
                   <div class="task-field task-field-wide">
                     <div class="task-field-label-row">
@@ -4084,18 +4117,28 @@
                         :class="'flow-step-type-' + (($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.type) || 'job_dispatch')"
                         x-text="($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.type === 'approval') ? 'Approval' : 'Job Dispatch'"></span>
                     </div>
+                    <div class="flow-start-context-field">
+                      <label class="task-field-label">Run context <span class="flow-start-context-hint">(optional — added to first task)</span></label>
+                      <textarea
+                        x-model="$store.chat.flowStartContext"
+                        placeholder="Add run-specific notes, client name, parameters..."
+                        rows="3"
+                        class="flow-start-context-input"
+                      ></textarea>
+                    </div>
                     <p class="flow-start-confirm-info">This creates a task linked to step 1 of the flow.</p>
                   </div>
                 </template>
                 <div class="flow-start-confirm-actions">
                   <button type="button" class="btn-primary" @click="
                     if ($store.chat.flowStartTarget) {
-                      $store.chat.startFlowRun($store.chat.flowStartTarget.record_id);
+                      $store.chat.startFlowRun($store.chat.flowStartTarget.record_id, $store.chat.flowStartContext);
                     }
                     $store.chat.showFlowStartConfirm = false;
                     $store.chat.flowStartTarget = null;
+                    $store.chat.flowStartContext = '';
                   ">Start Run</button>
-                  <button type="button" class="btn-secondary" @click="$store.chat.showFlowStartConfirm = false; $store.chat.flowStartTarget = null">Cancel</button>
+                  <button type="button" class="btn-secondary" @click="$store.chat.showFlowStartConfirm = false; $store.chat.flowStartTarget = null; $store.chat.flowStartContext = ''">Cancel</button>
                 </div>
               </div>
             </div>

@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-p8TLhCE6.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-B02lCvcq.css">
+  <script type="module" crossorigin src="/assets/index-BGoKGa8q.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Dm1aSdSA.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -1392,6 +1392,39 @@
                       <span class="task-inline-spinner" x-show="$store.chat.taskScopeCascadePending" aria-hidden="true"></span>
                       <span x-text="$store.chat.taskScopeCascadePending ? 'Updating subtasks and permissions…' : $store.chat.taskScopeCascadeMessage"></span>
                     </div>
+                  </div>
+
+                  <!-- Flow linkage -->
+                  <div class="task-field task-field-wide" x-data="{ get flowInfo() { return $store.chat.getEditingTaskFlowInfo(); } }">
+                    <label class="task-field-label">Flow</label>
+                    <template x-if="flowInfo">
+                      <div class="task-flow-linkage">
+                        <span class="task-flow-badge" :class="flowInfo.isActiveRun ? 'task-flow-active-run' : 'task-flow-reference'">
+                          <span class="task-flow-badge-icon" x-text="flowInfo.isActiveRun ? '▶' : '🔗'"></span>
+                          <span class="task-flow-badge-label" x-text="flowInfo.flowTitle || flowInfo.flowId.slice(0, 8)"></span>
+                          <template x-if="flowInfo.isActiveRun && flowInfo.flowStep">
+                            <span class="task-flow-step-label" x-text="'Step ' + flowInfo.flowStep"></span>
+                          </template>
+                          <span class="task-flow-state-label" x-text="flowInfo.isActiveRun ? 'Active run' : 'Reference'"></span>
+                        </span>
+                        <button type="button" class="task-inline-clear-btn" @click="$store.chat.detachFlowFromEditingTask()" title="Detach flow">x</button>
+                      </div>
+                    </template>
+                    <template x-if="!flowInfo">
+                      <div class="task-flow-attach" @click.outside="$store.chat.showFlowPicker = false">
+                        <button type="button" class="task-flow-attach-btn" @click="$store.chat.showFlowPicker = !$store.chat.showFlowPicker">Attach flow...</button>
+                        <div class="task-flow-picker" x-show="$store.chat.showFlowPicker" x-cloak x-transition>
+                          <template x-for="flow in ($store.chat.flows || []).filter(f => f.record_state !== 'deleted')" :key="flow.record_id">
+                            <button type="button" class="task-flow-picker-option" @click="$store.chat.attachFlowToEditingTask(flow.record_id)">
+                              <span x-text="flow.title || flow.record_id.slice(0, 8)"></span>
+                            </button>
+                          </template>
+                          <div class="task-flow-picker-empty" x-show="($store.chat.flows || []).filter(f => f.record_state !== 'deleted').length === 0">
+                            No flows available.
+                          </div>
+                        </div>
+                      </div>
+                    </template>
                   </div>
 
                   <!-- Description -->
@@ -3808,7 +3841,7 @@
                       <span x-show="(flow.steps || []).length > 5" class="flow-step-more">+<span x-text="(flow.steps || []).length - 5"></span> more</span>
                     </div>
                     <div class="flow-card-footer">
-                      <button type="button" class="btn-small btn-start-flow" @click.stop="$store.chat.startFlowRun(flow.record_id)" title="Start a new run of this flow">Start</button>
+                      <button type="button" class="btn-small btn-primary" @click.stop="$store.chat.flowStartTarget = flow; $store.chat.showFlowStartConfirm = true" title="Start a new run of this flow">Start</button>
                       <div class="doc-actions-menu flow-actions-menu" x-data="{ open: false }" @click.outside="open = false">
                         <button type="button" class="doc-actions-toggle" title="More actions" aria-label="More actions" @click.stop="open = !open">
                           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
@@ -4016,6 +4049,13 @@
                           <label class="flow-step-field-label">Directory Override
                             <input type="text" x-model="step.directory_override" placeholder="/path/to/workdir (optional)" class="flow-step-field-input" />
                           </label>
+                          <label class="flow-step-field-label">Expected Artifacts
+                            <input type="text"
+                              :value="(step.artifacts_expected || []).join(', ')"
+                              @change="step.artifacts_expected = $event.target.value.split(',').map(s => s.trim()).filter(Boolean)"
+                              placeholder="e.g. document, csv, code (comma-separated)"
+                              class="flow-step-field-input" />
+                          </label>
                         </div>
                       </template>
 
@@ -4034,6 +4074,20 @@
                               <option value="agent">Agent</option>
                             </select>
                           </label>
+                          <label class="flow-step-field-label">Allowed Approvers
+                            <input type="text"
+                              :value="(step.whitelist_approvers || []).join(', ')"
+                              @change="step.whitelist_approvers = $event.target.value.trim() ? $event.target.value.split(',').map(s => s.trim()).filter(Boolean) : null"
+                              placeholder="e.g. npub1..., group:managers (comma-separated, blank = anyone)"
+                              class="flow-step-field-input" />
+                          </label>
+                          <label class="flow-step-field-label">Expected Artifacts
+                            <input type="text"
+                              :value="(step.artifacts_expected || []).join(', ')"
+                              @change="step.artifacts_expected = $event.target.value.split(',').map(s => s.trim()).filter(Boolean)"
+                              placeholder="e.g. document, report (comma-separated)"
+                              class="flow-step-field-input" />
+                          </label>
                         </div>
                       </template>
                     </div>
@@ -4047,6 +4101,46 @@
                 <div class="flow-editor-actions">
                   <button type="button" class="btn-primary" @click="save()">Save</button>
                   <button type="button" @click="$store.chat.showFlowEditor = false">Cancel</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Flow start confirmation dialog -->
+            <div class="flow-start-confirm-overlay" x-show="$store.chat.showFlowStartConfirm" x-transition.opacity @click.self="$store.chat.showFlowStartConfirm = false" x-cloak>
+              <div class="flow-start-confirm-panel">
+                <h3>Start Flow Run</h3>
+                <template x-if="$store.chat.flowStartTarget">
+                  <div class="flow-start-confirm-body">
+                    <p>Start a new run of <strong x-text="$store.chat.flowStartTarget.title || 'Untitled flow'"></strong>?</p>
+                    <div class="flow-start-confirm-detail">
+                      <span class="flow-start-confirm-label">First step:</span>
+                      <span x-text="($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.title) || '(unnamed)'"></span>
+                      <span class="flow-step-chip flow-start-confirm-type"
+                        :class="'flow-step-type-' + (($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.type) || 'job_dispatch')"
+                        x-text="($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.type === 'approval') ? 'Approval' : 'Job Dispatch'"></span>
+                    </div>
+                    <div class="flow-start-context-field">
+                      <label class="task-field-label">Run context <span class="flow-start-context-hint">(optional — added to first task)</span></label>
+                      <textarea
+                        x-model="$store.chat.flowStartContext"
+                        placeholder="Add run-specific notes, client name, parameters..."
+                        rows="3"
+                        class="flow-start-context-input"
+                      ></textarea>
+                    </div>
+                    <p class="flow-start-confirm-info">This creates a task linked to step 1 of the flow.</p>
+                  </div>
+                </template>
+                <div class="flow-start-confirm-actions">
+                  <button type="button" class="btn-primary" @click="
+                    if ($store.chat.flowStartTarget) {
+                      $store.chat.startFlowRun($store.chat.flowStartTarget.record_id, $store.chat.flowStartContext);
+                    }
+                    $store.chat.showFlowStartConfirm = false;
+                    $store.chat.flowStartTarget = null;
+                    $store.chat.flowStartContext = '';
+                  ">Start Run</button>
+                  <button type="button" class="btn-secondary" @click="$store.chat.showFlowStartConfirm = false; $store.chat.flowStartTarget = null; $store.chat.flowStartContext = ''">Cancel</button>
                 </div>
               </div>
             </div>

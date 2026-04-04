@@ -20,6 +20,7 @@ import { peopleProfilesManagerMixin } from './people-profiles-manager.js';
 import { connectSettingsManagerMixin } from './connect-settings-manager.js';
 import { unreadStoreMixin } from './unread-store.js';
 import { flowsManagerMixin } from './flows-manager.js';
+import { getTaskFlowInfo, buildAttachFlowPatch, buildDetachFlowPatch } from './task-flow-helpers.js';
 import {
   taskBoardStateMixin,
   dedupeTasksByRecordId,
@@ -329,6 +330,8 @@ export function initApp() {
     showFlowEditor: false,
     showFlowStartConfirm: false,
     flowStartTarget: null,
+    flowStartContext: '',
+    showFlowPicker: false,
     showApprovalDetail: false,
     activeApprovalId: null,
     approvalDecisionNote: '',
@@ -3103,7 +3106,33 @@ export function initApp() {
       this.taskScopeCascadePending = false;
       this.taskScopeCascadeMessage = '';
       this.taskComments = [];
+      this.showFlowPicker = false;
       if (options.syncRoute !== false) this.syncRoute();
+    },
+
+    // --- task ↔ flow linkage helpers ---
+
+    getEditingTaskFlowInfo() {
+      if (!this.editingTask) return null;
+      return getTaskFlowInfo(
+        this.editingTask,
+        (this.flows || []).filter((f) => f.record_state !== 'deleted'),
+      );
+    },
+
+    async attachFlowToEditingTask(flowId) {
+      if (!this.editingTask) return;
+      const patch = buildAttachFlowPatch(flowId, this.editingTask.references || []);
+      Object.assign(this.editingTask, patch);
+      this.showFlowPicker = false;
+      await this.saveEditingTask();
+    },
+
+    async detachFlowFromEditingTask() {
+      if (!this.editingTask) return;
+      const patch = buildDetachFlowPatch(this.editingTask.references || []);
+      Object.assign(this.editingTask, patch);
+      await this.saveEditingTask();
     },
 
     openCalendarTask(taskId) {
