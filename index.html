@@ -4171,7 +4171,7 @@
             <!-- Brief -->
             <div class="approval-detail-section">
               <h3>Brief</h3>
-              <p x-text="approval?.brief || 'No brief provided.'"></p>
+              <p x-html="$store.chat.approvalBriefHtml(approval)" @click="$store.chat.handleBriefLinkClick($event)"></p>
             </div>
 
             <!-- Agent review -->
@@ -4186,7 +4186,7 @@
               <h3>Linked Tasks (<span x-text="approval?.task_ids?.length || 0"></span>)</h3>
               <ul class="approval-linked-tasks">
                 <template x-for="taskId in (approval?.task_ids || [])" :key="taskId">
-                  <li>
+                  <li class="approval-linked-task-item" @click="$store.chat.showApprovalDetail = false; $store.chat.navigateToLinkedTask(taskId)">
                     <span x-text="($store.chat.tasks.find(t => t.record_id === taskId)?.title) || taskId.slice(0, 12) + '...'"></span>
                     <span class="approval-task-state" x-text="$store.chat.tasks.find(t => t.record_id === taskId)?.state || 'unknown'"></span>
                   </li>
@@ -4195,11 +4195,14 @@
             </div>
 
             <!-- Artifact refs -->
-            <div class="approval-detail-section" x-show="approval?.artifact_refs?.length > 0">
+            <div class="approval-detail-section" x-show="$store.chat.resolvedArtifacts(approval).length > 0">
               <h3>Artifacts</h3>
               <ul class="approval-artifact-list">
-                <template x-for="ref in (approval?.artifact_refs || [])" :key="ref.record_id">
-                  <li x-text="ref.record_id.slice(0, 12) + '...' + ' (' + (ref.record_family_hash || '').split(':').pop() + ')'"></li>
+                <template x-for="ref in $store.chat.resolvedArtifacts(approval)" :key="ref.record_id">
+                  <li class="approval-artifact-item" @click="$store.chat.navigateToArtifact(ref)" :class="{ 'approval-artifact-clickable': ref.type === 'task' || ref.type === 'document' }">
+                    <span x-text="ref.title || (ref.record_id.slice(0, 12) + '...')"></span>
+                    <span class="approval-artifact-type" x-text="ref.type"></span>
+                  </li>
                 </template>
               </ul>
             </div>

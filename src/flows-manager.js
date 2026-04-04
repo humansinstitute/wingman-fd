@@ -22,6 +22,7 @@ import { outboundApproval } from './translators/approvals.js';
 import { outboundTask } from './translators/tasks.js';
 import { toRaw } from './utils/state-helpers.js';
 import { buildFirstStepDescription } from './task-flow-helpers.js';
+import { renderBriefHtml, resolveArtifactRef } from './approval-helpers.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -225,6 +226,54 @@ export const flowsManagerMixin = {
     const pending = pendingApprovals(this.approvals);
     if (!scopeId) return pending;
     return pending.filter((a) => a.scope_id === scopeId);
+  },
+
+  // --- approval rendering helpers (used by the detail modal template) ---
+
+  approvalBriefHtml(approval) {
+    return renderBriefHtml(approval?.brief, this.tasks, this.documents);
+  },
+
+  resolvedArtifacts(approval) {
+    return (approval?.artifact_refs || []).map((ref) =>
+      resolveArtifactRef(ref, this.tasks, this.documents),
+    );
+  },
+
+  navigateToArtifact(ref) {
+    this.showApprovalDetail = false;
+    if (ref.type === 'task') {
+      this.navSection = 'tasks';
+      this.mobileNavOpen = false;
+      this.openTaskDetail(ref.record_id);
+    } else if (ref.type === 'document') {
+      this.navSection = 'docs';
+      this.mobileNavOpen = false;
+      this.openDoc(ref.record_id);
+    }
+  },
+
+  navigateToLinkedTask(taskId) {
+    this.showApprovalDetail = false;
+    this.navSection = 'tasks';
+    this.mobileNavOpen = false;
+    this.openTaskDetail(taskId);
+  },
+
+  handleBriefLinkClick(event) {
+    const link = event.target.closest('.approval-ref-link');
+    if (!link) return;
+    event.preventDefault();
+    const refType = link.dataset.refType;
+    const refId = link.dataset.refId;
+    if (refType === 'task') {
+      this.navigateToLinkedTask(refId);
+    } else if (refType === 'doc') {
+      this.showApprovalDetail = false;
+      this.navSection = 'docs';
+      this.mobileNavOpen = false;
+      this.openDoc(refId);
+    }
   },
 
   // --- flow CRUD ---

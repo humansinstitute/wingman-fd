@@ -9450,6 +9450,35 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.approval-linked-task-item {
+  cursor: pointer;
+}
+.approval-linked-task-item:hover {
+  background: #f1f5f9;
+}
+
+.approval-artifact-clickable {
+  cursor: pointer;
+}
+.approval-artifact-clickable:hover {
+  background: #f1f5f9;
+}
+
+.approval-artifact-type {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
+.approval-ref-link {
+  color: #3b82f6;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.approval-ref-link:hover {
+  color: #2563eb;
+}
+
 .approval-detail-actions {
   display: flex;
   flex-wrap: wrap;
