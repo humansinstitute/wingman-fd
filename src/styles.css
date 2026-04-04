@@ -9168,20 +9168,6 @@ button:disabled {
   display: flex;
   gap: 0.5rem;
 }
-.btn-start-flow {
-  background: #3b82f6;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.75rem;
-  cursor: pointer;
-  font-weight: 600;
-}
-.btn-start-flow:hover {
-  background: #2563eb;
-}
-
 /* Flow start confirmation dialog */
 .flow-start-confirm-overlay {
   position: fixed;
@@ -9392,3 +9378,5 @@ button:disabled {
 }
 
 .btn-primary:hover { background: #1e293b; }
+.btn-primary:focus { outline: none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #0f172a; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }

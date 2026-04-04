@@ -3806,7 +3806,7 @@
                       <span x-show="(flow.steps || []).length > 5" class="flow-step-more">+<span x-text="(flow.steps || []).length - 5"></span> more</span>
                     </div>
                     <div class="flow-card-footer">
-                      <button type="button" class="btn-small btn-start-flow" @click.stop="$store.chat.flowStartTarget = flow; $store.chat.showFlowStartConfirm = true" title="Start a new run of this flow">Start</button>
+                      <button type="button" class="btn-small btn-primary" @click.stop="$store.chat.flowStartTarget = flow; $store.chat.showFlowStartConfirm = true" title="Start a new run of this flow">Start</button>
                       <div class="doc-actions-menu flow-actions-menu" x-data="{ open: false }" @click.outside="open = false">
                         <button type="button" class="doc-actions-toggle" title="More actions" aria-label="More actions" @click.stop="open = !open">
                           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
@@ -4095,7 +4095,7 @@
                     $store.chat.showFlowStartConfirm = false;
                     $store.chat.flowStartTarget = null;
                   ">Start Run</button>
-                  <button type="button" @click="$store.chat.showFlowStartConfirm = false; $store.chat.flowStartTarget = null">Cancel</button>
+                  <button type="button" class="btn-secondary" @click="$store.chat.showFlowStartConfirm = false; $store.chat.flowStartTarget = null">Cancel</button>
                 </div>
               </div>
             </div>
