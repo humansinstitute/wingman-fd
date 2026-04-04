@@ -19,6 +19,7 @@ import { syncManagerMixin } from './sync-manager.js';
 import { peopleProfilesManagerMixin } from './people-profiles-manager.js';
 import { connectSettingsManagerMixin } from './connect-settings-manager.js';
 import { unreadStoreMixin } from './unread-store.js';
+import { flowsManagerMixin } from './flows-manager.js';
 import {
   taskBoardStateMixin,
   dedupeTasksByRecordId,
@@ -322,6 +323,13 @@ export function initApp() {
     docVersioningError: null,
     docVersioningSelectedIndex: -1,
     docVersioningPreviewHtml: '',
+    flows: [],
+    approvals: [],
+    editingFlowId: null,
+    showFlowEditor: false,
+    showApprovalDetail: false,
+    activeApprovalId: null,
+    approvalDecisionNote: '',
     activeTaskId: null,
     tasks: [],
     schedules: [],
@@ -4451,6 +4459,7 @@ export function initApp() {
     storageImageManagerMixin,
     sectionLiveQueryMixin,
     unreadStoreMixin,
+    flowsManagerMixin,
   );
 
   Alpine.store('chat', storeObj);
