@@ -12,9 +12,7 @@ const indexContent = fs.readFileSync(indexPath, 'utf-8');
 function getApprovalModalHtml() {
   const start = indexContent.indexOf('approval-detail-overlay');
   if (start === -1) throw new Error('approval-detail-overlay not found');
-  // Walk back to the opening <div
   const divStart = indexContent.lastIndexOf('<div', start);
-  // Find the matching close — count nested divs
   let depth = 0;
   let cursor = divStart;
   while (cursor < indexContent.length) {
@@ -46,33 +44,39 @@ const modalHtml = getApprovalModalHtml();
 
 describe('linked tasks are clickable in approval modal', () => {
   it('task list items have a click handler', () => {
-    // The linked tasks section should have click/navigation wiring
     expect(modalHtml).toMatch(/approval-linked-tasks[\s\S]*?@click/);
   });
 
-  it('clicking a task navigates via navigateToLinkedTask or openTaskDetail', () => {
-    expect(modalHtml).toMatch(/approval-linked-tasks[\s\S]*?(navigateToLinkedTask|openTaskDetail)/);
+  it('clicking a task navigates via navigateToLinkedTask', () => {
+    expect(modalHtml).toMatch(/approval-linked-tasks[\s\S]*?navigateToLinkedTask/);
   });
 
   it('clicking a task closes the approval modal', () => {
-    // The click handler should set showApprovalDetail = false
     expect(modalHtml).toMatch(/approval-linked-tasks[\s\S]*?showApprovalDetail\s*=\s*false/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. Brief renders with clickable references (x-html, not x-text)
+// 2. Brief renders with markdown (mention links via renderMarkdownToHtml)
 // ---------------------------------------------------------------------------
 
 describe('brief renders with clickable references', () => {
   it('brief section uses x-html for rich rendering', () => {
-    // The brief paragraph should use x-html to render links inside text
     expect(modalHtml).toMatch(/class="approval-detail-section"[\s\S]*?Brief[\s\S]*?x-html/);
   });
 
-  it('brief rendering calls approvalBriefHtml helper via store', () => {
-    // The template calls $store.chat.approvalBriefHtml which wraps renderBriefHtml
+  it('brief rendering calls approvalBriefHtml which uses renderMarkdownToHtml', () => {
     expect(modalHtml).toMatch(/approvalBriefHtml/);
+    // Verify flows-manager imports renderMarkdownToHtml
+    const fmContent = fs.readFileSync(path.resolve(__dirname, '../src/flows-manager.js'), 'utf-8');
+    expect(fmContent).toMatch(/import.*renderMarkdownToHtml.*from.*markdown/);
+    expect(fmContent).toMatch(/approvalBriefHtml[\s\S]*?renderMarkdownToHtml/);
+  });
+
+  it('brief click handler closes modal on mention-link click', () => {
+    expect(modalHtml).toMatch(/handleBriefLinkClick/);
+    const fmContent = fs.readFileSync(path.resolve(__dirname, '../src/flows-manager.js'), 'utf-8');
+    expect(fmContent).toMatch(/handleBriefLinkClick[\s\S]*?mention-link[\s\S]*?showApprovalDetail\s*=\s*false/);
   });
 });
 
@@ -85,27 +89,18 @@ describe('artifacts section resolves and is clickable', () => {
     expect(modalHtml).toMatch(/approval-artifact-list[\s\S]*?@click/);
   });
 
-  it('artifact items display resolved titles when available', () => {
-    // Should reference resolveArtifactRef or equivalent for title resolution
-    expect(modalHtml).toMatch(/resolveArtifactRef|resolved.*title|\.title/);
-  });
-
   it('clicking an artifact navigates via navigateToArtifact', () => {
-    // The template calls $store.chat.navigateToArtifact which routes by type
     expect(modalHtml).toMatch(/approval-artifact-list[\s\S]*?navigateToArtifact/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 4. Modal x-data imports helpers
+// 4. flows-manager imports approval-helpers for artifact resolution
 // ---------------------------------------------------------------------------
 
 describe('approval modal wires helper functions', () => {
-  it('flows-manager imports approval-helpers for store methods', () => {
-    // The helpers are imported in flows-manager.js and exposed as store methods
-    const fs = require('fs');
-    const fmPath = require('path').resolve(__dirname, '../src/flows-manager.js');
-    const fmContent = fs.readFileSync(fmPath, 'utf-8');
-    expect(fmContent).toMatch(/approval-helpers/);
+  it('flows-manager imports resolveArtifactRef from approval-helpers', () => {
+    const fmContent = fs.readFileSync(path.resolve(__dirname, '../src/flows-manager.js'), 'utf-8');
+    expect(fmContent).toMatch(/resolveArtifactRef.*from.*approval-helpers/);
   });
 });

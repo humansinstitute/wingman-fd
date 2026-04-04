@@ -9470,14 +9470,6 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.approval-ref-link {
-  color: #3b82f6;
-  text-decoration: underline;
-  cursor: pointer;
-}
-.approval-ref-link:hover {
-  color: #2563eb;
-}
 
 .approval-detail-actions {
   display: flex;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml, renderBriefHtml, resolveArtifactRef } from '../src/approval-helpers.js';
+import { resolveArtifactRef } from '../src/approval-helpers.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -18,94 +18,6 @@ const tasks = [
 const documents = [
   { record_id: DOC_UUID, title: 'API spec' },
 ];
-
-// ---------------------------------------------------------------------------
-// escapeHtml
-// ---------------------------------------------------------------------------
-
-describe('escapeHtml', () => {
-  it('escapes angle brackets, ampersands, and quotes', () => {
-    expect(escapeHtml('<script>"xss"&</script>')).toBe(
-      '&lt;script&gt;&quot;xss&quot;&amp;&lt;/script&gt;',
-    );
-  });
-
-  it('passes through safe strings unchanged', () => {
-    expect(escapeHtml('hello world')).toBe('hello world');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// renderBriefHtml
-// ---------------------------------------------------------------------------
-
-describe('renderBriefHtml', () => {
-  it('returns fallback for empty/null brief', () => {
-    expect(renderBriefHtml('', [], [])).toBe('No brief provided.');
-    expect(renderBriefHtml(null, [], [])).toBe('No brief provided.');
-    expect(renderBriefHtml(undefined, [], [])).toBe('No brief provided.');
-  });
-
-  it('returns escaped plain text when no UUIDs present', () => {
-    expect(renderBriefHtml('All good.', tasks, documents)).toBe('All good.');
-  });
-
-  it('replaces a known task UUID with a clickable link', () => {
-    const brief = `Please review task ${TASK_UUID_1} before merging.`;
-    const html = renderBriefHtml(brief, tasks, documents);
-    expect(html).toContain('approval-ref-link');
-    expect(html).toContain('approval-ref-task');
-    expect(html).toContain(`data-ref-type="task"`);
-    expect(html).toContain(`data-ref-id="${TASK_UUID_1}"`);
-    expect(html).toContain('Implement login');
-    // UUID should only appear inside data-ref-id attribute, not as visible text
-    const withoutAttrs = html.replace(/data-ref-id="[^"]*"/g, '');
-    expect(withoutAttrs).not.toContain(TASK_UUID_1);
-  });
-
-  it('replaces a known document UUID with a clickable link', () => {
-    const brief = `See document ${DOC_UUID} for details.`;
-    const html = renderBriefHtml(brief, tasks, documents);
-    expect(html).toContain('approval-ref-doc');
-    expect(html).toContain(`data-ref-type="doc"`);
-    expect(html).toContain(`data-ref-id="${DOC_UUID}"`);
-    expect(html).toContain('API spec');
-  });
-
-  it('leaves unknown UUIDs as plain text', () => {
-    const brief = `Reference ${UNKNOWN_UUID} not in store.`;
-    const html = renderBriefHtml(brief, tasks, documents);
-    expect(html).toContain(UNKNOWN_UUID);
-    expect(html).not.toContain('approval-ref-link');
-  });
-
-  it('handles multiple UUIDs in one brief', () => {
-    const brief = `Tasks ${TASK_UUID_1} and ${TASK_UUID_2}, plus doc ${DOC_UUID}.`;
-    const html = renderBriefHtml(brief, tasks, documents);
-    expect(html).toContain('Implement login');
-    expect(html).toContain('Write tests');
-    expect(html).toContain('API spec');
-    // Should have three links
-    const linkCount = (html.match(/approval-ref-link/g) || []).length;
-    expect(linkCount).toBe(3);
-  });
-
-  it('escapes HTML in brief text around UUIDs', () => {
-    const brief = `<b>Bold</b> task ${TASK_UUID_1}`;
-    const html = renderBriefHtml(brief, tasks, documents);
-    expect(html).toContain('&lt;b&gt;');
-    expect(html).not.toContain('<b>');
-    // Link should still be present
-    expect(html).toContain('Implement login');
-  });
-
-  it('escapes HTML in resolved titles', () => {
-    const xssTasks = [{ record_id: TASK_UUID_1, title: '<img onerror=alert(1)>' }];
-    const html = renderBriefHtml(`Task ${TASK_UUID_1}`, xssTasks, []);
-    expect(html).not.toContain('<img');
-    expect(html).toContain('&lt;img');
-  });
-});
 
 // ---------------------------------------------------------------------------
 // resolveArtifactRef

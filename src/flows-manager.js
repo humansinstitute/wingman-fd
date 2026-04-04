@@ -22,7 +22,8 @@ import { outboundApproval } from './translators/approvals.js';
 import { outboundTask } from './translators/tasks.js';
 import { toRaw } from './utils/state-helpers.js';
 import { buildFirstStepDescription } from './task-flow-helpers.js';
-import { renderBriefHtml, resolveArtifactRef } from './approval-helpers.js';
+import { resolveArtifactRef } from './approval-helpers.js';
+import { renderMarkdownToHtml } from './markdown.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -231,7 +232,7 @@ export const flowsManagerMixin = {
   // --- approval rendering helpers (used by the detail modal template) ---
 
   approvalBriefHtml(approval) {
-    return renderBriefHtml(approval?.brief, this.tasks, this.documents);
+    return renderMarkdownToHtml(approval?.brief) || 'No brief provided.';
   },
 
   resolvedArtifacts(approval) {
@@ -261,19 +262,11 @@ export const flowsManagerMixin = {
   },
 
   handleBriefLinkClick(event) {
-    const link = event.target.closest('.approval-ref-link');
+    const link = event.target.closest('.mention-link');
     if (!link) return;
-    event.preventDefault();
-    const refType = link.dataset.refType;
-    const refId = link.dataset.refId;
-    if (refType === 'task') {
-      this.navigateToLinkedTask(refId);
-    } else if (refType === 'doc') {
-      this.showApprovalDetail = false;
-      this.navSection = 'docs';
-      this.mobileNavOpen = false;
-      this.openDoc(refId);
-    }
+    // Close the approval modal — the global mention-link click handler
+    // in app.js initDocCommentConnector will handle the actual navigation.
+    this.showApprovalDetail = false;
   },
 
   // --- flow CRUD ---
