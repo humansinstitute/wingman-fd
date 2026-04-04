@@ -184,3 +184,58 @@ export function parseReferencesFromDescription(description) {
   }
   return refs;
 }
+
+// --- flow reference linkage ---
+
+const RUN_FLOW_RE = /^run\s+flow:\s*(.+)/i;
+
+export function parseFlowReferenceFromText(text) {
+  if (!text) return null;
+  const firstLine = text.split('\n')[0];
+  const match = RUN_FLOW_RE.exec(firstLine.trim());
+  if (!match) return null;
+  const flowTitle = match[1].trim();
+  if (!flowTitle) return null;
+  return { flowTitle };
+}
+
+export function resolveFlowLinkage({ title, description, references, flows }) {
+  const refs = [...(references || [])];
+  const titleParsed = parseFlowReferenceFromText(title);
+  const isRunIntent = !!titleParsed;
+
+  // Try to resolve flow_id from title "Run Flow: X" pattern
+  let resolvedFlowId = null;
+  if (titleParsed && Array.isArray(flows)) {
+    const match = flows.find(
+      (f) => f.title && f.title.toLowerCase() === titleParsed.flowTitle.toLowerCase()
+    );
+    if (match) {
+      resolvedFlowId = match.record_id;
+      // Add reference if not already present
+      const alreadyReferenced = refs.some(
+        (r) => r.type === 'flow' && r.id === match.record_id
+      );
+      if (!alreadyReferenced) {
+        refs.push({ type: 'flow', id: match.record_id });
+      }
+    }
+  }
+
+  // Fall back: resolve flow_id from existing references of type=flow
+  if (!resolvedFlowId) {
+    const flowRef = refs.find((r) => r.type === 'flow');
+    if (flowRef && Array.isArray(flows)) {
+      const match = flows.find((f) => f.record_id === flowRef.id);
+      if (match) resolvedFlowId = match.record_id;
+    }
+  }
+
+  return {
+    flow_id: resolvedFlowId,
+    // Only generate run context when the task title explicitly initiates a flow run
+    flow_run_id: resolvedFlowId && isRunIntent ? crypto.randomUUID() : null,
+    flow_step: resolvedFlowId && isRunIntent ? 1 : null,
+    references: resolvedFlowId ? refs : references || [],
+  };
+}
