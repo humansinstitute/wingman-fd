@@ -119,6 +119,11 @@ export const scopesManagerMixin = {
     return [...(r.l1 || []), ...(r.l2 || []), ...(r.l3 || []), ...(r.l4 || []), ...(r.l5 || [])];
   },
 
+  scopePickerFlatFor(query) {
+    const r = searchScopes(query, this.scopes, this.scopesMap);
+    return [...(r.l1 || []), ...(r.l2 || []), ...(r.l3 || []), ...(r.l4 || []), ...(r.l5 || [])];
+  },
+
   getScopeBreadcrumb(scopeId) {
     return scopeBreadcrumb(scopeId, this.scopesMap);
   },

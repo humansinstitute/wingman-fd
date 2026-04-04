@@ -422,7 +422,11 @@
             <span class="sidebar-label">Schedules</span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'flows' }" @click="$store.chat.navigateTo('flows'); $store.chat.refreshFlows(); $store.chat.refreshApprovals()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+              </svg>
+            </span>
             <span class="sidebar-label">Flows</span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'scopes' }" @click="$store.chat.navigateTo('scopes')">
@@ -3814,18 +3818,43 @@
               x-data="{
                 get flow() {
                   const id = $store.chat.editingFlowId;
-                  if (!id) return { title: '', description: '', steps: [], next_flow_id: null };
-                  return $store.chat.flows.find(f => f.record_id === id) || { title: '', description: '', steps: [], next_flow_id: null };
+                  if (!id) return { title: '', description: '', steps: [], next_flow_id: null, scope_id: null };
+                  return $store.chat.flows.find(f => f.record_id === id) || { title: '', description: '', steps: [], next_flow_id: null, scope_id: null };
                 },
                 formTitle: '',
                 formDescription: '',
                 formSteps: [],
                 formNextFlowId: null,
+                formScopeId: null,
+                flowScopeQuery: '',
+                showFlowScopePicker: false,
                 init() {
                   this.formTitle = this.flow.title || '';
                   this.formDescription = this.flow.description || '';
                   this.formSteps = JSON.parse(JSON.stringify(this.flow.steps || []));
                   this.formNextFlowId = this.flow.next_flow_id || null;
+                  this.formScopeId = this.flow.scope_id || $store.chat.selectedBoardId || null;
+                },
+                get formScopeLabel() {
+                  if (!this.formScopeId) return '';
+                  const scope = $store.chat.scopesMap?.get(this.formScopeId);
+                  return scope?.title || '';
+                },
+                get formScopeLevelLabel() {
+                  if (!this.formScopeId) return '';
+                  return $store.chat.scopeLevelLabel(this.formScopeId);
+                },
+                get filteredScopes() {
+                  return $store.chat.scopePickerFlatFor(this.flowScopeQuery);
+                },
+                selectFlowScope(scopeId) {
+                  this.formScopeId = scopeId;
+                  this.showFlowScopePicker = false;
+                  this.flowScopeQuery = '';
+                },
+                clearFlowScope() {
+                  this.formScopeId = null;
+                  this.flowScopeQuery = '';
                 },
                 addStep() {
                   this.formSteps.push({
@@ -3842,13 +3871,10 @@
                   this.formSteps.forEach((s, i) => s.step_number = i + 1);
                 },
                 async save() {
-                  const scopeAssignment = {
-                    scope_id: $store.chat.selectedBoardId || null,
-                    scope_l1_id: $store.chat.selectedBoardScope?.l1_id || $store.chat.selectedBoardId || null,
-                    scope_l2_id: $store.chat.selectedBoardScope?.l2_id || null,
-                    scope_l3_id: $store.chat.selectedBoardScope?.l3_id || null,
-                    scope_l4_id: $store.chat.selectedBoardScope?.l4_id || null,
-                    scope_l5_id: $store.chat.selectedBoardScope?.l5_id || null,
+                  const effectiveScopeId = this.formScopeId || $store.chat.selectedBoardId || null;
+                  const scopeObj = effectiveScopeId ? $store.chat.buildScopeAssignment(effectiveScopeId) : {
+                    scope_id: null, scope_l1_id: null, scope_l2_id: null,
+                    scope_l3_id: null, scope_l4_id: null, scope_l5_id: null,
                   };
                   if ($store.chat.editingFlowId) {
                     await $store.chat.updateFlow($store.chat.editingFlowId, {
@@ -3856,6 +3882,7 @@
                       description: this.formDescription,
                       steps: this.formSteps,
                       next_flow_id: this.formNextFlowId,
+                      ...scopeObj,
                     });
                   } else {
                     await $store.chat.createFlow({
@@ -3863,7 +3890,7 @@
                       description: this.formDescription,
                       steps: this.formSteps,
                       next_flow_id: this.formNextFlowId,
-                      ...scopeAssignment,
+                      ...scopeObj,
                       group_ids: [],
                     });
                   }
@@ -3881,6 +3908,30 @@
                   <label>Description
                     <textarea x-model="formDescription" rows="3" placeholder="What does this flow do?"></textarea>
                   </label>
+                  <div class="flow-scope-field">
+                    <label class="task-field-label">Scope</label>
+                    <template x-if="formScopeId && !showFlowScopePicker">
+                      <div class="flow-scope-selected">
+                        <span class="scope-level-badge" :data-level="$store.chat.scopesMap.get(formScopeId)?.level" x-text="formScopeLevelLabel"></span>
+                        <span x-text="formScopeLabel"></span>
+                        <button type="button" class="flow-scope-clear" @click="clearFlowScope()" title="Remove scope">&times;</button>
+                      </div>
+                    </template>
+                    <input type="text" x-model="flowScopeQuery"
+                      @focus="showFlowScopePicker = true"
+                      @keydown.escape="showFlowScopePicker = false; flowScopeQuery = ''"
+                      placeholder="Search scopes..."
+                      class="flow-scope-input"
+                    />
+                    <ul class="scope-typeahead-results" x-show="showFlowScopePicker && filteredScopes.length > 0" x-cloak>
+                      <template x-for="scope in filteredScopes" :key="scope.record_id">
+                        <li class="scope-typeahead-option" @click="selectFlowScope(scope.record_id)">
+                          <span class="scope-level-badge" :data-level="scope.level" x-text="$store.chat.scopeLevelLabel(scope.record_id)"></span>
+                          <span x-text="scope.breadcrumb || scope.title"></span>
+                        </li>
+                      </template>
+                    </ul>
+                  </div>
                 </div>
 
                 <div class="flow-editor-steps">
@@ -3897,10 +3948,13 @@
                         </select>
                         <button type="button" class="btn-small btn-danger" @click="removeStep(idx)">x</button>
                       </div>
-                      <textarea x-model="step.instruction" rows="2" placeholder="Step instruction..." class="flow-step-instruction"></textarea>
+                      <textarea x-model="step.instruction" rows="2" placeholder="Step instruction..." class="flow-step-instruction"
+                        @input="$store.chat.handleMentionInput($event.target)"
+                        @keydown="$store.chat.handleMentionKeydown($event)"
+                      ></textarea>
                     </div>
                   </template>
-                  <button type="button" class="btn-small" @click="addStep()">+ Add Step</button>
+                  <button type="button" class="btn-add-step" @click="addStep()">+ Add Step</button>
                 </div>
 
                 <div class="flow-editor-actions">
@@ -5063,7 +5117,7 @@
           @click="$store.chat.selectMention(result)"
           @mouseenter="$store.chat.mentionSelectedIndex = idx"
         >
-          <span class="mention-result-type" x-text="result.type === 'person' ? '@' : result.type === 'doc' ? 'doc' : result.type === 'scope' ? 'scope' : 'task'"></span>
+          <span class="mention-result-type" x-text="result.type === 'person' ? '@' : result.type === 'doc' ? 'DOC' : result.type === 'scope' ? 'SCOPE' : result.type === 'flow' ? 'FLOW' : 'TASK'"></span>
           <span class="mention-result-label" x-text="result.label"></span>
           <span class="mention-result-sublabel" x-show="result.sublabel" x-text="result.sublabel"></span>
         </li>

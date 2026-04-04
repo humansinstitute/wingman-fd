@@ -3916,7 +3916,7 @@ export function initApp() {
       // Parse type prefix: @scope:, @task:, @doc:
       let typeFilter = null;
       let query = rawQuery;
-      const prefixMatch = rawQuery.match(/^(scope|task|doc|person):/i);
+      const prefixMatch = rawQuery.match(/^(scope|task|doc|person|flow):/i);
       if (prefixMatch) {
         typeFilter = prefixMatch[1].toLowerCase();
         query = rawQuery.slice(prefixMatch[0].length);
@@ -3968,6 +3968,16 @@ export function initApp() {
           if (!needle || (scope.title || '').toLowerCase().includes(needle)) {
             const levelLabel = scope.level === 'product' ? 'Product' : scope.level === 'project' ? 'Project' : 'Deliverable';
             results.push({ type: 'scope', id: scope.record_id, label: scope.title || 'Untitled', sublabel: levelLabel });
+          }
+        }
+      }
+
+      // Flows
+      if (!typeFilter || typeFilter === 'flow') {
+        for (const flow of this.flows) {
+          if (flow.record_state === 'deleted') continue;
+          if (!needle || (flow.title || '').toLowerCase().includes(needle)) {
+            results.push({ type: 'flow', id: flow.record_id, label: flow.title || 'Untitled', sublabel: 'Flow' });
           }
         }
       }
@@ -4101,6 +4111,16 @@ export function initApp() {
         this.$nextTick(() => {
           this.scopeNavFocus = id;
           document.getElementById('scope-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      } else if (type === 'flow') {
+        this.navSection = 'flows';
+        this.mobileNavOpen = false;
+        this.startWorkspaceLiveQueries();
+        this.refreshFlows();
+        this.refreshApprovals();
+        this.$nextTick(() => {
+          this.editingFlowId = id;
+          this.showFlowEditor = true;
         });
       } else if (type === 'person') {
         this.navSection = 'people';

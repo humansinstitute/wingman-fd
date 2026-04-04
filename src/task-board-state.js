@@ -535,6 +535,10 @@ export const taskBoardStateMixin = {
       const scope = this.scopesMap?.get(ref.id);
       return scope?.title || ref.id.slice(0, 8);
     }
+    if (ref.type === 'flow') {
+      const flow = this.flows.find(f => f.record_id === ref.id);
+      return flow?.title || ref.id.slice(0, 8);
+    }
     return ref.id.slice(0, 8);
   },
 
