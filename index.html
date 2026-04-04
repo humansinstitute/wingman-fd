@@ -3828,12 +3828,21 @@
                 formScopeId: null,
                 flowScopeQuery: '',
                 showFlowScopePicker: false,
+                populateForm() {
+                  const f = this.flow;
+                  this.formTitle = f.title || '';
+                  this.formDescription = f.description || '';
+                  this.formSteps = JSON.parse(JSON.stringify(f.steps || []));
+                  this.formNextFlowId = f.next_flow_id || null;
+                  this.formScopeId = f.scope_id || $store.chat.selectedBoardId || null;
+                  this.flowScopeQuery = '';
+                  this.showFlowScopePicker = false;
+                },
                 init() {
-                  this.formTitle = this.flow.title || '';
-                  this.formDescription = this.flow.description || '';
-                  this.formSteps = JSON.parse(JSON.stringify(this.flow.steps || []));
-                  this.formNextFlowId = this.flow.next_flow_id || null;
-                  this.formScopeId = this.flow.scope_id || $store.chat.selectedBoardId || null;
+                  this.populateForm();
+                  this.$watch('$store.chat.showFlowEditor', (show) => {
+                    if (show) this.populateForm();
+                  });
                 },
                 get formScopeLabel() {
                   if (!this.formScopeId) return '';

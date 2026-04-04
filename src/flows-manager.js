@@ -26,6 +26,24 @@ import { toRaw } from './utils/state-helpers.js';
 // Pure utility functions (no `this` dependency)
 // ---------------------------------------------------------------------------
 
+/**
+ * Build form state for the flow editor from a flow object.
+ *
+ * Extracted so that the same logic is used by both Alpine init() and
+ * the $watch that re-populates fields when the editor re-opens after
+ * a hard refresh (where init() already ran with no flow selected).
+ */
+export function buildFlowEditorForm(flow, selectedBoardId) {
+  const f = flow || {};
+  return {
+    formTitle:      f.title || '',
+    formDescription: f.description || '',
+    formSteps:      Array.isArray(f.steps) ? JSON.parse(JSON.stringify(f.steps)) : [],
+    formNextFlowId: f.next_flow_id || null,
+    formScopeId:    f.scope_id || selectedBoardId || null,
+  };
+}
+
 export function pendingApprovals(approvals) {
   return approvals.filter((a) => a.status === 'pending' && a.record_state !== 'deleted');
 }
