@@ -17,6 +17,7 @@ import {
   clearSyncQuarantineForFamilies,
   deleteRuntimeRecordByFamily,
   upsertTask,
+  upsertFlow,
   upsertDocument,
   upsertDirectory,
   upsertChannel,
@@ -38,6 +39,7 @@ import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-
 import { outboundTask } from './translators/tasks.js';
 import { outboundDocument, outboundDirectory } from './translators/docs.js';
 import { outboundChannel, outboundChatMessage } from './translators/chat.js';
+import { outboundFlow } from './translators/flows.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import { outboundComment } from './translators/comments.js';
 
@@ -147,6 +149,8 @@ export const syncManagerMixin = {
     switch (familyId) {
       case 'task':
         return this.tasks || [];
+      case 'flow':
+        return this.flows || [];
       case 'document':
         return this.documents || [];
       case 'directory':
@@ -429,6 +433,19 @@ export const syncManagerMixin = {
       });
     }
 
+    if (familyId === 'flow') {
+      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      return outboundFlow({
+        ...effectiveLocalRecord,
+        owner_npub: ownerNpub,
+        group_ids: effectiveLocalRecord.group_ids ?? [],
+        version,
+        previous_version: previousVersion,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
+      });
+    }
+
     throw new Error(`Force push is not implemented for ${this.getRecordStatusFamilyLabel(familyId)} yet.`);
   },
 
@@ -447,6 +464,12 @@ export const syncManagerMixin = {
       if (this.editingTask?.record_id === nextRecord.record_id) {
         this.editingTask = { ...nextRecord };
       }
+      return;
+    }
+
+    if (familyId === 'flow') {
+      await upsertFlow(nextRecord);
+      this.flows = this.flows.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
       return;
     }
 

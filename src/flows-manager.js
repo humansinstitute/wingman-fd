@@ -133,6 +133,22 @@ export const flowsManagerMixin = {
     const recordId = crypto.randomUUID();
     const ownerNpub = this.workspaceOwnerNpub;
 
+    // Derive group_ids and shares from scope (same pattern as docs/tasks)
+    let resolvedGroupIds = toRaw(group_ids);
+    let shares = [];
+    if (scope_id && typeof this.getScopeShareGroupIds === 'function') {
+      const scope = this.scopesMap?.get(scope_id);
+      if (scope) {
+        const scopeGroupIds = this.getScopeShareGroupIds(scope);
+        if (scopeGroupIds.length > 0) {
+          resolvedGroupIds = scopeGroupIds;
+          shares = typeof this.buildScopeDefaultShares === 'function'
+            ? this.buildScopeDefaultShares(scopeGroupIds)
+            : [];
+        }
+      }
+    }
+
     const localRow = {
       record_id: recordId,
       owner_npub: ownerNpub,
@@ -146,8 +162,8 @@ export const flowsManagerMixin = {
       scope_l3_id,
       scope_l4_id,
       scope_l5_id,
-      shares: [],
-      group_ids: toRaw(group_ids),
+      shares,
+      group_ids: resolvedGroupIds,
       sync_status: 'pending',
       record_state: 'active',
       version: 1,
@@ -161,7 +177,7 @@ export const flowsManagerMixin = {
     const envelope = await outboundFlow({
       ...localRow,
       signature_npub: this.signingNpub,
-      write_group_ref: write_group_ref || group_ids?.[0] || null,
+      write_group_ref: write_group_ref || resolvedGroupIds?.[0] || null,
     });
 
     await addPendingWrite({
@@ -179,9 +195,29 @@ export const flowsManagerMixin = {
     if (!flow || !this.session?.npub) return null;
 
     const nextVersion = (flow.version ?? 1) + 1;
+
+    // If scope changed, recompute group_ids and shares from new scope
+    const effectiveScopeId = patch.scope_id !== undefined ? patch.scope_id : flow.scope_id;
+    let resolvedGroupIds = toRaw(patch.group_ids ?? flow.group_ids ?? []);
+    let resolvedShares = toRaw(patch.shares ?? flow.shares ?? []);
+    if (effectiveScopeId && typeof this.getScopeShareGroupIds === 'function') {
+      const scope = this.scopesMap?.get(effectiveScopeId);
+      if (scope) {
+        const scopeGroupIds = this.getScopeShareGroupIds(scope);
+        if (scopeGroupIds.length > 0) {
+          resolvedGroupIds = scopeGroupIds;
+          resolvedShares = typeof this.buildScopeDefaultShares === 'function'
+            ? this.buildScopeDefaultShares(scopeGroupIds)
+            : resolvedShares;
+        }
+      }
+    }
+
     const updated = toRaw({
       ...flow,
       ...patch,
+      group_ids: resolvedGroupIds,
+      shares: resolvedShares,
       version: nextVersion,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
