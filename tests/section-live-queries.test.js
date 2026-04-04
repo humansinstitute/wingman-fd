@@ -12,7 +12,7 @@ describe('section live query plan', () => {
     });
 
     expect(plan.shared).toEqual(['address-book']);
-    expect(plan.workspace).toEqual(['chat:channels', 'chat:audio-notes']);
+    expect(plan.workspace).toEqual(['ws:flows', 'chat:channels', 'chat:audio-notes']);
     expect(plan.detail).toEqual(['chat:messages:channel-1']);
   });
 
@@ -23,7 +23,7 @@ describe('section live query plan', () => {
       activeTaskId: 'task-1',
       applyAddressBookPeople() {},
     });
-    expect(taskPlan.workspace).toEqual(['tasks:tasks', 'tasks:scopes']);
+    expect(taskPlan.workspace).toEqual(['ws:flows', 'tasks:tasks', 'tasks:scopes']);
     expect(taskPlan.detail).toEqual(['tasks:selected-task:task-1', 'tasks:comments:task-1']);
 
     const reportPlan = getSectionLiveQueryPlan({
@@ -32,7 +32,7 @@ describe('section live query plan', () => {
       selectedReportId: 'report-1',
       applyAddressBookPeople() {},
     });
-    expect(reportPlan.workspace).toEqual(['reports:reports', 'reports:scopes']);
+    expect(reportPlan.workspace).toEqual(['ws:flows', 'reports:reports', 'reports:scopes']);
     expect(reportPlan.detail).toEqual(['reports:selected-report:report-1']);
   });
 
@@ -44,7 +44,7 @@ describe('section live query plan', () => {
     });
 
     expect(plan.shared).toEqual(['address-book']);
-    expect(plan.workspace).toEqual(['status:reports', 'status:scopes', 'status:approvals']);
+    expect(plan.workspace).toEqual(['ws:flows', 'status:reports', 'status:scopes', 'status:approvals']);
     expect(plan.detail).toEqual([]);
   });
 
@@ -56,7 +56,7 @@ describe('section live query plan', () => {
       selectedDocId: null,
       applyAddressBookPeople() {},
     });
-    expect(browserPlan.workspace).toEqual(['docs:directories', 'docs:documents', 'docs:scopes']);
+    expect(browserPlan.workspace).toEqual(['ws:flows', 'docs:directories', 'docs:documents', 'docs:scopes']);
     expect(browserPlan.detail).toEqual([]);
 
     const detailPlan = getSectionLiveQueryPlan({

@@ -83,13 +83,20 @@ export function confidenceLabel(score) {
 // ---------------------------------------------------------------------------
 
 export const flowsManagerMixin = {
-  // --- refresh from Dexie ---
+  // --- apply / refresh from Dexie ---
+
+  applyFlows(flows) {
+    const next = (Array.isArray(flows) ? flows : []).filter(
+      (f) => f.record_state !== 'deleted',
+    );
+    this.flows = next;
+  },
 
   async refreshFlows() {
     const ownerNpub = this.workspaceOwnerNpub;
     if (!ownerNpub) return;
     const rows = await getFlowsByOwner(ownerNpub);
-    this.flows = rows;
+    this.applyFlows(rows);
   },
 
   async refreshApprovals() {

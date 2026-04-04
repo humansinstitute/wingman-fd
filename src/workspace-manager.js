@@ -836,6 +836,8 @@ export const workspaceManagerMixin = {
         this.schedules = [];
         this.audioNotes = [];
         this.taskComments = [];
+        this.flows = [];
+        this.approvals = [];
         this.showNewScheduleModal = false;
         this.cancelEditSchedule();
         this.hasForcedInitialBackfill = false;

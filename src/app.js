@@ -1121,6 +1121,8 @@ export function initApp() {
     async bootstrapSelectedWorkspace(options = {}) {
       if (!this.selectedWorkspaceKey && !this.currentWorkspaceOwnerNpub) return;
       await this.refreshGroups();
+      // Flows are loaded eagerly so flow linkage resolution works from any section
+      this.refreshFlows().catch(() => {});
       // Fetch ws_key → user_npub mappings for display identity resolution
       this.refreshWorkspaceKeyMappings().catch(() => {});
       if (options.runAccessPrune === true) {

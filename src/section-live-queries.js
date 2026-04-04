@@ -79,9 +79,21 @@ function buildWorkspaceSpecs(store) {
   const ownerNpub = String(store?.workspaceOwnerNpub || '').trim();
   if (!ownerNpub) return [];
 
+  // Flows are loaded eagerly (not section-gated) because flow linkage
+  // resolution in addTask/saveEditingTask depends on store.flows being
+  // populated regardless of which section the user is viewing.
+  const alwaysOn = [
+    {
+      key: 'ws:flows',
+      query: () => getFlowsByOwner(ownerNpub),
+      onNext: (flows) => store.applyFlows(flows),
+    },
+  ];
+
+  let sectionSpecs;
   switch (store?.navSection) {
     case 'status':
-      return [
+      sectionSpecs = [
         {
           key: 'status:reports',
           query: () => getWindowedReportsByOwner(ownerNpub),
@@ -98,8 +110,9 @@ function buildWorkspaceSpecs(store) {
           onNext: (approvals) => { store.approvals = approvals; },
         },
       ];
+      break;
     case 'chat':
-      return [
+      sectionSpecs = [
         {
           key: 'chat:channels',
           query: () => getChannelsByOwner(ownerNpub),
@@ -111,8 +124,9 @@ function buildWorkspaceSpecs(store) {
           onNext: (audioNotes) => store.applyAudioNotes(audioNotes),
         },
       ];
+      break;
     case 'docs':
-      return [
+      sectionSpecs = [
         {
           key: 'docs:directories',
           query: () => getDirectoriesByOwner(ownerNpub),
@@ -129,8 +143,9 @@ function buildWorkspaceSpecs(store) {
           onNext: (scopes) => store.applyScopes(scopes),
         },
       ];
+      break;
     case 'tasks':
-      return [
+      sectionSpecs = [
         {
           key: 'tasks:tasks',
           query: () => getTasksByOwner(ownerNpub),
@@ -142,8 +157,9 @@ function buildWorkspaceSpecs(store) {
           onNext: (scopes) => store.applyScopes(scopes),
         },
       ];
+      break;
     case 'calendar':
-      return [
+      sectionSpecs = [
         {
           key: 'calendar:tasks',
           query: () => getTasksByOwner(ownerNpub),
@@ -160,8 +176,9 @@ function buildWorkspaceSpecs(store) {
           onNext: (scopes) => store.applyScopes(scopes),
         },
       ];
+      break;
     case 'reports':
-      return [
+      sectionSpecs = [
         {
           key: 'reports:reports',
           query: () => getWindowedReportsByOwner(ownerNpub),
@@ -173,29 +190,27 @@ function buildWorkspaceSpecs(store) {
           onNext: (scopes) => store.applyScopes(scopes),
         },
       ];
+      break;
     case 'schedules':
-      return [
+      sectionSpecs = [
         {
           key: 'schedules:schedules',
           query: () => getSchedulesByOwner(ownerNpub),
           onNext: (schedules) => store.applySchedules(schedules),
         },
       ];
+      break;
     case 'scopes':
-      return [
+      sectionSpecs = [
         {
           key: 'scopes:scopes',
           query: () => getScopesByOwner(ownerNpub),
           onNext: (scopes) => store.applyScopes(scopes),
         },
       ];
+      break;
     case 'flows':
-      return [
-        {
-          key: 'flows:flows',
-          query: () => getFlowsByOwner(ownerNpub),
-          onNext: (flows) => { store.flows = flows; },
-        },
+      sectionSpecs = [
         {
           key: 'flows:approvals',
           query: () => getApprovalsByStatus('pending'),
@@ -207,9 +222,12 @@ function buildWorkspaceSpecs(store) {
           onNext: (scopes) => store.applyScopes(scopes),
         },
       ];
+      break;
     default:
-      return [];
+      sectionSpecs = [];
   }
+
+  return [...alwaysOn, ...sectionSpecs];
 }
 
 function buildDetailSpecs(store) {
