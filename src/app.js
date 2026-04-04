@@ -112,7 +112,7 @@ import {
 } from './translators/tasks.js';
 import { outboundSchedule } from './translators/schedules.js';
 import { outboundComment } from './translators/comments.js';
-import { recordFamilyHash as taskFamilyHash, parseReferencesFromDescription } from './translators/tasks.js';
+import { recordFamilyHash as taskFamilyHash, parseReferencesFromDescription, resolveFlowLinkage } from './translators/tasks.js';
 import {
   isTaskUnscoped,
   matchesTaskBoardScope,
@@ -2700,6 +2700,13 @@ export function initApp() {
         return;
       }
 
+      const flowLinkage = resolveFlowLinkage({
+        title,
+        description: '',
+        references: [],
+        flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
+      });
+
       const localRow = {
         record_id: recordId,
         owner_npub: ownerNpub,
@@ -2712,7 +2719,10 @@ export function initApp() {
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
-        references: [],
+        flow_id: flowLinkage.flow_id,
+        flow_run_id: flowLinkage.flow_run_id,
+        flow_step: flowLinkage.flow_step,
+        references: flowLinkage.references,
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -2939,6 +2949,13 @@ export function initApp() {
       }
 
       const nextVersion = (task.version ?? 1) + 1;
+      const descRefs = parseReferencesFromDescription(this.editingTask.description);
+      const flowLinkage = resolveFlowLinkage({
+        title: this.editingTask.title,
+        description: this.editingTask.description,
+        references: descRefs,
+        flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
+      });
       const updated = toRaw({
         ...task,
         title: this.editingTask.title,
@@ -2954,7 +2971,10 @@ export function initApp() {
         scope_l3_id: this.editingTask.scope_l3_id ?? null,
         scope_l4_id: this.editingTask.scope_l4_id ?? null,
         scope_l5_id: this.editingTask.scope_l5_id ?? null,
-        references: parseReferencesFromDescription(this.editingTask.description),
+        flow_id: flowLinkage.flow_id ?? task.flow_id ?? null,
+        flow_run_id: flowLinkage.flow_run_id ?? task.flow_run_id ?? null,
+        flow_step: flowLinkage.flow_step ?? task.flow_step ?? null,
+        references: flowLinkage.references,
         version: nextVersion,
         sync_status: 'pending',
         updated_at: new Date().toISOString(),
