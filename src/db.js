@@ -44,11 +44,13 @@ const WORKSPACE_STORES = {
   documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
   directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
   reports:            'record_id, owner_npub, declaration_type, surface, generated_at, updated_at, *group_ids, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
-  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
+  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, *predecessor_task_ids, flow_id, flow_run_id, flow_step',
   schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
   comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
   audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
   scopes:             'record_id, owner_npub, level, parent_id, l1_id, l2_id, l3_id, l4_id, l5_id, updated_at',
+  flows:              'record_id, owner_npub, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, sync_status, updated_at, *group_ids',
+  approvals:          'record_id, owner_npub, flow_id, flow_run_id, flow_step, status, approval_mode, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, sync_status, updated_at, *group_ids, *task_ids',
   sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
   pending_writes:     '++row_id, record_id, record_family_hash, created_at',
   sync_state:         'key',
@@ -99,7 +101,15 @@ function createWorkspaceDb(workspaceDbKey) {
     reports: 'record_id, owner_npub, declaration_type, surface, generated_at, updated_at, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
   });
   // v4: canonical scope indexes (l1–l5 replacing product/project/deliverable)
-  db.version(4).stores(WORKSPACE_STORES);
+  const WORKSPACE_STORES_V4 = {
+    ...WORKSPACE_STORES,
+    tasks: 'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
+  };
+  delete WORKSPACE_STORES_V4.flows;
+  delete WORKSPACE_STORES_V4.approvals;
+  db.version(4).stores(WORKSPACE_STORES_V4);
+  // v5: add flows, approvals tables + task flow extension indexes
+  db.version(5).stores(WORKSPACE_STORES);
   return db;
 }
 
@@ -712,6 +722,50 @@ export async function getScopeById(recordId) {
 }
 
 // ---------------------------------------------------------------------------
+// flows — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertFlow(flow) {
+  return wsDb().flows.put(sanitizeForStorage(flow));
+}
+
+export async function getFlowById(recordId) {
+  return wsDb().flows.get(recordId);
+}
+
+export async function getFlowsByScope(scopeId) {
+  const rows = await wsDb().flows.where('scope_id').equals(scopeId).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function getFlowsByOwner(ownerNpub) {
+  const rows = await wsDb().flows.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
+// approvals — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertApproval(approval) {
+  return wsDb().approvals.put(sanitizeForStorage(approval));
+}
+
+export async function getApprovalById(recordId) {
+  return wsDb().approvals.get(recordId);
+}
+
+export async function getApprovalsByScope(scopeId) {
+  const rows = await wsDb().approvals.where('scope_id').equals(scopeId).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function getApprovalsByStatus(status) {
+  const rows = await wsDb().approvals.where('status').equals(status).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
 // Bulk clear helpers — workspace DB
 // ---------------------------------------------------------------------------
 
@@ -728,6 +782,8 @@ export async function clearRuntimeData() {
     db.comments.clear(),
     db.audio_notes.clear(),
     db.scopes.clear(),
+    db.flows.clear(),
+    db.approvals.clear(),
     db.sync_quarantine.clear(),
     db.groups.clear(),
     db.pending_writes.clear(),

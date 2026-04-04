@@ -25,6 +25,8 @@ import {
   upsertComment,
   upsertAudioNote,
   upsertScope,
+  upsertFlow,
+  upsertApproval,
   getSyncState,
   setSyncState,
   upsertSyncQuarantineEntry,
@@ -42,6 +44,8 @@ import { inboundSchedule, recordFamilyHash as scheduleFamilyHash } from '../tran
 import { inboundComment } from '../translators/comments.js';
 import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
+import { inboundFlow, recordFamilyHash as flowFamilyHash } from '../translators/flows.js';
+import { inboundApproval, recordFamilyHash as approvalFamilyHash } from '../translators/approvals.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
 import { pruneInaccessibleRecords, repairStaleGroupRefs } from '../access-pruner.js';
@@ -58,6 +62,8 @@ const SCHEDULE_FAMILY = scheduleFamilyHash('schedule');
 const COMMENT_FAMILY = recordFamilyHash('comment');
 const AUDIO_NOTE_FAMILY = recordFamilyHash('audio_note');
 const SCOPE_FAMILY = recordFamilyHash('scope');
+const FLOW_FAMILY = flowFamilyHash('flow');
+const APPROVAL_FAMILY = approvalFamilyHash('approval');
 const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
 const WRITE_BATCH_SIZE = 25;
 
@@ -99,6 +105,12 @@ async function materializeRecordForFamily(family, record) {
   } else if (family === SCOPE_FAMILY) {
     const row = await inboundScope(record);
     await upsertScope(row);
+  } else if (family === FLOW_FAMILY) {
+    const row = await inboundFlow(record);
+    await upsertFlow(row);
+  } else if (family === APPROVAL_FAMILY) {
+    const row = await inboundApproval(record);
+    await upsertApproval(row);
   }
 }
 

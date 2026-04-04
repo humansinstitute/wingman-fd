@@ -61,6 +61,7 @@ beforeEach(() => {
 vi.mock('../src/translators/chat.js', () => ({
   outboundChannel: vi.fn(async (payload) => ({ ...payload, record_family_hash: 'family:channel' })),
   outboundChatMessage: vi.fn(async (payload) => ({ ...payload, record_family_hash: 'family:chat_message' })),
+  recordFamilyHash: vi.fn((cs) => `mock:${cs}`),
 }));
 
 // ---------------------------------------------------------------------------
