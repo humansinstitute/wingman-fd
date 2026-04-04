@@ -4143,83 +4143,84 @@
               </div>
             </div>
 
-            <!-- Approval detail modal -->
-            <div class="approval-detail-overlay" x-show="$store.chat.showApprovalDetail" x-transition.opacity @click.self="$store.chat.showApprovalDetail = false" x-cloak
-              x-data="{
-                get approval() {
-                  const id = $store.chat.activeApprovalId;
-                  return $store.chat.approvals.find(a => a.record_id === id) || null;
-                },
-              }"
-            >
-              <div class="approval-detail-panel" x-show="approval">
-                <div class="approval-detail-header">
-                  <h2 x-text="approval?.title || 'Approval'"></h2>
-                  <button type="button" @click="$store.chat.showApprovalDetail = false">Close</button>
-                </div>
-
-                <div class="approval-detail-status-row">
-                  <span class="approval-status-badge" :style="'background:' + ({pending:'#fbbf24',approved:'#34d399',rejected:'#f87171',needs_revision:'#a78bfa'}[approval?.status] || '#9ca3af')"
-                    x-text="{pending:'Pending',approved:'Approved',rejected:'Rejected',needs_revision:'Needs Revision'}[approval?.status] || approval?.status"></span>
-                  <span x-show="approval?.confidence_score != null" x-text="'Confidence: ' + Math.round((approval?.confidence_score || 0) * 100) + '%'"></span>
-                  <span x-show="approval?.approval_mode" x-text="approval?.approval_mode === 'agent' ? 'Agent review' : 'Manual review'"></span>
-                </div>
-
-                <!-- Brief -->
-                <div class="approval-detail-section">
-                  <h3>Brief</h3>
-                  <p x-text="approval?.brief || 'No brief provided.'"></p>
-                </div>
-
-                <!-- Agent review -->
-                <div class="approval-detail-section" x-show="approval?.agent_review_note">
-                  <h3>Agent Review</h3>
-                  <p><strong x-text="approval?.agent_review_by ? 'Reviewed by: ' + approval.agent_review_by.slice(0, 16) + '...' : ''"></strong></p>
-                  <p x-text="approval?.agent_review_note"></p>
-                </div>
-
-                <!-- Linked tasks -->
-                <div class="approval-detail-section" x-show="approval?.task_ids?.length > 0">
-                  <h3>Linked Tasks (<span x-text="approval?.task_ids?.length || 0"></span>)</h3>
-                  <ul class="approval-linked-tasks">
-                    <template x-for="taskId in (approval?.task_ids || [])" :key="taskId">
-                      <li>
-                        <span x-text="($store.chat.tasks.find(t => t.record_id === taskId)?.title) || taskId.slice(0, 12) + '...'"></span>
-                        <span class="approval-task-state" x-text="$store.chat.tasks.find(t => t.record_id === taskId)?.state || 'unknown'"></span>
-                      </li>
-                    </template>
-                  </ul>
-                </div>
-
-                <!-- Artifact refs -->
-                <div class="approval-detail-section" x-show="approval?.artifact_refs?.length > 0">
-                  <h3>Artifacts</h3>
-                  <ul class="approval-artifact-list">
-                    <template x-for="ref in (approval?.artifact_refs || [])" :key="ref.record_id">
-                      <li x-text="ref.record_id.slice(0, 12) + '...' + ' (' + (ref.record_family_hash || '').split(':').pop() + ')'"></li>
-                    </template>
-                  </ul>
-                </div>
-
-                <!-- Decision -->
-                <div class="approval-detail-section" x-show="approval?.decision_note">
-                  <h3>Decision Note</h3>
-                  <p x-text="approval?.decision_note"></p>
-                  <p x-show="approval?.approved_by" x-text="'Decided by: ' + (approval?.approved_by || '').slice(0, 16) + '...'"></p>
-                  <p x-show="approval?.approved_at" x-text="'At: ' + (approval?.approved_at || '')"></p>
-                </div>
-
-                <!-- Actions -->
-                <div class="approval-detail-actions" x-show="approval?.status === 'pending'">
-                  <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Approve</button>
-                  <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Reject</button>
-                  <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Improve</button>
-                  <input type="text" x-model="$store.chat.approvalDecisionNote" placeholder="Decision note (optional)" class="approval-decision-input" />
-                </div>
-              </div>
-            </div>
           </div>
         </template>
+
+        <!-- Approval detail modal (global — reachable from status and flows sections) -->
+        <div class="approval-detail-overlay" x-show="$store.chat.showApprovalDetail" x-transition.opacity @click.self="$store.chat.showApprovalDetail = false" x-cloak
+          x-data="{
+            get approval() {
+              const id = $store.chat.activeApprovalId;
+              return $store.chat.approvals.find(a => a.record_id === id) || null;
+            },
+          }"
+        >
+          <div class="approval-detail-panel" x-show="approval">
+            <div class="approval-detail-header">
+              <h2 x-text="approval?.title || 'Approval'"></h2>
+              <button type="button" @click="$store.chat.showApprovalDetail = false">Close</button>
+            </div>
+
+            <div class="approval-detail-status-row">
+              <span class="approval-status-badge" :style="'background:' + ({pending:'#fbbf24',approved:'#34d399',rejected:'#f87171',needs_revision:'#a78bfa'}[approval?.status] || '#9ca3af')"
+                x-text="{pending:'Pending',approved:'Approved',rejected:'Rejected',needs_revision:'Needs Revision'}[approval?.status] || approval?.status"></span>
+              <span x-show="approval?.confidence_score != null" x-text="'Confidence: ' + Math.round((approval?.confidence_score || 0) * 100) + '%'"></span>
+              <span x-show="approval?.approval_mode" x-text="approval?.approval_mode === 'agent' ? 'Agent review' : 'Manual review'"></span>
+            </div>
+
+            <!-- Brief -->
+            <div class="approval-detail-section">
+              <h3>Brief</h3>
+              <p x-text="approval?.brief || 'No brief provided.'"></p>
+            </div>
+
+            <!-- Agent review -->
+            <div class="approval-detail-section" x-show="approval?.agent_review_note">
+              <h3>Agent Review</h3>
+              <p><strong x-text="approval?.agent_review_by ? 'Reviewed by: ' + approval.agent_review_by.slice(0, 16) + '...' : ''"></strong></p>
+              <p x-text="approval?.agent_review_note"></p>
+            </div>
+
+            <!-- Linked tasks -->
+            <div class="approval-detail-section" x-show="approval?.task_ids?.length > 0">
+              <h3>Linked Tasks (<span x-text="approval?.task_ids?.length || 0"></span>)</h3>
+              <ul class="approval-linked-tasks">
+                <template x-for="taskId in (approval?.task_ids || [])" :key="taskId">
+                  <li>
+                    <span x-text="($store.chat.tasks.find(t => t.record_id === taskId)?.title) || taskId.slice(0, 12) + '...'"></span>
+                    <span class="approval-task-state" x-text="$store.chat.tasks.find(t => t.record_id === taskId)?.state || 'unknown'"></span>
+                  </li>
+                </template>
+              </ul>
+            </div>
+
+            <!-- Artifact refs -->
+            <div class="approval-detail-section" x-show="approval?.artifact_refs?.length > 0">
+              <h3>Artifacts</h3>
+              <ul class="approval-artifact-list">
+                <template x-for="ref in (approval?.artifact_refs || [])" :key="ref.record_id">
+                  <li x-text="ref.record_id.slice(0, 12) + '...' + ' (' + (ref.record_family_hash || '').split(':').pop() + ')'"></li>
+                </template>
+              </ul>
+            </div>
+
+            <!-- Decision -->
+            <div class="approval-detail-section" x-show="approval?.decision_note">
+              <h3>Decision Note</h3>
+              <p x-text="approval?.decision_note"></p>
+              <p x-show="approval?.approved_by" x-text="'Decided by: ' + (approval?.approved_by || '').slice(0, 16) + '...'"></p>
+              <p x-show="approval?.approved_at" x-text="'At: ' + (approval?.approved_at || '')"></p>
+            </div>
+
+            <!-- Actions -->
+            <div class="approval-detail-actions" x-show="approval?.status === 'pending'">
+              <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Approve</button>
+              <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Reject</button>
+              <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Improve</button>
+              <input type="text" x-model="$store.chat.approvalDecisionNote" placeholder="Decision note (optional)" class="approval-decision-input" />
+            </div>
+          </div>
+        </div>
 
         <template x-if="$store.chat.navSection === 'people'">
           <div class="placeholder-panel">
