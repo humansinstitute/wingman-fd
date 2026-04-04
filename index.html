@@ -3798,7 +3798,7 @@
                     <p class="flow-card-description" x-text="(flow.description || '').slice(0, 120)"></p>
                     <div class="flow-card-steps">
                       <template x-for="step in (flow.steps || []).slice(0, 5)" :key="step.step_number">
-                        <span class="flow-step-chip" :class="'flow-step-mode-' + (step.approval_mode || 'auto')">
+                        <span class="flow-step-chip" :class="'flow-step-type-' + (step.type || (step.approval_mode === 'auto' ? 'job_dispatch' : (step.approval_mode ? 'approval' : 'job_dispatch')))">
                           <span x-text="step.step_number"></span>
                           <span x-text="step.title"></span>
                         </span>
@@ -3806,6 +3806,7 @@
                       <span x-show="(flow.steps || []).length > 5" class="flow-step-more">+<span x-text="(flow.steps || []).length - 5"></span> more</span>
                     </div>
                     <div class="flow-card-footer">
+                      <button type="button" class="btn-small btn-start-flow" @click.stop="$store.chat.startFlowRun(flow.record_id)" title="Start a new run of this flow">Start</button>
                       <div class="doc-actions-menu flow-actions-menu" x-data="{ open: false }" @click.outside="open = false">
                         <button type="button" class="doc-actions-toggle" title="More actions" aria-label="More actions" @click.stop="open = !open">
                           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
@@ -3873,15 +3874,43 @@
                   this.formScopeId = null;
                   this.flowScopeQuery = '';
                 },
-                addStep() {
-                  this.formSteps.push({
-                    step_number: this.formSteps.length + 1,
-                    title: '',
-                    instruction: '',
-                    approval_mode: 'manual',
-                    whitelist_approvers: null,
-                    artifacts_expected: [],
-                  });
+                addStep(type = 'job_dispatch') {
+                  const n = this.formSteps.length + 1;
+                  if (type === 'approval') {
+                    this.formSteps.push({
+                      step_number: n, title: '', type: 'approval',
+                      description: '', brief_template: '', approver_mode: 'manual',
+                      whitelist_approvers: null, artifacts_expected: [],
+                    });
+                  } else {
+                    this.formSteps.push({
+                      step_number: n, title: '', type: 'job_dispatch',
+                      job_type: '', goals: '', manager_guidance: '',
+                      worker_guidance: '', directory_override: '', artifacts_expected: [],
+                    });
+                  }
+                },
+                changeStepType(idx, newType) {
+                  const old = this.formSteps[idx];
+                  const n = old.step_number;
+                  if (newType === 'approval') {
+                    this.formSteps[idx] = {
+                      step_number: n, title: old.title || '', type: 'approval',
+                      description: old.goals || old.instruction || '', brief_template: '',
+                      approver_mode: old.approver_mode || 'manual',
+                      whitelist_approvers: old.whitelist_approvers || null,
+                      artifacts_expected: old.artifacts_expected || [],
+                    };
+                  } else {
+                    this.formSteps[idx] = {
+                      step_number: n, title: old.title || '', type: 'job_dispatch',
+                      job_type: old.job_type || '', goals: old.description || old.instruction || '',
+                      manager_guidance: old.manager_guidance || '',
+                      worker_guidance: old.worker_guidance || '',
+                      directory_override: old.directory_override || '',
+                      artifacts_expected: old.artifacts_expected || [],
+                    };
+                  }
                 },
                 removeStep(idx) {
                   this.formSteps.splice(idx, 1);
@@ -3953,24 +3982,64 @@
                 <div class="flow-editor-steps">
                   <h3>Steps</h3>
                   <template x-for="(step, idx) in formSteps" :key="idx">
-                    <div class="flow-editor-step">
+                    <div class="flow-editor-step" :class="'flow-editor-step-' + (step.type || 'job_dispatch')">
                       <div class="flow-editor-step-header">
                         <span class="flow-step-number" x-text="step.step_number"></span>
                         <input type="text" x-model="step.title" placeholder="Step title" class="flow-step-title-input" />
-                        <select x-model="step.approval_mode" class="flow-step-mode-select">
-                          <option value="auto">Auto</option>
-                          <option value="manual">Manual</option>
-                          <option value="agent">Agent</option>
+                        <select :value="step.type || 'job_dispatch'" @change="changeStepType(idx, $event.target.value)" class="flow-step-type-select">
+                          <option value="job_dispatch">Job Dispatch</option>
+                          <option value="approval">Approval</option>
                         </select>
                         <button type="button" class="btn-small btn-danger" @click="removeStep(idx)">x</button>
                       </div>
-                      <textarea x-model="step.instruction" rows="2" placeholder="Step instruction..." class="flow-step-instruction"
-                        @input="$store.chat.handleMentionInput($event.target)"
-                        @keydown="$store.chat.handleMentionKeydown($event)"
-                      ></textarea>
+
+                      <!-- Job Dispatch fields -->
+                      <template x-if="(step.type || 'job_dispatch') === 'job_dispatch'">
+                        <div class="flow-step-fields">
+                          <label class="flow-step-field-label">Job Type
+                            <input type="text" x-model="step.job_type" placeholder="e.g. research, outreach, code" class="flow-step-field-input" />
+                          </label>
+                          <label class="flow-step-field-label">Goals / Prompt
+                            <textarea x-model="step.goals" rows="2" placeholder="What should this job accomplish?" class="flow-step-field-textarea"
+                              @input="$store.chat.handleMentionInput($event.target)"
+                              @keydown="$store.chat.handleMentionKeydown($event)"
+                            ></textarea>
+                          </label>
+                          <label class="flow-step-field-label">Manager Guidance
+                            <textarea x-model="step.manager_guidance" rows="1" placeholder="Guidance for the manager agent (optional)" class="flow-step-field-textarea"></textarea>
+                          </label>
+                          <label class="flow-step-field-label">Worker Guidance
+                            <textarea x-model="step.worker_guidance" rows="1" placeholder="Guidance for worker agents (optional)" class="flow-step-field-textarea"></textarea>
+                          </label>
+                          <label class="flow-step-field-label">Directory Override
+                            <input type="text" x-model="step.directory_override" placeholder="/path/to/workdir (optional)" class="flow-step-field-input" />
+                          </label>
+                        </div>
+                      </template>
+
+                      <!-- Approval fields -->
+                      <template x-if="step.type === 'approval'">
+                        <div class="flow-step-fields">
+                          <label class="flow-step-field-label">Description
+                            <textarea x-model="step.description" rows="2" placeholder="What should the approver review?" class="flow-step-field-textarea"></textarea>
+                          </label>
+                          <label class="flow-step-field-label">Brief Template
+                            <textarea x-model="step.brief_template" rows="1" placeholder="Template for approval brief (optional)" class="flow-step-field-textarea"></textarea>
+                          </label>
+                          <label class="flow-step-field-label">Approver Mode
+                            <select x-model="step.approver_mode" class="flow-step-field-input">
+                              <option value="manual">Manual</option>
+                              <option value="agent">Agent</option>
+                            </select>
+                          </label>
+                        </div>
+                      </template>
                     </div>
                   </template>
-                  <button type="button" class="btn-add-step" @click="addStep()">+ Add Step</button>
+                  <div class="flow-add-step-buttons">
+                    <button type="button" class="btn-add-step" @click="addStep('job_dispatch')">+ Job Dispatch</button>
+                    <button type="button" class="btn-add-step" @click="addStep('approval')">+ Approval Gate</button>
+                  </div>
                 </div>
 
                 <div class="flow-editor-actions">

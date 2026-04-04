@@ -264,3 +264,156 @@ describe('flow translator — round-trip', () => {
     expect(row.record_state).toBe('active');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Typed step round-trips
+// ---------------------------------------------------------------------------
+
+describe('flow translator — typed steps round-trip', () => {
+  it('round-trips job_dispatch steps', async () => {
+    const steps = [
+      {
+        step_number: 1,
+        title: 'Research Targets',
+        type: 'job_dispatch',
+        job_type: 'research',
+        goals: 'Find 21 SME websites in target vertical',
+        manager_guidance: 'Prioritize sites with clear contact info',
+        worker_guidance: 'Use SerpAPI for search, save results as CSV',
+        directory_override: '/tmp/research',
+        artifacts_expected: ['document', 'csv'],
+      },
+    ];
+
+    const envelope = await outboundFlow({
+      record_id: 'flow-typed-1',
+      owner_npub: 'npub_owner',
+      title: 'Typed Flow',
+      steps,
+      group_ids: ['gpub_abc'],
+    });
+
+    const row = await inboundFlow({
+      record_id: envelope.record_id,
+      owner_npub: envelope.owner_npub,
+      version: envelope.version,
+      created_at: '2026-04-04T00:00:00Z',
+      updated_at: '2026-04-04T00:00:00Z',
+      owner_payload: envelope.owner_payload,
+      group_payloads: envelope.group_payloads,
+    });
+
+    expect(row.steps).toHaveLength(1);
+    const s = row.steps[0];
+    expect(s.type).toBe('job_dispatch');
+    expect(s.job_type).toBe('research');
+    expect(s.goals).toBe('Find 21 SME websites in target vertical');
+    expect(s.manager_guidance).toBe('Prioritize sites with clear contact info');
+    expect(s.worker_guidance).toBe('Use SerpAPI for search, save results as CSV');
+    expect(s.directory_override).toBe('/tmp/research');
+    expect(s.artifacts_expected).toEqual(['document', 'csv']);
+  });
+
+  it('round-trips approval steps', async () => {
+    const steps = [
+      {
+        step_number: 1,
+        title: 'Manager Sign-off',
+        type: 'approval',
+        description: 'Review the research output for completeness',
+        brief_template: 'Research found {{count}} targets. See attached CSV.',
+        approver_mode: 'manual',
+        whitelist_approvers: ['npub1pete', 'group:management'],
+        artifacts_expected: ['document'],
+      },
+    ];
+
+    const envelope = await outboundFlow({
+      record_id: 'flow-typed-2',
+      owner_npub: 'npub_owner',
+      title: 'Approval Flow',
+      steps,
+      group_ids: ['gpub_abc'],
+    });
+
+    const row = await inboundFlow({
+      record_id: envelope.record_id,
+      owner_npub: envelope.owner_npub,
+      version: envelope.version,
+      created_at: '2026-04-04T00:00:00Z',
+      updated_at: '2026-04-04T00:00:00Z',
+      owner_payload: envelope.owner_payload,
+      group_payloads: envelope.group_payloads,
+    });
+
+    expect(row.steps).toHaveLength(1);
+    const s = row.steps[0];
+    expect(s.type).toBe('approval');
+    expect(s.description).toBe('Review the research output for completeness');
+    expect(s.brief_template).toBe('Research found {{count}} targets. See attached CSV.');
+    expect(s.approver_mode).toBe('manual');
+    expect(s.whitelist_approvers).toEqual(['npub1pete', 'group:management']);
+    expect(s.artifacts_expected).toEqual(['document']);
+  });
+
+  it('round-trips mixed step types', async () => {
+    const steps = [
+      {
+        step_number: 1,
+        title: 'Research',
+        type: 'job_dispatch',
+        job_type: 'research',
+        goals: 'Find targets',
+        manager_guidance: '',
+        worker_guidance: '',
+        directory_override: '',
+        artifacts_expected: ['csv'],
+      },
+      {
+        step_number: 2,
+        title: 'Review',
+        type: 'approval',
+        description: 'Approve target list',
+        brief_template: '',
+        approver_mode: 'manual',
+        whitelist_approvers: null,
+        artifacts_expected: [],
+      },
+      {
+        step_number: 3,
+        title: 'Execute',
+        type: 'job_dispatch',
+        job_type: 'outreach',
+        goals: 'Send outreach emails',
+        manager_guidance: 'Keep it professional',
+        worker_guidance: 'Use template A',
+        directory_override: '',
+        artifacts_expected: ['email'],
+      },
+    ];
+
+    const envelope = await outboundFlow({
+      record_id: 'flow-mixed',
+      owner_npub: 'npub_owner',
+      title: 'Mixed Flow',
+      steps,
+      group_ids: [],
+    });
+
+    const row = await inboundFlow({
+      record_id: envelope.record_id,
+      owner_npub: envelope.owner_npub,
+      version: envelope.version,
+      created_at: '2026-04-04T00:00:00Z',
+      updated_at: '2026-04-04T00:00:00Z',
+      owner_payload: envelope.owner_payload,
+      group_payloads: envelope.group_payloads,
+    });
+
+    expect(row.steps).toHaveLength(3);
+    expect(row.steps[0].type).toBe('job_dispatch');
+    expect(row.steps[1].type).toBe('approval');
+    expect(row.steps[2].type).toBe('job_dispatch');
+    expect(row.steps[2].job_type).toBe('outreach');
+  });
+});

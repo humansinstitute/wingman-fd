@@ -8999,6 +8999,10 @@ button:disabled {
 .flow-step-mode-agent { border-left: 3px solid #a78bfa; }
 .flow-step-mode-auto { border-left: 3px solid #34d399; }
 
+/* Typed step chips */
+.flow-step-type-job_dispatch { border-left: 3px solid #3b82f6; }
+.flow-step-type-approval { border-left: 3px solid #fbbf24; }
+
 .flow-step-more {
   font-size: 0.72rem;
   color: #94a3b8;
@@ -9006,7 +9010,9 @@ button:disabled {
 
 .flow-card-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 0.4rem;
 }
 
 /* Flow editor modal */
@@ -9107,7 +9113,8 @@ button:disabled {
   font-size: 0.85rem;
 }
 
-.flow-step-mode-select {
+.flow-step-mode-select,
+.flow-step-type-select {
   padding: 0.3rem 0.4rem;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
@@ -9121,6 +9128,58 @@ button:disabled {
   border-radius: 6px;
   font-size: 0.82rem;
   resize: vertical;
+}
+
+/* Typed step editor fields */
+.flow-step-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+.flow-step-field-label {
+  font-size: 0.78rem;
+  color: #64748b;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.flow-step-field-input {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+.flow-step-field-textarea {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  resize: vertical;
+}
+.flow-editor-step-job_dispatch {
+  border-left: 3px solid #3b82f6;
+}
+.flow-editor-step-approval {
+  border-left: 3px solid #fbbf24;
+}
+.flow-add-step-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+.btn-start-flow {
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn-start-flow:hover {
+  background: #2563eb;
 }
 
 .flow-scope-field {

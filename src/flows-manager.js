@@ -79,6 +79,88 @@ export function confidenceLabel(score) {
 }
 
 // ---------------------------------------------------------------------------
+// Step type helpers
+// ---------------------------------------------------------------------------
+
+export function isJobDispatchStep(step) {
+  return step?.type === 'job_dispatch';
+}
+
+export function isApprovalStep(step) {
+  return step?.type === 'approval';
+}
+
+/**
+ * Normalize a step to have an explicit `type` field.
+ * Legacy steps (no type) are mapped based on approval_mode:
+ *   - approval_mode 'auto' → job_dispatch (auto-advance means agent work)
+ *   - approval_mode 'manual'|'agent' → approval
+ *   - no approval_mode → job_dispatch
+ */
+export function normalizeStepType(step) {
+  if (!step) return step;
+  if (step.type === 'job_dispatch' || step.type === 'approval') return step;
+
+  // Legacy migration
+  const mode = step.approval_mode;
+  if (mode === 'auto' || !mode) {
+    return {
+      step_number: step.step_number,
+      title: step.title || '',
+      type: 'job_dispatch',
+      job_type: '',
+      goals: step.instruction || '',
+      manager_guidance: '',
+      worker_guidance: '',
+      directory_override: '',
+      artifacts_expected: step.artifacts_expected || [],
+    };
+  }
+
+  // manual or agent → approval type
+  return {
+    step_number: step.step_number,
+    title: step.title || '',
+    type: 'approval',
+    description: step.instruction || '',
+    brief_template: '',
+    approver_mode: mode,
+    whitelist_approvers: step.whitelist_approvers || null,
+    artifacts_expected: step.artifacts_expected || [],
+  };
+}
+
+/**
+ * Create a blank step of the given type.
+ */
+export function defaultStepForType(type, stepNumber) {
+  if (type === 'approval') {
+    return {
+      step_number: stepNumber,
+      title: '',
+      type: 'approval',
+      description: '',
+      brief_template: '',
+      approver_mode: 'manual',
+      whitelist_approvers: null,
+      artifacts_expected: [],
+    };
+  }
+  // default: job_dispatch
+  return {
+    step_number: stepNumber,
+    title: '',
+    type: 'job_dispatch',
+    job_type: '',
+    goals: '',
+    manager_guidance: '',
+    worker_guidance: '',
+    directory_override: '',
+    artifacts_expected: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Mixin — applied to Alpine store via applyMixins()
 // ---------------------------------------------------------------------------
 
@@ -273,6 +355,65 @@ export const flowsManagerMixin = {
     });
 
     await this.flushAndBackgroundSync();
+  },
+
+  // --- manual flow start ---
+
+  async startFlowRun(flowId) {
+    const flow = this.flows.find((f) => f.record_id === flowId);
+    if (!flow || !this.session?.npub) return null;
+    if (!Array.isArray(flow.steps) || flow.steps.length === 0) return null;
+
+    const firstStep = flow.steps[0];
+    const flowRunId = crypto.randomUUID();
+    const taskId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const ownerNpub = this.workspaceOwnerNpub;
+
+    const task = {
+      record_id: taskId,
+      owner_npub: ownerNpub,
+      title: firstStep.title || flow.title,
+      description: firstStep.goals || firstStep.description || firstStep.instruction || '',
+      state: 'ready',
+      priority: 'rock',
+      parent_task_id: null,
+      flow_id: flowId,
+      flow_run_id: flowRunId,
+      flow_step: firstStep.step_number,
+      predecessor_task_ids: null,
+      scope_id: flow.scope_id || null,
+      scope_l1_id: flow.scope_l1_id || null,
+      scope_l2_id: flow.scope_l2_id || null,
+      scope_l3_id: flow.scope_l3_id || null,
+      scope_l4_id: flow.scope_l4_id || null,
+      scope_l5_id: flow.scope_l5_id || null,
+      shares: [],
+      group_ids: toRaw(flow.group_ids || []),
+      sync_status: 'pending',
+      record_state: 'active',
+      version: 1,
+      created_at: now,
+      updated_at: now,
+    };
+
+    await upsertTask(task);
+    this.tasks = [...this.tasks, task];
+
+    const envelope = await outboundTask({
+      ...task,
+      signature_npub: this.signingNpub,
+      write_group_ref: task.group_ids?.[0] || null,
+    });
+
+    await addPendingWrite({
+      record_id: taskId,
+      record_family_hash: envelope.record_family_hash,
+      envelope,
+    });
+
+    await this.flushAndBackgroundSync();
+    return { task_id: taskId, flow_run_id: flowRunId };
   },
 
   // --- approval actions ---
