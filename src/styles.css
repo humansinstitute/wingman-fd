@@ -8346,7 +8346,7 @@ button:disabled {
 
 .mention-popover {
   position: fixed;
-  z-index: 200;
+  z-index: 1100;
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 8px;
