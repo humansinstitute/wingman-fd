@@ -756,7 +756,9 @@ export const syncManagerMixin = {
     // - first sync ever (no lastSuccessAt)
     // - returning after a long break (10+ hours)
     // - SSE catch-up-required (handled separately via catchUpSyncActive = true)
-    if (runSoon && this.session?.npub && this.backendUrl) {
+    // Skip if catch-up is already active or a sync is in flight — avoid
+    // re-triggering the overlay on every section navigation.
+    if (runSoon && this.session?.npub && this.backendUrl && !this.catchUpSyncActive && !this.backgroundSyncInFlight) {
       const STALE_THRESHOLD_MS = 10 * 60 * 60 * 1000; // 10 hours
       const lastSync = this.syncSession.lastSuccessAt;
       if (!lastSync || (Date.now() - lastSync) > STALE_THRESHOLD_MS) {
@@ -949,6 +951,9 @@ export const syncManagerMixin = {
         backendUrl: this.backendUrl,
         workspaceDbKey: this.workspaceDbKey,
       });
+      // A successful flush proves connectivity — update lastSuccessAt so
+      // ensureBackgroundSync doesn't show the "Catching up" overlay.
+      this.updateSyncSession({ lastSuccessAt: Date.now() });
       if ((result?.pushed ?? 0) > 0) {
         await this.refreshSyncStatus({ refreshUnread: false });
       }
