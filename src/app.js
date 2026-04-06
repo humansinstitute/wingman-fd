@@ -20,6 +20,7 @@ import { peopleProfilesManagerMixin } from './people-profiles-manager.js';
 import { connectSettingsManagerMixin } from './connect-settings-manager.js';
 import { unreadStoreMixin } from './unread-store.js';
 import { flowsManagerMixin } from './flows-manager.js';
+import { createShellState } from './shell-state.js';
 import { getTaskFlowInfo, buildAttachFlowPatch, buildDetachFlowPatch } from './task-flow-helpers.js';
 import {
   taskBoardStateMixin,
@@ -4517,8 +4518,15 @@ export function initApp() {
     // syncNow — in syncManagerMixin
   };
 
+  // Shell state is applied first — it defines the canonical shell boundary
+  // (identity, session, nav, route, sync status, connect modal, lifecycle methods).
+  // The inline storeObj declarations still exist as fallback defaults;
+  // see src/shell-state.js for the authoritative shell state definition.
+  const shellState = createShellState({ initialSection: initialRoute.section });
+
   applyMixins(
     storeObj,
+    shellState,
     taskBoardStateMixin,
     workspaceManagerMixin,
     chatMessageManagerMixin,
