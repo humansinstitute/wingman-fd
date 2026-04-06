@@ -120,8 +120,91 @@ After any source change, always run `bun run build` to regenerate `dist/`. The a
 
 ## Working rules
 
-- Commit changes in small, intentional steps as you go. Do not leave completed work uncommitted.
-- Never revert, overwrite, or discard changes you do not understand. Stop, inspect them, and preserve them unless the user explicitly asks for a revert.
+These rules exist because this repo has been damaged by agents taking
+unauthorized destructive git actions, hiding work in `git stash`, and leaving
+half-wired features that silently discarded user data. Follow them strictly.
+If a rule blocks you, stop and ask — do not invent your own exception.
+
+### Git safety — never without explicit, in-conversation user approval
+
+Assume the user has *not* approved any of the following unless they told you to
+do it, in this conversation, with full context. Prior approval for one risky
+op is **not** blanket approval for others.
+
+- **No `git revert`.** Not a single commit, not a chain. Reverting touches shared
+  history and cascades silently. If you think a revert is needed, describe which
+  commits, read each one with `git show`, summarize what will be undone, list
+  any files that touch shared state (schema, sync families, translators, UI
+  surfaces, worker dispatch), and wait for explicit approval. Prefer a surgical
+  forward-fix over a revert whenever possible.
+- **No `git reset --hard`, `git reset --soft` across commits, `git restore .`,
+  `git checkout .`, `git clean -f`, `git clean -fd`.** These destroy working
+  tree or history. Ask first, every time.
+- **No `git stash`.** Ever. Stashes are invisible, transient, and have been
+  dropped by mistake and by other agent sessions in this repo. If you need to
+  set work aside, commit it to a WIP branch with a descriptive message, or
+  leave it in the working tree and commit in topical steps. Never use stash
+  as a hiding place. Never run `git stash drop`, `git stash clear`, or
+  `git stash pop` under any circumstances.
+- **No `git push --force`, `--force-with-lease`, or force push to `main`/`perf`.**
+- **No `git rebase -i`, `git cherry-pick`, `git commit --amend`** on commits
+  that already exist, except on an untouched local branch where you created
+  every commit in the current session.
+- **No `git branch -D`, no deleting tags, no deleting refs** (including
+  `refs/recovery/*`, `refs/stash`, dangling refs).
+- **No `--no-verify`, `--no-gpg-sign`, or any hook-bypass flag.** If a
+  pre-commit hook fails, fix the underlying problem. If you cannot, stop and
+  ask — never silence the hook.
+
+### Commit discipline — no orphan scaffolding, no uncommitted piles
+
+- **Commit frequently and topically.** Each commit is one coherent slice. Never
+  accumulate more than a handful of modified files across a session. If you
+  find yourself about to commit >10 files across >2 topics, stop and split.
+- **Never leave orphan scaffolding.** A feature slice is "Dexie table +
+  translator + mixin + UI + sync-family registration + test". If you add the
+  sync-family entry, the Dexie table MUST exist in the same commit. If you add
+  a translator, the worker dispatch MUST call it in the same commit. If you
+  create a helper module, at least one consumer MUST import it in the same
+  commit. A commit that "scaffolds" one piece while leaving its consumers or
+  backing store absent is forbidden — this is the pattern that silently
+  discarded CRM data earlier in this repo's history.
+- **Never leave a session with a dirty working tree and silence.** Before
+  wrapping up, `git status` must be clean, OR you must explicitly tell the user
+  "I am leaving the following files uncommitted because X" and get
+  acknowledgement. Silent hand-off of a dirty tree is banned.
+- **`dist/` must match `src/` at every commit that ships UI changes.** Run
+  `bun run build` before committing UI work; include the rebuilt `dist/` in
+  the same commit or a clearly-labeled follow-up.
+
+### Preservation — unknown state is evidence, not garbage
+
+- **If you start a session and find modified or untracked files you did not
+  create, do not delete, revert, stash, or clean them. Read them. Ask the
+  user.** The default action on unexpected state is *investigate*, not
+  *tidy up*. The prior CRM loss in this repo happened because an agent treated
+  half-finished work as garbage.
+- **Dangling objects are evidence.** If `git fsck` shows dangling commits or
+  trees, treat them as potentially lost work. Pin them with
+  `git update-ref refs/recovery/<name> <sha>` before any destructive op. Never
+  run `git gc` or `git prune` yourself.
+- **Root-cause, don't paper over.** If a test fails, a build breaks, or a file
+  looks wrong, understand *why* before changing it. Never delete tests, comment
+  out code, add empty `try/catch`, or hardcode values to make errors go away.
+  The user values correct diagnosis over fast "fixes".
+- **Never edit `.gitignore` to hide dirty state.** If files are inconvenient,
+  commit them or ask what they should be.
+
+### Planning and confirmation
+
+- **State the plan before taking destructive or broad action.** For anything
+  that touches >3 files, changes shared contract state, or involves any git
+  operation from the "Git safety" list, describe what you will do and wait for
+  approval. Users can always say "go ahead" — they cannot always unwind
+  surprise changes.
+- **When in doubt, stop and ask.** The cost of one extra question is trivial.
+  The cost of one unauthorized revert or dropped stash has already been paid
+  in this repo.
 
 ## Things to avoid
 
