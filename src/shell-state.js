@@ -85,6 +85,7 @@ export const SHELL_STATE_KEYS = Object.freeze([
   // Sync status indicators
   'syncStatus',
   'syncSession',
+  'syncFamilyProgress',
   'sseStatus',
   'catchUpSyncActive',
 
@@ -100,6 +101,7 @@ export const SHELL_STATE_KEYS = Object.freeze([
 
   // Shell UI
   'showAvatarMenu',
+  'showSyncProgressModal',
   'showWorkspaceSwitcherMenu',
   'presetConnecting',
 
@@ -221,7 +223,7 @@ export function createShellState(options = {}) {
     get isLoggedIn() {
       return Boolean(this.session?.npub);
     },
-    settingsTab: 'workspace',
+    settingsTab: 'connection',
     extensionSignerAvailable: false,
     extensionSignerPollTimer: null,
     isLoggingIn: false,
@@ -243,14 +245,18 @@ export function createShellState(options = {}) {
       startedAt: null,
       finishedAt: null,
       lastSuccessAt: null,
+      manual: false,
       currentFamily: null,
+      currentFamilyHash: null,
       completedFamilies: 0,
       totalFamilies: 0,
       pushed: 0,
       pushTotal: 0,
       pulled: 0,
+      heartbeat: false,
       error: null,
     },
+    syncFamilyProgress: [],
     sseStatus: 'disconnected',
     catchUpSyncActive: false,
 
@@ -266,6 +272,7 @@ export function createShellState(options = {}) {
 
     // ── Shell UI ──────────────────────────────────────────────
     showAvatarMenu: false,
+    showSyncProgressModal: false,
     showWorkspaceSwitcherMenu: false,
     presetConnecting: false,
 

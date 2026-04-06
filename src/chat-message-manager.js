@@ -12,7 +12,9 @@ import {
   upsertMessage,
   upsertChannel,
   addPendingWrite,
+  deleteChannelRuntimeState,
 } from './db.js';
+import { fetchRecordHistory } from './api.js';
 import {
   outboundChatMessage,
   outboundChannel,
@@ -468,53 +470,75 @@ export const chatMessageManagerMixin = {
       return;
     }
 
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm(`Delete channel "${this.getChannelLabel(channel)}"?`);
-      if (!confirmed) return;
+    if (!this.channelDeleteConfirmArmed) {
+      this.channelDeleteConfirmArmed = true;
+      return;
     }
 
     try {
       const now = new Date().toISOString();
-      const nextVersion = (channel.version ?? 1) + 1;
       const fallbackNextChannelId = this.channels.find((item) => item.record_id !== channel.record_id)?.record_id ?? null;
+      const ownerNpub = channel.owner_npub || this.workspaceOwnerNpub;
+      let latestTowerVersion = 0;
       this.showChannelSettingsModal = false;
 
-      await upsertChannel({
-        ...channel,
-        record_state: 'deleted',
-        version: nextVersion,
-        updated_at: now,
-      });
+      if (channel.record_id && ownerNpub && this.workspaceOwnerNpub && this.session?.npub && this.backendUrl) {
+        const result = await fetchRecordHistory({
+          record_id: channel.record_id,
+          owner_npub: this.workspaceOwnerNpub,
+          viewer_npub: this.session.npub,
+        });
+        latestTowerVersion = (Array.isArray(result?.versions) ? result.versions : []).reduce((latest, current) => {
+          const version = Number(current?.version ?? 0) || 0;
+          return version > latest ? version : latest;
+        }, 0);
+      }
+
+      if (latestTowerVersion > 0) {
+        const nextVersion = latestTowerVersion + 1;
+        await upsertChannel({
+          ...channel,
+          record_state: 'deleted',
+          version: nextVersion,
+          updated_at: now,
+        });
+
+        const envelope = await outboundChannel({
+          record_id: channel.record_id,
+          owner_npub: ownerNpub,
+          title: channel.title,
+          group_ids: channel.group_ids ?? [],
+          participant_npubs: channel.participant_npubs ?? [],
+          version: nextVersion,
+          previous_version: latestTowerVersion,
+          record_state: 'deleted',
+          signature_npub: this.signingNpub,
+          write_group_ref: this.getPreferredChannelWriteGroup(channel),
+        });
+
+        await addPendingWrite({
+          record_id: channel.record_id,
+          record_family_hash: recordFamilyHash('channel'),
+          envelope,
+        });
+      } else {
+        await deleteChannelRuntimeState(channel.record_id);
+      }
 
       this.channels = this.channels.filter((item) => item.record_id !== channel.record_id);
       this.selectedChannelId = fallbackNextChannelId;
       this.closeThread();
       await this.refreshMessages({ scrollToLatest: true });
 
-      const envelope = await outboundChannel({
-        record_id: channel.record_id,
-        owner_npub: channel.owner_npub,
-        title: channel.title,
-        group_ids: channel.group_ids ?? [],
-        participant_npubs: channel.participant_npubs ?? [],
-        version: nextVersion,
-        previous_version: channel.version ?? 1,
-        record_state: 'deleted',
-        signature_npub: this.signingNpub,
-        write_group_ref: this.getPreferredChannelWriteGroup(channel),
-      });
-
-      await addPendingWrite({
-        record_id: channel.record_id,
-        record_family_hash: recordFamilyHash('channel'),
-        envelope,
-      });
-
-      await this.flushAndBackgroundSync();
+      if (latestTowerVersion > 0) {
+        await this.flushAndBackgroundSync();
+      }
       await this.refreshChannels();
       this.selectedChannelId = this.selectedChannelId ?? this.channels[0]?.record_id ?? null;
       await this.refreshMessages({ scrollToLatest: true });
+      this.channelDeleteConfirmArmed = false;
     } catch (error) {
+      this.channelDeleteConfirmArmed = false;
       this.error = error?.message || 'Failed to delete channel';
     }
   },

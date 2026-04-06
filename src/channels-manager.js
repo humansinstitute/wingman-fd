@@ -235,6 +235,7 @@ export const channelsManagerMixin = {
       this.lastGroupsRefreshAt = Date.now();
       this.validateSelectedBoardId();
       this.normalizeTaskFilterTags();
+      if (typeof this.normalizeSettingsTab === 'function') this.normalizeSettingsTab();
       return this.groups;
     } catch (error) {
       flightDeckLog('error', 'groups', 'refreshGroups failed', {
@@ -446,6 +447,10 @@ export const channelsManagerMixin = {
   },
 
   openNewGroupModal() {
+    if (!this.canAdminWorkspace) {
+      this.error = 'Only workspace admins can create groups.';
+      return;
+    }
     if (this.groupActionsLocked) return;
     this.resetNewGroupDraft();
     this.error = null;
@@ -459,6 +464,10 @@ export const channelsManagerMixin = {
   },
 
   openEditGroupModal(groupId) {
+    if (!this.canAdminWorkspace) {
+      this.error = 'Only workspace admins can edit groups.';
+      return;
+    }
     if (this.groupActionsLocked) return;
     const group = this.groups.find((item) => item.group_id === groupId || item.group_npub === groupId);
     if (!group) return;
@@ -645,6 +654,10 @@ export const channelsManagerMixin = {
   },
 
   async createSharingGroup() {
+    if (!this.canAdminWorkspace) {
+      this.error = 'Only workspace admins can create groups.';
+      return;
+    }
     if (this.groupCreatePending) return;
     this.error = null;
     const ownerNpub = this.session?.npub;
@@ -686,6 +699,10 @@ export const channelsManagerMixin = {
   },
 
   async saveGroupEdits() {
+    if (!this.canAdminWorkspace) {
+      this.error = 'Only workspace admins can edit groups.';
+      return;
+    }
     if (this.groupEditPending) return;
     this.error = null;
 
@@ -698,6 +715,10 @@ export const channelsManagerMixin = {
     const trimmedName = String(this.editGroupName || '').trim();
     if (!trimmedName) {
       this.error = 'Group name is required';
+      return;
+    }
+    if (this.isProtectedWorkspaceGroup(group) && trimmedName !== group.name) {
+      this.error = 'Protected system groups cannot be renamed.';
       return;
     }
 
@@ -748,7 +769,15 @@ export const channelsManagerMixin = {
   },
 
   async deleteSharingGroup(groupId) {
+    if (!this.canAdminWorkspace) {
+      this.error = 'Only workspace admins can delete groups.';
+      return;
+    }
     if (this.groupDeletePendingId || this.groupCreatePending || this.groupEditPending) return;
+    if (this.isProtectedWorkspaceGroup(groupId)) {
+      this.error = 'Protected system groups cannot be deleted.';
+      return;
+    }
     const ownerNpub = this.session?.npub || this.ownerNpub;
     if (!ownerNpub || !groupId) {
       this.error = 'Select a group first';
@@ -790,6 +819,10 @@ export const channelsManagerMixin = {
   },
 
   async generateShareLink() {
+    if (!this.canAdminWorkspace) {
+      this.shareInviteError = 'Only workspace admins can generate invite links.';
+      return;
+    }
     const inviteeNpub = String(this.shareInviteNpub || '').trim();
     const groupId = String(this.shareInviteGroupId || '').trim();
 

@@ -1066,6 +1066,7 @@ export const docsManagerMixin = {
       scope_l3_id: null,
       scope_l4_id: null,
       scope_l5_id: null,
+      scope_policy_group_ids: null,
       shares: this.getInheritedDirectoryShares(parentDirectoryId),
       group_ids: [],
       sync_status: 'pending',
@@ -1092,6 +1093,7 @@ export const docsManagerMixin = {
         scope_l3_id: row.scope_l3_id ?? null,
         scope_l4_id: row.scope_l4_id ?? null,
         scope_l5_id: row.scope_l5_id ?? null,
+        scope_policy_group_ids: row.scope_policy_group_ids ?? null,
         shares: row.shares,
         signature_npub: this.signingNpub,
         write_group_ref: row.group_ids?.[0] || null,
@@ -1129,6 +1131,9 @@ export const docsManagerMixin = {
       content: '',
       parent_directory_id: parentDirectoryId,
       ...defaultScopeAssignment,
+      scope_policy_group_ids: defaultScopeAssignment.scope_id
+        ? this.getResolvedScopePolicyGroupIds(defaultScopeAssignment.scope_id)
+        : null,
       shares,
       group_ids: [],
       sync_status: 'pending',
@@ -1156,6 +1161,7 @@ export const docsManagerMixin = {
         scope_l3_id: row.scope_l3_id ?? null,
         scope_l4_id: row.scope_l4_id ?? null,
         scope_l5_id: row.scope_l5_id ?? null,
+        scope_policy_group_ids: row.scope_policy_group_ids ?? null,
         shares: row.shares,
         signature_npub: this.signingNpub,
         write_group_ref: row.group_ids?.[0] || null,
@@ -1188,10 +1194,19 @@ export const docsManagerMixin = {
       : this.getStoredDocShares(item);
     const now = new Date().toISOString();
     const nextVersion = (item.version ?? 1) + 1;
-    const updated = {
+    const draft = {
       ...item,
       shares,
       group_ids: this.getShareGroupIds(shares),
+    };
+    const scopePolicyPatch = item.scope_id
+      ? (this.shouldRefreshScopedPolicy(draft, item.scope_id)
+        ? this.buildScopedPolicyRepairPatch(draft, { scopeId: item.scope_id })
+        : { scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(item.scope_id) })
+      : { scope_policy_group_ids: null };
+    const updated = {
+      ...draft,
+      ...scopePolicyPatch,
       sync_status: 'pending',
       version: nextVersion,
       updated_at: now,
@@ -1213,6 +1228,7 @@ export const docsManagerMixin = {
         scope_l3_id: updated.scope_l3_id ?? null,
         scope_l4_id: updated.scope_l4_id ?? null,
         scope_l5_id: updated.scope_l5_id ?? null,
+        scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
         shares,
         version: nextVersion,
         previous_version: item.version ?? 1,
@@ -1256,12 +1272,21 @@ export const docsManagerMixin = {
     const nextVersion = (item.version ?? 1) + 1;
     this.docAutosaveState = autosave ? 'saving' : this.docAutosaveState;
     try {
-      const updated = {
+      const draft = {
         ...item,
         title: nextTitle,
         content: this.docEditorContent,
         shares,
         group_ids: this.getShareGroupIds(shares),
+      };
+      const scopePolicyPatch = item.scope_id
+        ? (this.shouldRefreshScopedPolicy(draft, item.scope_id)
+          ? this.buildScopedPolicyRepairPatch(draft, { scopeId: item.scope_id })
+          : { scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(item.scope_id) })
+        : { scope_policy_group_ids: null };
+      const updated = {
+        ...draft,
+        ...scopePolicyPatch,
         sync_status: 'pending',
         version: nextVersion,
         updated_at: now,
@@ -1283,6 +1308,7 @@ export const docsManagerMixin = {
           scope_l3_id: updated.scope_l3_id ?? null,
           scope_l4_id: updated.scope_l4_id ?? null,
           scope_l5_id: updated.scope_l5_id ?? null,
+          scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares,
           version: nextVersion,
           previous_version: item.version ?? 1,

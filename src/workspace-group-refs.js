@@ -18,7 +18,9 @@ export function getPrivateGroupNpub({ memberPrivateGroup = null, currentWorkspac
 }
 
 export function getWorkspaceSettingsGroupRef({ memberPrivateGroup = null, currentWorkspace = null } = {}) {
-  return clean(currentWorkspace?.defaultGroupId)
+  return clean(currentWorkspace?.adminGroupId)
+    || clean(currentWorkspace?.adminGroupNpub)
+    || clean(currentWorkspace?.defaultGroupId)
     || clean(currentWorkspace?.defaultGroupNpub)
     || getPrivateGroupRef({ memberPrivateGroup, currentWorkspace })
     || getPrivateGroupNpub({ memberPrivateGroup, currentWorkspace })
@@ -26,7 +28,8 @@ export function getWorkspaceSettingsGroupRef({ memberPrivateGroup = null, curren
 }
 
 export function getWorkspaceSettingsGroupNpub({ memberPrivateGroup = null, currentWorkspace = null } = {}) {
-  return clean(currentWorkspace?.defaultGroupNpub)
+  return clean(currentWorkspace?.adminGroupNpub)
+    || clean(currentWorkspace?.defaultGroupNpub)
     || getPrivateGroupNpub({ memberPrivateGroup, currentWorkspace })
     || null;
 }

@@ -465,7 +465,7 @@ export async function fetchRecordHistory({ record_id, owner_npub, viewer_npub })
 }
 
 export async function fetchWorkspaceKeyMappings(ownerNpub) {
-  const requestPath = `/api/v4/workspaces/${encodeURIComponent(ownerNpub)}/key-mappings`;
+  const requestPath = `/api/v4/user/workspace-key-mappings?workspace_owner_npub=${encodeURIComponent(ownerNpub)}`;
   const requestUrl = url(requestPath);
   const resp = await signedFetch(requestPath);
   return json(resp, { requestUrl, method: 'GET' });

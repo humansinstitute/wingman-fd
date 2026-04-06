@@ -9,7 +9,6 @@ import {
   getSettings,
   saveSettings,
   getWorkspaceSettings,
-  getWorkspaceSettingsSnapshot,
   upsertWorkspaceSettings,
   openWorkspaceDb,
   deleteWorkspaceDb,
@@ -23,12 +22,12 @@ import {
   createWorkspace,
   getWorkspaces,
   recoverWorkspace,
+  updateWorkspace,
   prepareStorageObject,
   uploadStorageObject,
   completeStorageObject,
 } from './api.js';
 import {
-  buildWorkspaceKey,
   findWorkspaceByKey,
   mergeWorkspaceEntries,
   normalizeWorkspaceEntry,
@@ -147,6 +146,21 @@ export const workspaceManagerMixin = {
     return this.groups.filter((group) => group.owner_npub === this.workspaceOwnerNpub);
   },
 
+  get currentWorkspaceContentGroups() {
+    return this.currentWorkspaceGroups.filter((group) => group.group_kind !== 'workspace_admin');
+  },
+
+  get canAdminWorkspace() {
+    const viewerNpub = String(this.session?.npub || '').trim();
+    if (!viewerNpub || !this.currentWorkspace) return false;
+    if (String(this.currentWorkspace.creatorNpub || '').trim() === viewerNpub) return true;
+    return this.currentWorkspaceGroups.some((group) =>
+      group.group_kind === 'workspace_admin'
+      && Array.isArray(group.member_npubs)
+      && group.member_npubs.includes(viewerNpub)
+    );
+  },
+
   get memberPrivateGroup() {
     const memberNpub = this.session?.npub;
     if (!memberNpub) return null;
@@ -173,6 +187,22 @@ export const workspaceManagerMixin = {
     return this.currentWorkspace?.slug || slugify(this.currentWorkspaceName) || 'workspace';
   },
 
+  isProtectedWorkspaceGroup(groupOrId) {
+    const group = typeof groupOrId === 'object' && groupOrId
+      ? groupOrId
+      : this.groups.find((item) => item.group_id === groupOrId || item.group_npub === groupOrId);
+    return ['workspace_shared', 'workspace_admin', 'private'].includes(String(group?.group_kind || '').trim());
+  },
+
+  normalizeSettingsTab() {
+    const visibleTabs = this.canAdminWorkspace
+      ? ['workspace', 'connection', 'automation', 'data', 'sharing']
+      : ['connection', 'data'];
+    if (!visibleTabs.includes(this.settingsTab)) {
+      this.settingsTab = 'connection';
+    }
+  },
+
   // --- workspace display ---
 
   getWorkspaceByOwner(workspaceOwnerNpub) {
@@ -193,10 +223,14 @@ export const workspaceManagerMixin = {
       || {};
     const profile = this.workspaceProfileRowsByKey?.[known.workspaceKey || workspaceKey] || {};
     return {
-      ...known,
       ...profile,
+      ...known,
       workspaceKey: known.workspaceKey || workspaceKey,
       workspaceOwnerNpub: known.workspaceOwnerNpub || workspaceOwnerNpub,
+      name: String(known?.name || '').trim() || String(profile?.name || '').trim(),
+      description: String(known?.description || '').trim() || String(profile?.description || '').trim(),
+      avatarUrl: String(known?.avatarUrl || '').trim() || String(profile?.avatarUrl || '').trim() || null,
+      slug: String(known?.slug || '').trim() || String(profile?.slug || '').trim() || '',
     };
   },
 
@@ -301,98 +335,16 @@ export const workspaceManagerMixin = {
   },
 
   async hydrateKnownWorkspaceProfiles() {
-    if (!Array.isArray(this.knownWorkspaces) || this.knownWorkspaces.length === 0) return;
-
-    const patches = [];
-    const overlay = { ...(this.workspaceProfileRowsByKey || {}) };
-    for (const workspace of this.knownWorkspaces) {
-      const workspaceOwnerNpub = String(workspace?.workspaceOwnerNpub || '').trim();
-      const workspaceKey = String(workspace?.workspaceKey || '').trim();
-      if (!workspaceOwnerNpub || !workspaceKey) continue;
-      const row = await getWorkspaceSettingsSnapshot(workspaceKey, workspaceOwnerNpub);
-      if (!row?.workspace_owner_npub) continue;
-      const patch = {
-        workspaceKey,
-        workspaceOwnerNpub: row.workspace_owner_npub,
-      };
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) patch.name = row.workspace_name;
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_description')) patch.description = row.workspace_description;
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) patch.avatarUrl = row.workspace_avatar_url;
-      patches.push(patch);
-      overlay[workspaceKey] = {
-        ...(overlay[workspaceKey] || {}),
-        ...patch,
-      };
-    }
-
-    if (patches.length === 0) return;
-    this.workspaceProfileRowsByKey = overlay;
-    const before = JSON.stringify(this.knownWorkspaces);
-    this.mergeKnownWorkspaces(patches);
-    if (JSON.stringify(this.knownWorkspaces) !== before) {
-      await this.persistWorkspaceSettings();
-    }
+    // Canonical workspace metadata now comes from the workspace API route,
+    // not the shared workspace_settings record family.
   },
 
   async ensureWorkspaceProfileHydrated(workspaceKeyOrOwner) {
     const existing = this.getWorkspaceByKey(workspaceKeyOrOwner) || this.getWorkspaceByOwner(workspaceKeyOrOwner);
-    const owner = String(existing?.workspaceOwnerNpub || workspaceKeyOrOwner || '').trim();
     const workspaceKey = String(existing?.workspaceKey || '').trim();
-    if (!owner || !workspaceKey) return;
-
-    if (String(existing?.avatarUrl || '').trim()) return;
-
-    // Persistent guard: don't re-attempt hydration for keys we already tried.
-    // This prevents the hot loop where Alpine re-renders call getWorkspaceAvatar,
-    // which calls this function, which creates a throwaway Dexie instance every time.
+    if (!workspaceKey) return;
     if (!this._workspaceProfileHydratedKeys) this._workspaceProfileHydratedKeys = new Set();
-    if (this._workspaceProfileHydratedKeys.has(workspaceKey)) return;
-
-    const pending = this.workspaceProfileHydrationPromises?.[workspaceKey];
-    if (pending) return pending;
-
-    const loadPromise = (async () => {
-      const row = await getWorkspaceSettingsSnapshot(workspaceKey, owner);
-      if (!row?.workspace_owner_npub) return;
-
-      const patch = {
-        workspaceKey,
-        workspaceOwnerNpub: row.workspace_owner_npub,
-      };
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) patch.name = row.workspace_name;
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_description')) patch.description = row.workspace_description;
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) patch.avatarUrl = row.workspace_avatar_url;
-
-      this.workspaceProfileRowsByKey = {
-        ...(this.workspaceProfileRowsByKey || {}),
-        [workspaceKey]: {
-          ...(this.workspaceProfileRowsByKey?.[workspaceKey] || {}),
-          ...patch,
-        },
-      };
-
-      const before = JSON.stringify(this.getWorkspaceByKey(workspaceKey) || this.getWorkspaceByOwner(owner) || {});
-      this.mergeKnownWorkspaces([patch]);
-      const after = JSON.stringify(this.getWorkspaceByKey(workspaceKey) || this.getWorkspaceByOwner(owner) || {});
-      if (after !== before) {
-        await this.persistWorkspaceSettings();
-      }
-    })();
-
-    this.workspaceProfileHydrationPromises = {
-      ...(this.workspaceProfileHydrationPromises || {}),
-      [workspaceKey]: loadPromise,
-    };
-
-    try {
-      await loadPromise;
-    } finally {
-      // Mark as attempted so we never re-run for this key during this session.
-      this._workspaceProfileHydratedKeys.add(workspaceKey);
-      const next = { ...(this.workspaceProfileHydrationPromises || {}) };
-      delete next[workspaceKey];
-      this.workspaceProfileHydrationPromises = next;
-    }
+    this._workspaceProfileHydratedKeys.add(workspaceKey);
   },
 
   // --- workspace profile editing ---
@@ -486,34 +438,6 @@ export const workspaceManagerMixin = {
     this.workspaceSettingsGroupIds = Array.isArray(row?.group_ids) ? [...row.group_ids] : [];
     this.workspaceHarnessUrl = String(row?.wingman_harness_url || '').trim();
     this.workspaceTriggers = Array.isArray(row?.triggers) ? [...row.triggers] : [];
-    if (row?.workspace_owner_npub) {
-      const workspaceKey = this.currentWorkspaceKey || buildWorkspaceKey({
-        workspaceOwnerNpub: row.workspace_owner_npub,
-        serviceNpub: this.currentWorkspace?.serviceNpub || this.superbasedConnectionConfig?.serviceNpub || null,
-        directHttpsUrl: this.currentWorkspace?.directHttpsUrl || this.backendUrl || '',
-      });
-      const workspacePatch = {
-        workspaceKey,
-        workspaceOwnerNpub: row.workspace_owner_npub,
-      };
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_name')) {
-        workspacePatch.name = row.workspace_name;
-      }
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_description')) {
-        workspacePatch.description = row.workspace_description;
-      }
-      if (Object.prototype.hasOwnProperty.call(row, 'workspace_avatar_url')) {
-        workspacePatch.avatarUrl = row.workspace_avatar_url;
-      }
-      this.workspaceProfileRowsByKey = {
-        ...(this.workspaceProfileRowsByKey || {}),
-        [workspaceKey]: {
-          ...(this.workspaceProfileRowsByKey?.[workspaceKey] || {}),
-          ...workspacePatch,
-        },
-      };
-      this.mergeKnownWorkspaces([workspacePatch]);
-    }
     if (overwriteInput || !this.wingmanHarnessDirty) {
       this.wingmanHarnessInput = this.workspaceHarnessUrl;
       this.wingmanHarnessDirty = false;
@@ -568,6 +492,9 @@ export const workspaceManagerMixin = {
     const workspaceOwnerNpub = this.workspaceOwnerNpub;
     if (!workspaceOwnerNpub) {
       throw new Error('Select a workspace first');
+    }
+    if (!this.canAdminWorkspace) {
+      throw new Error('Only workspace admins can update the workspace avatar.');
     }
     if (!file || !String(file.type || '').startsWith('image/')) {
       throw new Error('Choose an image file for the workspace avatar.');
@@ -628,6 +555,10 @@ export const workspaceManagerMixin = {
       this.workspaceProfileError = 'Select a workspace first';
       return;
     }
+    if (!this.canAdminWorkspace) {
+      this.workspaceProfileError = 'Only workspace admins can update the workspace profile.';
+      return;
+    }
 
     const name = String(this.workspaceProfileNameInput || '').trim();
     if (!name) {
@@ -643,61 +574,48 @@ export const workspaceManagerMixin = {
         avatarUrl = await this.uploadWorkspaceAvatarFile(this.workspaceProfilePendingAvatarFile);
       }
       const workspaceOwnerNpub = workspace.workspaceOwnerNpub;
-      const now = new Date().toISOString();
-      const writeGroupRef = this.getWorkspaceSettingsGroupRef();
-      const groupIds = writeGroupRef ? [writeGroupRef] : [...(this.workspaceSettingsGroupIds || [])];
-      const nextVersion = Math.max(1, Number(this.workspaceSettingsVersion || 0) + 1);
-      const recordId = this.workspaceSettingsRecordId || workspaceSettingsRecordId(workspaceOwnerNpub);
       const description = String(this.workspaceProfileDescriptionInput || '').trim();
-      const localRow = {
-        workspace_owner_npub: workspaceOwnerNpub,
-        record_id: recordId,
-        owner_npub: workspaceOwnerNpub,
-        workspace_name: name,
-        workspace_description: description,
-        workspace_avatar_url: avatarUrl,
-        wingman_harness_url: this.workspaceHarnessUrl,
-        triggers: toRaw(this.workspaceTriggers || []),
-        group_ids: groupIds,
-        sync_status: 'pending',
-        record_state: 'active',
-        version: nextVersion,
-        updated_at: now,
-      };
-
-      await upsertWorkspaceSettings(localRow);
-      this.applyWorkspaceSettingsRow(localRow);
-
-      // Persist slug locally (not synced to Tower)
       const newSlug = String(this.workspaceProfileSlugInput || '').trim() || slugify(name);
-      this.mergeKnownWorkspaces([{ workspaceOwnerNpub, slug: newSlug }]);
+      const currentSlug = String(workspace.slug || '').trim() || slugify(workspace.name);
+      if (
+        newSlug !== currentSlug
+        && typeof window !== 'undefined'
+        && !window.confirm(
+          `Change the workspace URL slug from "${currentSlug}" to "${newSlug}"?\n\nExisting bookmarked links will break.`,
+        )
+      ) {
+        return;
+      }
 
-      const envelope = await outboundWorkspaceSettings({
-        record_id: recordId,
-        owner_npub: workspaceOwnerNpub,
-        workspace_owner_npub: workspaceOwnerNpub,
-        workspace_name: name,
-        workspace_description: description,
-        workspace_avatar_url: avatarUrl,
-        wingman_harness_url: this.workspaceHarnessUrl,
-        triggers: toRaw(this.workspaceTriggers || []),
-        group_ids: groupIds,
-        version: nextVersion,
-        previous_version: Math.max(0, nextVersion - 1),
-        signature_npub: this.session?.npub || workspaceOwnerNpub,
-        write_group_ref: writeGroupRef,
+      const response = await updateWorkspace(workspaceOwnerNpub, {
+        name,
+        description,
+        avatar_url: avatarUrl,
       });
-      await addPendingWrite({
-        record_id: recordId,
-        record_family_hash: envelope.record_family_hash,
-        envelope,
-      });
-      await this.refreshSyncStatus();
-      this.ensureBackgroundSync(true);
+      this.workspaceProfileRowsByKey = {
+        ...(this.workspaceProfileRowsByKey || {}),
+        [workspace.workspaceKey]: {
+          ...(this.workspaceProfileRowsByKey?.[workspace.workspaceKey] || {}),
+          workspaceKey: workspace.workspaceKey,
+          workspaceOwnerNpub,
+          name: response?.name ?? name,
+          description: response?.description ?? description,
+          avatarUrl: response?.avatar_url ?? avatarUrl,
+          slug: newSlug,
+        },
+      };
+      this.mergeKnownWorkspaces([{
+        workspaceKey: workspace.workspaceKey,
+        workspaceOwnerNpub,
+        name: response?.name ?? name,
+        description: response?.description ?? description,
+        avatarUrl: response?.avatar_url ?? avatarUrl,
+        slug: newSlug,
+      }]);
       await this.persistWorkspaceSettings();
       this.syncWorkspaceProfileDraft({ force: true });
     } catch (error) {
-      this.workspaceProfileError = error?.message || 'Failed to save workspace settings';
+      this.workspaceProfileError = error?.message || 'Failed to save workspace profile';
     } finally {
       this.workspaceProfileSaving = false;
     }
@@ -705,6 +623,12 @@ export const workspaceManagerMixin = {
 
   async saveHarnessSettings({ triggerOnly = false } = {}) {
     if (!triggerOnly) this.wingmanHarnessError = null;
+    if (!this.canAdminWorkspace) {
+      const msg = 'Only workspace admins can update shared automation settings.';
+      if (triggerOnly) throw new Error(msg);
+      this.wingmanHarnessError = msg;
+      return;
+    }
     if (!this.session?.npub) {
       const msg = 'Sign in first';
       if (triggerOnly) throw new Error(msg);
@@ -849,6 +773,7 @@ export const workspaceManagerMixin = {
       this.startWorkspaceLiveQueries();
       this.selectedBoardId = this.readStoredTaskBoardId() || null;
       this.validateSelectedBoardId();
+      this.normalizeSettingsTab();
       await this.persistWorkspaceSettings();
       await this.refreshWorkspaceSettings();
       this.syncWorkspaceProfileDraft({ force: true });
@@ -1031,10 +956,12 @@ export const workspaceManagerMixin = {
     try {
       const workspaceIdentity = createGroupIdentity();
       const defaultGroupIdentity = createGroupIdentity();
+      const adminGroupIdentity = createGroupIdentity();
       const privateGroupIdentity = createGroupIdentity();
       const serviceNpub = await this.fetchBackendServiceNpub();
       const wrappedWorkspaceNsec = await personalEncryptForNpub(memberNpub, workspaceIdentity.nsec);
       const defaultGroupMemberKeys = await buildWrappedMemberKeys(defaultGroupIdentity, [memberNpub], memberNpub);
+      const adminGroupMemberKeys = await buildWrappedMemberKeys(adminGroupIdentity, [memberNpub], memberNpub);
       const privateGroupMemberKeys = await buildWrappedMemberKeys(privateGroupIdentity, [memberNpub], memberNpub);
 
       const response = await createWorkspace({
@@ -1046,6 +973,9 @@ export const workspaceManagerMixin = {
         default_group_npub: defaultGroupIdentity.npub,
         default_group_name: `${name} Shared`,
         default_group_member_keys: defaultGroupMemberKeys,
+        admin_group_npub: adminGroupIdentity.npub,
+        admin_group_name: 'Workspace Admins',
+        admin_group_member_keys: adminGroupMemberKeys,
         private_group_npub: privateGroupIdentity.npub,
         private_group_name: 'Private',
         private_group_member_keys: privateGroupMemberKeys,

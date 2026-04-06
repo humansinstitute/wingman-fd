@@ -737,6 +737,7 @@ export const taskBoardStateMixin = {
         scope_l3_id: null,
         scope_l4_id: null,
         scope_l5_id: null,
+        scope_policy_group_ids: null,
         board_group_id: groupId || fallbackTask?.board_group_id || null,
         group_ids: this.getShareGroupIds(merged),
         shares: toRaw(merged),
@@ -751,6 +752,7 @@ export const taskBoardStateMixin = {
         scope_l3_id: fallbackTask?.scope_l3_id ?? null,
         scope_l4_id: fallbackTask?.scope_l4_id ?? null,
         scope_l5_id: fallbackTask?.scope_l5_id ?? null,
+        scope_policy_group_ids: toRaw(fallbackTask?.scope_policy_group_ids ?? null),
         board_group_id: fallbackTask?.board_group_id ?? null,
         group_ids: toRaw(fallbackTask?.group_ids ?? []),
         shares: toRaw(fallbackTask?.shares ?? []),
@@ -767,6 +769,7 @@ export const taskBoardStateMixin = {
 
     return {
       ...buildScopeTags(scope),
+      scope_policy_group_ids: groupIds,
       board_group_id: boardGroupId,
       group_ids: groupIds,
       shares: toRaw(rebuilt.shares),
@@ -1048,7 +1051,7 @@ export const taskBoardStateMixin = {
   },
 
   get scheduleAssignableGroups() {
-    return this.currentWorkspaceGroups.map((group) => ({
+    return this.currentWorkspaceContentGroups.map((group) => ({
       groupId: group.group_id || group.group_npub,
       label: group.name || 'Group',
       subtitle: group.group_kind === 'private'
@@ -1058,7 +1061,7 @@ export const taskBoardStateMixin = {
   },
 
   get scopeAssignableGroups() {
-    return this.currentWorkspaceGroups.map((group) => ({
+    return this.currentWorkspaceContentGroups.map((group) => ({
       groupId: group.group_id || group.group_npub,
       label: group.name || 'Group',
       subtitle: group.group_kind === 'private'

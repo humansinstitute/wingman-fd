@@ -141,7 +141,9 @@ export const connectSettingsManagerMixin = {
 
   toggleCvmSync() {
     this.useCvmSync = !this.useCvmSync;
-    localStorage.setItem('use_cvm_sync', this.useCvmSync ? 'true' : 'false');
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('use_cvm_sync', this.useCvmSync ? 'true' : 'false');
+    }
   },
 
   // --- Connect modal (two-step) ---
@@ -272,9 +274,11 @@ export const connectSettingsManagerMixin = {
     try {
       const workspaceIdentity = createGroupIdentity();
       const defaultGroupIdentity = createGroupIdentity();
+      const adminGroupIdentity = createGroupIdentity();
       const privateGroupIdentity = createGroupIdentity();
       const wrappedWorkspaceNsec = await personalEncryptForNpub(memberNpub, workspaceIdentity.nsec);
       const defaultGroupMemberKeys = await buildWrappedMemberKeys(defaultGroupIdentity, [memberNpub], memberNpub);
+      const adminGroupMemberKeys = await buildWrappedMemberKeys(adminGroupIdentity, [memberNpub], memberNpub);
       const privateGroupMemberKeys = await buildWrappedMemberKeys(privateGroupIdentity, [memberNpub], memberNpub);
       const response = await createWorkspace({
         workspace_owner_npub: workspaceIdentity.npub, name,
@@ -282,6 +286,8 @@ export const connectSettingsManagerMixin = {
         wrapped_workspace_nsec: wrappedWorkspaceNsec, wrapped_by_npub: memberNpub,
         default_group_npub: defaultGroupIdentity.npub, default_group_name: `${name} Shared`,
         default_group_member_keys: defaultGroupMemberKeys,
+        admin_group_npub: adminGroupIdentity.npub, admin_group_name: 'Workspace Admins',
+        admin_group_member_keys: adminGroupMemberKeys,
         private_group_npub: privateGroupIdentity.npub, private_group_name: 'Private',
         private_group_member_keys: privateGroupMemberKeys,
       });
