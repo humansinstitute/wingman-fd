@@ -33,9 +33,6 @@ import {
   pruneOnLogin,
   startWorkerFlushTimer,
   stopWorkerFlushTimer,
-  connectSSE,
-  disconnectSSE,
-  setSSEStatusCallback,
 } from './sync-worker-client.js';
 import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
@@ -730,73 +727,11 @@ export const syncManagerMixin = {
     return this.syncQuarantine;
   },
 
-  // --- SSE lifecycle ---
-
-  get isSSEConnected() {
-    return this.sseStatus === 'connected';
-  },
-
-  connectSSEStream() {
-    const token = String(this.superbasedTokenInput || '').trim();
-    if (!this.session?.npub || !this.backendUrl || !token) return;
-
-    setSSEStatusCallback((message) => this.handleSSEStatus(message));
-    connectSSE(
-      this.workspaceOwnerNpub,
-      this.session.npub,
-      this.backendUrl,
-      token,
-      this.workspaceDbKey,
-    );
-  },
-
-  disconnectSSEStream() {
-    disconnectSSE();
-    this.sseStatus = 'disconnected';
-  },
-
-  handleSSEStatus(message) {
-    const status = message?.status;
-    if (!status) return;
-
-    this.sseStatus = status;
-
-    if (status === 'catch-up-required') {
-      this.catchUpSyncActive = true;
-      this.scheduleBackgroundSync(50);
-      return;
-    }
-
-    if (status === 'group-changed') {
-      this.refreshGroups({ minIntervalMs: 0 });
-      return;
-    }
-
-    if (status === 'token-needed') {
-      this.connectSSEStream();
-      return;
-    }
-
-    if (status === 'connected') {
-      // Widen heartbeat polling now that SSE is live
-      this.scheduleBackgroundSync();
-      return;
-    }
-
-    if (status === 'fallback-polling') {
-      // SSE gave up reconnecting — tighten polling back to normal cadence
-      this.scheduleBackgroundSync();
-      return;
-    }
-  },
-
   // --- sync lifecycle ---
 
   getSyncCadenceMs() {
     if (!this.session?.npub || !this.backendUrl) return null;
     if (typeof document !== 'undefined' && document.hidden) return null;
-    // When SSE is connected, widen heartbeat polling — SSE handles live refresh
-    if (this.isSSEConnected) return this.SSE_HEARTBEAT_CADENCE_MS;
     if (this.navSection === 'chat' && this.selectedChannelId) return this.FAST_SYNC_MS;
     if (this.navSection === 'docs') return this.FAST_SYNC_MS;
     if (this.navSection === 'tasks') return this.FAST_SYNC_MS;
@@ -815,7 +750,6 @@ export const syncManagerMixin = {
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.visibilityHandler = null;
     }
-    this.disconnectSSEStream();
     stopWorkerFlushTimer();
   },
 
@@ -840,10 +774,6 @@ export const syncManagerMixin = {
     // Start the independent worker flush timer for low-latency outbox delivery
     if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
       startWorkerFlushTimer(this.workspaceOwnerNpub, this.backendUrl, this.workspaceDbKey);
-    }
-    // Connect SSE for live refresh — the primary freshness path
-    if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
-      this.connectSSEStream();
     }
     // Show catch-up overlay when data is stale:
     // - first sync ever (no lastSuccessAt)
