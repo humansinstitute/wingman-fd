@@ -64,7 +64,7 @@ It does not own:
 
 ## Cross-app boundaries
 
-Flight Deck consumes Tower's contract. It must stay aligned with:
+Flight Deck consumes Tower’s contract. It must stay aligned with:
 
 - `connection_token`
 - workspace owner and backend origin fields
@@ -117,6 +117,11 @@ This is a Vite project. The source HTML is `index.html` at the project root. Vit
 - **`src/worker/sync-worker-runner.js`** builds into `dist/assets/sync-worker-runner-*.js` as a separate chunk.
 
 After any source change, always run `bun run build` to regenerate `dist/`. The app is served from `dist/`.
+
+## Working rules
+
+- Commit changes in small, intentional steps as you go. Do not leave completed work uncommitted.
+- Never revert, overwrite, or discard changes you do not understand. Stop, inspect them, and preserve them unless the user explicitly asks for a revert.
 
 ## Things to avoid
 

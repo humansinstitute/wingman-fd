@@ -118,6 +118,11 @@ This is a Vite project. The source HTML is `index.html` at the project root. Vit
 
 After any source change, always run `bun run build` to regenerate `dist/`. The app is served from `dist/`.
 
+## Working rules
+
+- Commit changes in small, intentional steps as you go. Do not leave completed work uncommitted.
+- Never revert, overwrite, or discard changes you do not understand. Stop, inspect them, and preserve them unless the user explicitly asks for a revert.
+
 ## Things to avoid
 
 - Do not add Tower contract fields only in Flight Deck without updating Tower.
