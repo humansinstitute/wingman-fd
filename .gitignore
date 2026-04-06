@@ -42,8 +42,10 @@ logs/
 *.log
 apps/logs/
 
-# Generated docs and reports
-docs/
+# Design logs (scratch, not version controlled)
+docs/log/
+
+# Generated reports
 playwright-report/
 test-results/
 
