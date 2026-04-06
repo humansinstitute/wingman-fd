@@ -645,13 +645,13 @@
                   class="board-picker-typeahead-input flightdeck-scope-input"
                   type="text"
                   x-model="query"
-                  :placeholder="$store.chat.selectedBoardScope?.title || 'Look ahead to a scope...'"
+                  :placeholder="$store.chat.selectedBoardScope?.title || 'Choose a scope to focus'"
                   @focus="open = true; bpIdx = 0"
                   @keydown.escape="open = false; query = ''; $el.blur()"
                   @keydown.arrow-down.prevent="bpIdx = Math.min(bpIdx + 1, $store.chat.filterFlightDeckScopeOptions(query).length - 1)"
                   @keydown.arrow-up.prevent="bpIdx = Math.max(bpIdx - 1, 0)"
                   @keydown.enter.prevent="if ($store.chat.filterFlightDeckScopeOptions(query)[bpIdx]) { $store.chat.selectBoard($store.chat.filterFlightDeckScopeOptions(query)[bpIdx].id); open = false; query = ''; $el.blur() }"
-                  aria-label="Look ahead scope"
+                  aria-label="Choose a scope to focus"
                 />
                 <ul class="board-picker-typeahead-results" x-show="open && $store.chat.filterFlightDeckScopeOptions(query).length > 0" x-cloak>
                   <template x-for="(board, idx) in $store.chat.filterFlightDeckScopeOptions(query)" :key="board.id">
