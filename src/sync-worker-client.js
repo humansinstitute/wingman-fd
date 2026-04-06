@@ -1,4 +1,3 @@
-import { setBaseUrl } from './api.js';
 import { getExtensionPublicKey, signEventWithExtension } from './auth/nostr.js';
 import { exportDecryptedKeys, getActiveSessionNpub } from './crypto/group-keys.js';
 import { exportWorkspaceKeyForWorker } from './crypto/workspace-keys.js';
@@ -11,11 +10,12 @@ const AUTH_RESPONSE_TYPE = 'sync-worker:auth-response';
 const BOOTSTRAP_KEYS_TYPE = 'sync-worker:bootstrap-keys';
 const SSE_STATUS_TYPE = 'sync-worker:sse-status';
 
+const MAX_RECOVERY_ATTEMPTS = 2;
+
 let _sseStatusCallback = null;
 
 let workerInstance = null;
 let nextRequestId = 1;
-let localModulePromise = null;
 const pendingRequests = new Map();
 const requestQueue = [];
 let drainingQueue = false;
@@ -52,7 +52,7 @@ function resetWorkerInstance() {
       workerInstance.removeEventListener('messageerror', handleWorkerError);
       workerInstance.terminate();
     } catch {
-      // Ignore termination failures; the client will fall back cleanly.
+      // Ignore termination failures.
     }
   }
   workerInstance = null;
@@ -166,55 +166,6 @@ function deserializeWorkerError(error) {
   return reconstructed;
 }
 
-async function getLocalWorkerModule() {
-  if (!localModulePromise) {
-    localModulePromise = import('./worker/sync-worker.js');
-  }
-  return localModulePromise;
-}
-
-function primeRequestBaseUrl(payload) {
-  const backendUrl = String(payload?.options?.backendUrl || '').trim();
-  if (backendUrl) {
-    setBaseUrl(backendUrl);
-  }
-}
-
-async function invokeLocally(method, payload) {
-  primeRequestBaseUrl(payload);
-  const mod = await getLocalWorkerModule();
-  switch (method) {
-    case 'runSync':
-      return mod.runSync(
-        payload.ownerNpub,
-        payload.viewerNpub,
-        payload.onProgress,
-        payload.options,
-      );
-    case 'pullRecordsForFamilies':
-      return mod.pullRecordsForFamilies(
-        payload.ownerNpub,
-        payload.viewerNpub,
-        payload.families,
-        payload.options,
-        payload.onProgress,
-      );
-    case 'pruneOnLogin':
-      return mod.pruneOnLogin(
-        payload.viewerNpub,
-        payload.ownerNpub,
-        payload.options,
-      );
-    case 'checkStaleness':
-      return mod.checkStaleness(
-        payload.ownerNpub,
-        payload.options,
-      );
-    default:
-      throw new Error(`Unsupported sync worker method: ${method}`);
-  }
-}
-
 function syncKeysToWorker(worker) {
   if (!worker) return;
   try {
@@ -229,10 +180,18 @@ function syncKeysToWorker(worker) {
   }
 }
 
+/**
+ * Dispatch a method call to the sync worker. If postMessage fails (e.g. the
+ * worker crashed between ensureWorkerInstance and the send), reset the worker,
+ * create a new one, and retry — up to MAX_RECOVERY_ATTEMPTS times. If the
+ * worker cannot be created at all, reject immediately with a clear error.
+ */
 function invokeWithWorker(method, payload, onProgress) {
   const worker = ensureWorkerInstance();
   if (!worker) {
-    return invokeLocally(method, { ...payload, onProgress });
+    return Promise.reject(new Error(
+      'Sync worker unavailable: background sync requires Web Worker support. Pending writes are preserved locally and will sync when the worker recovers.',
+    ));
   }
   syncKeysToWorker(worker);
 
@@ -249,7 +208,46 @@ function invokeWithWorker(method, payload, onProgress) {
     } catch (error) {
       pendingRequests.delete(id);
       resetWorkerInstance();
-      invokeLocally(method, { ...payload, onProgress }).then(resolve, reject);
+
+      // Attempt recovery: recreate the worker and retry.
+      retryViaRecovery(method, payload, onProgress, 1).then(resolve, reject);
+    }
+  });
+}
+
+/**
+ * Attempt to recover the worker and retry the request.
+ * Gives up after MAX_RECOVERY_ATTEMPTS and rejects with an explicit error.
+ */
+function retryViaRecovery(method, payload, onProgress, attempt) {
+  if (attempt > MAX_RECOVERY_ATTEMPTS) {
+    return Promise.reject(new Error(
+      'Sync worker recovery failed after ' + MAX_RECOVERY_ATTEMPTS + ' attempts. Pending writes are preserved locally and will sync when the worker recovers.',
+    ));
+  }
+
+  const worker = ensureWorkerInstance();
+  if (!worker) {
+    return Promise.reject(new Error(
+      'Sync worker unavailable: could not recreate worker. Pending writes are preserved locally.',
+    ));
+  }
+  syncKeysToWorker(worker);
+
+  return new Promise((resolve, reject) => {
+    const id = nextRequestId++;
+    pendingRequests.set(id, { resolve, reject, onProgress });
+    try {
+      worker.postMessage({
+        type: REQUEST_TYPE,
+        id,
+        method,
+        payload,
+      });
+    } catch (error) {
+      pendingRequests.delete(id);
+      resetWorkerInstance();
+      retryViaRecovery(method, payload, onProgress, attempt + 1).then(resolve, reject);
     }
   });
 }
@@ -290,8 +288,18 @@ export function shutdownSyncWorker() {
 }
 
 /**
+ * Return the current health status of the sync worker.
+ * - 'healthy': worker is running
+ * - 'unavailable': no worker instance (not supported or not yet started)
+ */
+export function getWorkerStatus() {
+  if (workerInstance) return 'healthy';
+  return 'unavailable';
+}
+
+/**
  * Start an independent outbox flush timer in the worker.
- * The worker will flush pending writes every 5s on its own,
+ * The worker will flush pending writes every 2s on its own,
  * decoupling UI responsiveness from sync latency.
  */
 export function startWorkerFlushTimer(ownerNpub, backendUrl, workspaceDbKey) {
