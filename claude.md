@@ -125,6 +125,40 @@ unauthorized destructive git actions, hiding work in `git stash`, and leaving
 half-wired features that silently discarded user data. Follow them strictly.
 If a rule blocks you, stop and ask — do not invent your own exception.
 
+### Operating assumption: main is a shared multi-agent working surface
+
+Pete works on `main` directly with multiple concurrent agent sessions. You
+will never see the full picture of what other sessions are doing, have done,
+or intend to do. Because of this, the foundational stance for every agent in
+this repo is:
+
+**Every file you find — tracked, untracked, modified, committed, in any
+state — is presumed intentional and load-bearing. If it is here, it is
+meant to be here.**
+
+This assumption is stronger than "investigate before tidying". It means:
+
+- **Do not delete, revert, refactor, consolidate, reorganize, rename, or
+  "clean up" anything unless Pete has explicitly asked you to make that
+  specific change in the current conversation.**
+- **Do not remove "dead code", "unused imports", "orphaned helpers",
+  "duplicate logic", or anything that looks like scaffolding.** You cannot
+  tell the difference between dead code and another session's in-progress
+  wiring. Assume it is in-progress wiring.
+- **Do not "fix" files that are not directly part of the task you were
+  given.** Drive-by fixes, style cleanups, lint corrections, and
+  "while I was here" edits are all forbidden on this repo. If you notice a
+  real problem, surface it to Pete and let him decide.
+- **Do not touch files that look abandoned, broken, or inconsistent with
+  surrounding code.** They may be mid-flight work from another session. Ask.
+- **Do not assume your mental model of "how the code should look" matches
+  reality.** Other agents are actively reshaping this repo in parallel. Your
+  snapshot is stale the moment you took it.
+
+The operating rule is simple: **if Pete would have to tell you "put that
+back", you should not have touched it in the first place**. When Pete stops
+complaining about lost code, the rule is working.
+
 ### Git safety — never without explicit, in-conversation user approval
 
 Assume the user has *not* approved any of the following unless they told you to
@@ -177,23 +211,34 @@ op is **not** blanket approval for others.
   `bun run build` before committing UI work; include the rebuilt `dist/` in
   the same commit or a clearly-labeled follow-up.
 
-### Preservation — unknown state is evidence, not garbage
+### Preservation — enforce the operating assumption
 
-- **If you start a session and find modified or untracked files you did not
-  create, do not delete, revert, stash, or clean them. Read them. Ask the
-  user.** The default action on unexpected state is *investigate*, not
-  *tidy up*. The prior CRM loss in this repo happened because an agent treated
-  half-finished work as garbage.
-- **Dangling objects are evidence.** If `git fsck` shows dangling commits or
-  trees, treat them as potentially lost work. Pin them with
-  `git update-ref refs/recovery/<name> <sha>` before any destructive op. Never
-  run `git gc` or `git prune` yourself.
-- **Root-cause, don't paper over.** If a test fails, a build breaks, or a file
-  looks wrong, understand *why* before changing it. Never delete tests, comment
-  out code, add empty `try/catch`, or hardcode values to make errors go away.
-  The user values correct diagnosis over fast "fixes".
+This section enforces the "every file is presumed intentional" stance above.
+
+- **Modified or untracked files you did not create are another session's
+  work in progress.** Do not delete, revert, stash, clean, or "organize"
+  them. If they block your task, stop and ask Pete — he will tell you
+  whether to wait, work around, or involve the other session.
+- **Code that looks dead is not dead.** A helper with no visible consumers,
+  a translator with no sync-family entry, a state field with no UI, a Dexie
+  table with no table definition, a test for a function that "doesn't exist"
+  — every one of these has been, in this repo's history, the visible half
+  of an in-progress wiring that another agent or session was mid-completing.
+  Treat every such finding as a prompt to ask, not to delete. The prior CRM
+  loss happened because an agent deleted what looked like dead scaffolding.
+- **Dangling git objects are evidence.** If `git fsck` shows dangling commits
+  or trees, treat them as potentially lost work from another session. Pin
+  with `git update-ref refs/recovery/<name> <sha>` before any destructive op.
+  Never run `git gc` or `git prune` yourself.
+- **Root-cause, don't paper over.** If a test fails, a build breaks, or a
+  file looks wrong, understand *why* before changing anything. Never delete
+  tests, comment out code, add empty `try/catch`, or hardcode values to make
+  errors go away. Correct diagnosis beats fast "fixes" every time.
 - **Never edit `.gitignore` to hide dirty state.** If files are inconvenient,
   commit them or ask what they should be.
+- **Never rename, move, or reorganize files that are not the direct subject
+  of the task.** Other sessions may have open work referencing the current
+  paths.
 
 ### Planning and confirmation
 
