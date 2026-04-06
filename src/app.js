@@ -208,6 +208,7 @@ export function initApp() {
   const storeObj = {
     FAST_SYNC_MS: 15000,
     IDLE_SYNC_MS: 30000,
+    SSE_HEARTBEAT_CADENCE_MS: 120000,
     BACKGROUND_GROUP_REFRESH_MS: 5 * 60 * 1000,
     MAIN_FEED_PAGE_SIZE: 80,
     MESSAGE_PREVIEW_MAX_LINES: 15,
@@ -274,9 +275,7 @@ export function initApp() {
     backgroundSyncTimer: null,
     backgroundSyncInFlight: false,
     syncBackoffMs: 0,
-    sseConnected: false,
-    _sseConnecting: false,
-    _sseCallbackRegistered: false,
+    sseStatus: 'disconnected',
     catchUpSyncActive: false,
     hasBootstrappedUnreadTracking: false,
     visibilityHandler: null,
