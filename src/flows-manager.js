@@ -14,15 +14,23 @@ import {
   getApprovalById,
   getApprovalsByScope,
   getApprovalsByStatus,
+  getAllApprovals,
   upsertTask,
+  getTaskById,
+  getDocumentById,
+  getCommentsByTarget,
+  upsertComment,
   addPendingWrite,
 } from './db.js';
 import { outboundFlow } from './translators/flows.js';
 import { outboundApproval } from './translators/approvals.js';
 import { outboundTask } from './translators/tasks.js';
-import { toRaw } from './utils/state-helpers.js';
+import { outboundComment } from './translators/comments.js';
+import { recordFamilyHash } from './translators/chat.js';
+import { toRaw, parseMarkdownBlocks } from './utils/state-helpers.js';
 import { buildFirstStepDescription } from './task-flow-helpers.js';
 import { resolveArtifactRef } from './approval-helpers.js';
+import { commentBelongsToDocBlock } from './doc-comment-anchors.js';
 import { renderMarkdownToHtml } from './markdown.js';
 
 // ---------------------------------------------------------------------------
@@ -207,11 +215,7 @@ export const flowsManagerMixin = {
   async refreshApprovals() {
     const ownerNpub = this.workspaceOwnerNpub;
     if (!ownerNpub) return;
-    const allApprovals = await getApprovalsByStatus('pending');
-    const approved = await getApprovalsByStatus('approved');
-    const rejected = await getApprovalsByStatus('rejected');
-    const revision = await getApprovalsByStatus('needs_revision');
-    this.approvals = [...allApprovals, ...approved, ...rejected, ...revision];
+    this.approvals = await getAllApprovals();
   },
 
   // --- computed helpers ---
@@ -230,11 +234,13 @@ export const flowsManagerMixin = {
   },
 
   get approvalHistory() {
-    const scopeId = this.selectedBoardId;
     let list = this.approvals.filter((a) => a.record_state !== 'deleted');
-    if (scopeId) list = list.filter((a) => a.scope_id === scopeId);
+    if (this.approvalHistoryScope === 'scope') {
+      const scopeId = this.selectedBoardId;
+      if (scopeId) list = list.filter((a) => a.scope_id === scopeId);
+    }
     list.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
-    return list;
+    return list.slice(0, 100);
   },
 
   get filteredApprovalHistory() {
@@ -248,14 +254,55 @@ export const flowsManagerMixin = {
 
   // --- approval rendering helpers (used by the detail modal template) ---
 
+  /** Point-lookup linked task/doc names from Dexie and cache in approvalLinkedNames. */
+  async resolveApprovalLinkedNames(approval) {
+    if (!approval) return;
+    const names = { ...this.approvalLinkedNames };
+    const ids = new Set();
+
+    for (const taskId of (approval.task_ids || [])) {
+      if (!names[taskId]) ids.add(taskId);
+    }
+    for (const ref of (approval.artifact_refs || [])) {
+      if (ref.record_id && !names[ref.record_id]) ids.add(ref.record_id);
+    }
+    if (ids.size === 0) return;
+
+    const lookups = [...ids].map(async (id) => {
+      const task = await getTaskById(id);
+      if (task) {
+        names[id] = { title: task.title || 'Untitled task', state: task.state || 'unknown' };
+        return;
+      }
+      const doc = await getDocumentById(id);
+      if (doc) {
+        names[id] = { title: doc.title || 'Untitled document', type: 'document' };
+        return;
+      }
+      names[id] = { title: id.slice(0, 12) + '…', state: 'not found' };
+    });
+    await Promise.all(lookups);
+    this.approvalLinkedNames = names;
+  },
+
+  /** Get cached display name for a linked record. */
+  linkedName(id) {
+    return this.approvalLinkedNames[id] || null;
+  },
+
   approvalBriefHtml(approval) {
     return renderMarkdownToHtml(approval?.brief) || 'No brief provided.';
   },
 
   resolvedArtifacts(approval) {
-    return (approval?.artifact_refs || []).map((ref) =>
-      resolveArtifactRef(ref, this.tasks, this.documents),
-    );
+    return (approval?.artifact_refs || []).map((ref) => {
+      const cached = this.approvalLinkedNames[ref.record_id];
+      if (cached) {
+        const familyType = (ref.record_family_hash || '').split(':').pop();
+        return { ...ref, type: cached.type || familyType || 'unknown', title: cached.title, resolved: true };
+      }
+      return resolveArtifactRef(ref, this.tasks, this.documents);
+    });
   },
 
   navigateToArtifact(ref) {
@@ -286,6 +333,152 @@ export const flowsManagerMixin = {
     this.showApprovalDetail = false;
   },
 
+  // --- approval preview pane (desktop two-column) ---
+
+  /** Build a flat list of all linked items for the preview pane pagination. */
+  approvalPreviewItems(approval) {
+    const items = [];
+    for (const taskId of (approval?.task_ids || [])) {
+      const cached = this.approvalLinkedNames[taskId];
+      items.push({ id: taskId, type: 'task', title: cached?.title || taskId.slice(0, 12) + '…' });
+    }
+    for (const ref of (approval?.artifact_refs || [])) {
+      const familyType = (ref.record_family_hash || '').split(':').pop();
+      const cached = this.approvalLinkedNames[ref.record_id];
+      const type = cached?.type || familyType || 'unknown';
+      // Skip artifact refs that duplicate a task_id already listed
+      if (type === 'task' && (approval?.task_ids || []).includes(ref.record_id)) continue;
+      items.push({ id: ref.record_id, type, title: cached?.title || ref.record_id.slice(0, 12) + '…' });
+    }
+    return items;
+  },
+
+  /** Load a linked item into the preview pane by index. */
+  async loadApprovalPreview(approval, index) {
+    const items = this.approvalPreviewItems(approval);
+    if (!items.length) {
+      this.approvalPreviewRecord = null;
+      this.approvalPreviewComments = [];
+      return;
+    }
+    const clamped = Math.max(0, Math.min(index, items.length - 1));
+    this.approvalPreviewIndex = clamped;
+    const item = items[clamped];
+    if (!item) return;
+
+    let record = null;
+    let previewType = null;
+    if (item.type === 'task') {
+      record = await getTaskById(item.id);
+      if (record) previewType = 'task';
+    } else if (item.type === 'document') {
+      record = await getDocumentById(item.id);
+      if (record) previewType = 'document';
+    } else {
+      // Try task first, then doc
+      record = await getTaskById(item.id);
+      if (record) { previewType = 'task'; }
+      else {
+        record = await getDocumentById(item.id);
+        if (record) previewType = 'document';
+      }
+    }
+
+    this.approvalPreviewType = previewType;
+    this.approvalPreviewRecord = record;
+    this.approvalPreviewComments = [];
+    this.approvalPreviewCommentBody = '';
+
+    if (record) {
+      const comments = await getCommentsByTarget(record.record_id);
+      this.approvalPreviewComments = comments || [];
+    }
+  },
+
+  /** Parse preview content into blocks for line-anchored comments (documents only). */
+  get approvalPreviewBlocks() {
+    if (this.approvalPreviewType !== 'document') return [];
+    const content = this.approvalPreviewRecord?.content || '';
+    if (!content) return [];
+    return parseMarkdownBlocks(content);
+  },
+
+  /** Get root comments (not replies) anchored to a specific block. */
+  getPreviewCommentsForBlock(block) {
+    return this.approvalPreviewComments
+      .filter((c) => !c.parent_comment_id && c.record_state !== 'deleted' && commentBelongsToDocBlock(c, block))
+      .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+  },
+
+  /** Get comments not anchored to any block (legacy or general). */
+  get previewUnanchoredComments() {
+    const blocks = this.approvalPreviewBlocks;
+    return this.approvalPreviewComments
+      .filter((c) => !c.parent_comment_id && c.record_state !== 'deleted')
+      .filter((c) => !blocks.some((block) => commentBelongsToDocBlock(c, block)))
+      .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+  },
+
+  /** Start composing a comment anchored to a block. */
+  startPreviewBlockComment(block) {
+    this.approvalPreviewAnchorLine = block.start_line || 1;
+    this.approvalPreviewCommentBody = '';
+    // Focus the textarea after Alpine tick
+    this.$nextTick?.(() => {
+      const ta = document.querySelector('.approval-preview-comment-add textarea');
+      if (ta) ta.focus();
+    });
+  },
+
+  /** Add a comment to the currently previewed record. */
+  async addApprovalPreviewComment() {
+    const body = String(this.approvalPreviewCommentBody || '').trim();
+    const record = this.approvalPreviewRecord;
+    if (!body || !record || !this.session?.npub) return;
+
+    const now = new Date().toISOString();
+    const commentId = crypto.randomUUID();
+    const ownerNpub = this.workspaceOwnerNpub;
+    const targetFamilyHash = this.approvalPreviewType === 'document'
+      ? recordFamilyHash('document')
+      : recordFamilyHash('task');
+
+    const localRow = {
+      record_id: commentId,
+      owner_npub: ownerNpub,
+      target_record_id: record.record_id,
+      target_record_family_hash: targetFamilyHash,
+      parent_comment_id: null,
+      anchor_line_number: this.approvalPreviewAnchorLine || 1,
+      comment_status: 'open',
+      body,
+      attachments: [],
+      sender_npub: this.session.npub,
+      record_state: 'active',
+      version: 1,
+      created_at: now,
+      updated_at: now,
+    };
+
+    await upsertComment(localRow);
+    this.approvalPreviewComments = [...this.approvalPreviewComments, localRow];
+    this.approvalPreviewCommentBody = '';
+    this.approvalPreviewAnchorLine = null;
+
+    const envelope = await outboundComment({
+      ...localRow,
+      target_group_ids: toRaw(record.group_ids ?? []),
+      signature_npub: this.signingNpub,
+      write_group_ref: record.board_group_id || record.group_ids?.[0] || null,
+    });
+    await addPendingWrite({
+      record_id: commentId,
+      record_family_hash: envelope.record_family_hash,
+      envelope,
+    });
+    await this.flushAndBackgroundSync();
+  },
+
   // --- flow CRUD ---
 
   async createFlow({ title, description = '', steps = [], next_flow_id = null, scope_id = null, scope_l1_id = null, scope_l2_id = null, scope_l3_id = null, scope_l4_id = null, scope_l5_id = null, group_ids = [], write_group_ref = null }) {
@@ -298,12 +491,14 @@ export const flowsManagerMixin = {
     // Derive group_ids and shares from scope (same pattern as docs/tasks)
     let resolvedGroupIds = toRaw(group_ids);
     let shares = [];
+    let scopePolicyGroupIds = null;
     if (scope_id && typeof this.getScopeShareGroupIds === 'function') {
       const scope = this.scopesMap?.get(scope_id);
       if (scope) {
         const scopeGroupIds = this.getScopeShareGroupIds(scope);
         if (scopeGroupIds.length > 0) {
           resolvedGroupIds = scopeGroupIds;
+          scopePolicyGroupIds = scopeGroupIds;
           shares = typeof this.buildScopeDefaultShares === 'function'
             ? this.buildScopeDefaultShares(scopeGroupIds)
             : [];
@@ -324,6 +519,7 @@ export const flowsManagerMixin = {
       scope_l3_id,
       scope_l4_id,
       scope_l5_id,
+      scope_policy_group_ids: scopePolicyGroupIds,
       shares,
       group_ids: resolvedGroupIds,
       sync_status: 'pending',
@@ -358,21 +554,34 @@ export const flowsManagerMixin = {
 
     const nextVersion = (flow.version ?? 1) + 1;
 
-    // If scope changed, recompute group_ids and shares from new scope
     const effectiveScopeId = patch.scope_id !== undefined ? patch.scope_id : flow.scope_id;
     let resolvedGroupIds = toRaw(patch.group_ids ?? flow.group_ids ?? []);
     let resolvedShares = toRaw(patch.shares ?? flow.shares ?? []);
+    let scopePolicyGroupIds = toRaw(patch.scope_policy_group_ids ?? flow.scope_policy_group_ids ?? null);
     if (effectiveScopeId && typeof this.getScopeShareGroupIds === 'function') {
       const scope = this.scopesMap?.get(effectiveScopeId);
       if (scope) {
-        const scopeGroupIds = this.getScopeShareGroupIds(scope);
-        if (scopeGroupIds.length > 0) {
-          resolvedGroupIds = scopeGroupIds;
-          resolvedShares = typeof this.buildScopeDefaultShares === 'function'
-            ? this.buildScopeDefaultShares(scopeGroupIds)
-            : resolvedShares;
-        }
+        const patchedRecord = {
+          ...flow,
+          ...patch,
+          group_ids: resolvedGroupIds,
+          shares: resolvedShares,
+          scope_policy_group_ids: scopePolicyGroupIds,
+        };
+        const previousScopeGroupIds = patch.scope_id !== undefined && flow.scope_id && flow.scope_id !== effectiveScopeId
+          ? this.getResolvedScopePolicyGroupIds(flow.scope_id)
+          : [];
+        const rebuilt = this.buildScopedPolicyRepairPatch(patchedRecord, {
+          scopeId: effectiveScopeId,
+          previousScopeGroupIds,
+          fallbackPolicyGroupIds: flow.group_ids || [],
+        });
+        resolvedGroupIds = rebuilt.group_ids;
+        resolvedShares = rebuilt.shares;
+        scopePolicyGroupIds = rebuilt.scope_policy_group_ids;
       }
+    } else {
+      scopePolicyGroupIds = null;
     }
 
     const updated = toRaw({
@@ -380,6 +589,7 @@ export const flowsManagerMixin = {
       ...patch,
       group_ids: resolvedGroupIds,
       shares: resolvedShares,
+      scope_policy_group_ids: scopePolicyGroupIds,
       version: nextVersion,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
@@ -469,6 +679,7 @@ export const flowsManagerMixin = {
       scope_l3_id: flow.scope_l3_id || null,
       scope_l4_id: flow.scope_l4_id || null,
       scope_l5_id: flow.scope_l5_id || null,
+      scope_policy_group_ids: toRaw(flow.scope_policy_group_ids || null),
       shares: [],
       group_ids: toRaw(flow.group_ids || []),
       sync_status: 'pending',
@@ -564,6 +775,7 @@ export const flowsManagerMixin = {
       scope_l3_id: approval.scope_l3_id,
       scope_l4_id: approval.scope_l4_id,
       scope_l5_id: approval.scope_l5_id,
+      scope_policy_group_ids: toRaw(approval.scope_policy_group_ids || null),
       shares: [],
       group_ids: toRaw(approval.group_ids || []),
       sync_status: 'pending',
@@ -604,9 +816,36 @@ export const flowsManagerMixin = {
 
   async _patchApproval(approval, patch) {
     const nextVersion = (approval.version ?? 1) + 1;
+    const effectiveScopeId = patch.scope_id !== undefined ? patch.scope_id : approval.scope_id;
+    let resolvedGroupIds = toRaw(patch.group_ids ?? approval.group_ids ?? []);
+    let resolvedShares = toRaw(patch.shares ?? approval.shares ?? []);
+    let scopePolicyGroupIds = toRaw(patch.scope_policy_group_ids ?? approval.scope_policy_group_ids ?? null);
+    if (effectiveScopeId && typeof this.getScopeShareGroupIds === 'function') {
+      const rebuilt = this.buildScopedPolicyRepairPatch({
+        ...approval,
+        ...patch,
+        group_ids: resolvedGroupIds,
+        shares: resolvedShares,
+        scope_policy_group_ids: scopePolicyGroupIds,
+      }, {
+        scopeId: effectiveScopeId,
+        previousScopeGroupIds: patch.scope_id !== undefined && approval.scope_id && approval.scope_id !== effectiveScopeId
+          ? this.getResolvedScopePolicyGroupIds(approval.scope_id)
+          : [],
+        fallbackPolicyGroupIds: approval.group_ids || [],
+      });
+      resolvedGroupIds = rebuilt.group_ids;
+      resolvedShares = rebuilt.shares;
+      scopePolicyGroupIds = rebuilt.scope_policy_group_ids;
+    } else {
+      scopePolicyGroupIds = null;
+    }
     const updated = toRaw({
       ...approval,
       ...patch,
+      group_ids: resolvedGroupIds,
+      shares: resolvedShares,
+      scope_policy_group_ids: scopePolicyGroupIds,
       version: nextVersion,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
@@ -643,6 +882,23 @@ export const flowsManagerMixin = {
     const recordId = crypto.randomUUID();
     const ownerNpub = this.workspaceOwnerNpub;
 
+    let resolvedGroupIds = toRaw(group_ids);
+    let resolvedShares = [];
+    let scopePolicyGroupIds = null;
+    if (scope_id && typeof this.getScopeShareGroupIds === 'function') {
+      const scope = this.scopesMap?.get(scope_id);
+      if (scope) {
+        const scopeGroupIds = this.getScopeShareGroupIds(scope);
+        if (scopeGroupIds.length > 0) {
+          resolvedGroupIds = scopeGroupIds;
+          scopePolicyGroupIds = scopeGroupIds;
+          resolvedShares = typeof this.buildScopeDefaultShares === 'function'
+            ? this.buildScopeDefaultShares(scopeGroupIds)
+            : [];
+        }
+      }
+    }
+
     const localRow = {
       record_id: recordId,
       owner_npub: ownerNpub,
@@ -668,8 +924,9 @@ export const flowsManagerMixin = {
       scope_l3_id,
       scope_l4_id,
       scope_l5_id,
-      shares: [],
-      group_ids: toRaw(group_ids),
+      scope_policy_group_ids: scopePolicyGroupIds,
+      shares: resolvedShares,
+      group_ids: resolvedGroupIds,
       sync_status: 'pending',
       record_state: 'active',
       version: 1,
@@ -683,7 +940,7 @@ export const flowsManagerMixin = {
     const envelope = await outboundApproval({
       ...localRow,
       signature_npub: this.signingNpub,
-      write_group_ref: write_group_ref || group_ids?.[0] || null,
+      write_group_ref: write_group_ref || resolvedGroupIds?.[0] || null,
     });
 
     await addPendingWrite({

@@ -22,6 +22,8 @@ import {
   upsertDirectory,
   upsertChannel,
   upsertMessage,
+  upsertPerson,
+  upsertOrganisation,
   getCommentsByTarget,
   upsertComment,
 } from './db.js';
@@ -37,12 +39,17 @@ import {
   disconnectSSE,
   setSSEStatusCallback,
 } from './sync-worker-client.js';
+import { createNip98AuthHeader, createNip98AuthHeaderForSecret } from './auth/nostr.js';
+import { getActiveWorkspaceKeySecretForAuth } from './crypto/workspace-keys.js';
 import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
 import { outboundTask } from './translators/tasks.js';
 import { outboundDocument, outboundDirectory } from './translators/docs.js';
 import { outboundChannel, outboundChatMessage } from './translators/chat.js';
 import { outboundFlow } from './translators/flows.js';
+import { outboundPerson } from './translators/persons.js';
+import { outboundOrganisation } from './translators/organisations.js';
+import { decryptRecordPayload } from './translators/record-crypto.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import { outboundComment } from './translators/comments.js';
 
@@ -168,6 +175,10 @@ export const syncManagerMixin = {
         return this.scopes || [];
       case 'report':
         return this.reports || [];
+      case 'person':
+        return this.persons || [];
+      case 'organisation':
+        return this.organisations || [];
       default:
         return [];
     }
@@ -449,6 +460,30 @@ export const syncManagerMixin = {
       });
     }
 
+    if (familyId === 'person' || familyId === 'organisation') {
+      let writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      let groupIds = effectiveLocalRecord.group_ids ?? [];
+      // Fall back to workspace default group if the record has none
+      if (!writeGroupRef && typeof this.getWorkspaceSettingsGroupRef === 'function') {
+        writeGroupRef = this.getWorkspaceSettingsGroupRef();
+        if (writeGroupRef) groupIds = [writeGroupRef];
+      }
+      const shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
+        ? this.buildScopeDefaultShares(groupIds)
+        : (effectiveLocalRecord.shares || []);
+      const outbound = familyId === 'person' ? outboundPerson : outboundOrganisation;
+      return outbound({
+        ...effectiveLocalRecord,
+        owner_npub: ownerNpub,
+        group_ids: groupIds,
+        shares,
+        version,
+        previous_version: previousVersion,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : (writeGroupRef || null),
+      });
+    }
+
     throw new Error(`Force push is not implemented for ${this.getRecordStatusFamilyLabel(familyId)} yet.`);
   },
 
@@ -498,6 +533,19 @@ export const syncManagerMixin = {
       await upsertMessage(nextRecord);
       if (typeof this.patchMessageLocal === 'function') this.patchMessageLocal(nextRecord);
       else this.messages = this.messages.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
+    }
+
+    if (familyId === 'person') {
+      await upsertPerson(nextRecord);
+      this.persons = this.persons.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
+    }
+
+    if (familyId === 'organisation') {
+      await upsertOrganisation(nextRecord);
+      this.organisations = this.organisations.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
     }
   },
 
@@ -702,6 +750,99 @@ export const syncManagerMixin = {
     }
   },
 
+  // --- generic record version history ---
+
+  async openRecordVersionHistory({ familyId, recordId, label }) {
+    this.recordVersionModalOpen = true;
+    this.recordVersionFamilyId = String(familyId || '').trim();
+    this.recordVersionRecordId = String(recordId || '').trim();
+    this.recordVersionLabel = String(label || '').trim();
+    this.recordVersionHistory = [];
+    this.recordVersionLoading = true;
+    this.recordVersionError = null;
+    this.recordVersionSelectedIndex = -1;
+
+    try {
+      const ownerNpub = this.workspaceOwnerNpub || this.session?.npub;
+      if (!ownerNpub) {
+        this.recordVersionError = 'No workspace owner configured.';
+        return;
+      }
+      const result = await fetchRecordHistory({
+        record_id: this.recordVersionRecordId,
+        owner_npub: ownerNpub,
+        viewer_npub: this.session?.npub,
+      });
+      const versions = Array.isArray(result?.versions) ? result.versions : [];
+      const decoded = [];
+      for (const ver of versions) {
+        try {
+          const payload = await decryptRecordPayload(ver);
+          const data = payload.data ?? payload;
+          decoded.push({
+            version: ver.version ?? 0,
+            updated_at: ver.updated_at || '',
+            data,
+          });
+        } catch {
+          decoded.push({
+            version: ver.version ?? 0,
+            updated_at: ver.updated_at || '',
+            data: null,
+            decryptError: true,
+          });
+        }
+      }
+      decoded.sort((a, b) => b.version - a.version);
+      this.recordVersionHistory = decoded;
+      if (decoded.length > 0) this.recordVersionSelectedIndex = 0;
+    } catch (error) {
+      this.recordVersionError = error?.status === 404
+        ? 'Version history not available — Tower may need redeployment.'
+        : `Failed to load version history: ${error?.message || error}`;
+    } finally {
+      this.recordVersionLoading = false;
+    }
+  },
+
+  closeRecordVersionHistory() {
+    this.recordVersionModalOpen = false;
+    this.recordVersionFamilyId = '';
+    this.recordVersionRecordId = '';
+    this.recordVersionLabel = '';
+    this.recordVersionHistory = [];
+    this.recordVersionLoading = false;
+    this.recordVersionError = null;
+    this.recordVersionSelectedIndex = -1;
+  },
+
+  selectRecordVersion(index) {
+    if (index < 0 || index >= this.recordVersionHistory.length) return;
+    this.recordVersionSelectedIndex = index;
+  },
+
+  get selectedRecordVersion() {
+    if (this.recordVersionSelectedIndex < 0) return null;
+    return this.recordVersionHistory[this.recordVersionSelectedIndex] ?? null;
+  },
+
+  formatRecordVersionField(key, value) {
+    if (value === null || value === undefined) return '—';
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '(empty)';
+      return JSON.stringify(value, null, 2);
+    }
+    if (typeof value === 'object') return JSON.stringify(value, null, 2);
+    return String(value);
+  },
+
+  copyRecordVersionJson() {
+    const ver = this.selectedRecordVersion;
+    if (!ver?.data) return;
+    navigator.clipboard.writeText(JSON.stringify(ver.data, null, 2)).catch(() => {});
+  },
+
   // --- sync quarantine ---
 
   get hasSyncQuarantine() {
@@ -736,16 +877,30 @@ export const syncManagerMixin = {
     return this.sseStatus === 'connected';
   },
 
-  connectSSEStream() {
-    const token = String(this.superbasedTokenInput || '').trim();
-    if (!this.session?.npub || !this.backendUrl || !token) return;
+  async connectSSEStream() {
+    if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) return;
+
+    // Mint a NIP-98 auth token for the stream URL (Tower verifies NIP-98, not the bootstrap connection token)
+    const streamUrl = `${this.backendUrl}/api/v4/workspaces/${this.workspaceOwnerNpub}/stream`;
+    let authHeader;
+    try {
+      const workspaceSecret = getActiveWorkspaceKeySecretForAuth();
+      authHeader = workspaceSecret
+        ? await createNip98AuthHeaderForSecret(streamUrl, 'GET', null, workspaceSecret)
+        : await createNip98AuthHeader(streamUrl, 'GET', null);
+    } catch (err) {
+      flightDeckLog('SSE auth failed — cannot mint NIP-98 token', err);
+      return;
+    }
+    // Extract the base64 token from "Nostr <base64>"
+    const nip98Token = authHeader.replace(/^Nostr\s+/i, '');
 
     setSSEStatusCallback((message) => this.handleSSEStatus(message));
     connectSSE(
       this.workspaceOwnerNpub,
       this.session.npub,
       this.backendUrl,
-      token,
+      nip98Token,
       this.workspaceDbKey,
     );
   },
@@ -896,10 +1051,78 @@ export const syncManagerMixin = {
     Object.assign(this.syncSession, updates);
   },
 
+  buildSyncFamilyProgressRows(families = SYNC_FAMILY_OPTIONS) {
+    return (families || []).map((family) => ({
+      id: family.id,
+      hash: family.hash,
+      label: family.label,
+      status: 'pending',
+    }));
+  },
+
+  initializeSyncFamilyProgress(families = SYNC_FAMILY_OPTIONS) {
+    this.syncFamilyProgress = this.buildSyncFamilyProgressRows(families);
+  },
+
+  markSyncFamilyProgress(familyHash, status) {
+    const targetHash = String(familyHash || '').trim();
+    if (!targetHash || !Array.isArray(this.syncFamilyProgress) || this.syncFamilyProgress.length === 0) return;
+    this.syncFamilyProgress = this.syncFamilyProgress.map((family) => {
+      if (family.hash !== targetHash) return family;
+      return { ...family, status };
+    });
+  },
+
+  syncProgressActiveFamilyLabel() {
+    return this.syncFamilyProgress.find((family) => family.status === 'active')?.label || '';
+  },
+
+  handleSyncProgressUpdate(update = {}) {
+    this.updateSyncSession(update);
+    if (!this.syncSession.manual || !Array.isArray(this.syncFamilyProgress) || this.syncFamilyProgress.length === 0) return;
+
+    const phase = String(update.phase || '').trim();
+    const familyHash = String(update.currentFamilyHash || '').trim();
+
+    if (phase === 'pulling' && familyHash) {
+      const isCompleted = Number.isFinite(update.completedFamilies)
+        && Number.isFinite(update.totalFamilies)
+        && update.completedFamilies > 0
+        && update.completedFamilies <= update.totalFamilies
+        && update.currentFamily;
+      this.markSyncFamilyProgress(familyHash, isCompleted ? 'done' : 'active');
+      if (!isCompleted) return;
+    }
+
+    if (phase === 'applying' || phase === 'done') {
+      this.syncFamilyProgress = this.syncFamilyProgress.map((family) => (
+        family.status === 'active' ? { ...family, status: 'done' } : family
+      ));
+    }
+
+    if (phase === 'error') {
+      this.syncFamilyProgress = this.syncFamilyProgress.map((family) => (
+        family.status === 'active' ? { ...family, status: 'error' } : family
+      ));
+    }
+  },
+
+  openSyncProgressModal() {
+    this.showSyncProgressModal = true;
+  },
+
+  closeSyncProgressModal() {
+    if (this.syncSession.phase === 'checking' || this.syncSession.phase === 'pushing' || this.syncSession.phase === 'pulling' || this.syncSession.phase === 'applying') {
+      return;
+    }
+    this.showSyncProgressModal = false;
+  },
+
   syncProgressLabel() {
     const s = this.syncSession;
-    if (s.phase === 'idle' || s.phase === 'done') return '';
-    if (s.phase === 'checking') return 'Checking...';
+    if (s.phase === 'idle') return '';
+    if (s.phase === 'done') return s.manual ? 'Full sync complete.' : '';
+    if (s.phase === 'checking') return s.manual ? 'Starting full sync...' : 'Checking...';
     if (s.phase === 'pushing') return `Pushing ${s.pushed} / ${s.pushTotal}`;
     if (s.phase === 'pulling') {
       if (s.heartbeat && s.totalFamilies === 0) return 'Up to date';
@@ -932,25 +1155,46 @@ export const syncManagerMixin = {
 
   // --- sync execution ---
 
-  async performSync({ silent = false, showBusy = !silent } = {}) {
+  async performSync({ silent = false, showBusy = !silent, forceFull = false, manual = false } = {}) {
     if (!this.session?.npub || !this.backendUrl) {
       if (!silent) this.error = 'Configure settings first';
       return { pushed: 0, pulled: 0 };
     }
 
     if (!silent) this.error = null;
+    if (manual) {
+      this.initializeSyncFamilyProgress();
+      this.openSyncProgressModal();
+    }
     if (showBusy) this.syncing = true;
-    this.updateSyncSession({ state: 'syncing', phase: 'checking', startedAt: Date.now(), error: null, pushed: 0, pushTotal: 0, pulled: 0, completedFamilies: 0, totalFamilies: 0, currentFamily: null });
+    this.updateSyncSession({
+      state: 'syncing',
+      phase: 'checking',
+      startedAt: Date.now(),
+      finishedAt: null,
+      error: null,
+      manual,
+      heartbeat: false,
+      pushed: 0,
+      pushTotal: 0,
+      pulled: 0,
+      completedFamilies: 0,
+      totalFamilies: 0,
+      currentFamily: null,
+      currentFamilyHash: null,
+    });
     flightDeckLog('info', 'sync', 'sync started', {
       silent,
       showBusy,
+      forceFull,
+      manual,
       backendUrl: this.backendUrl,
       ownerNpub: this.workspaceOwnerNpub || null,
       viewerNpub: this.session?.npub || null,
     });
 
     const onProgress = (update) => {
-      this.updateSyncSession(update);
+      this.handleSyncProgressUpdate(update);
     };
 
     let result = null;
@@ -979,11 +1223,12 @@ export const syncManagerMixin = {
         authMethod: this.session?.method || '',
         backendUrl: this.backendUrl,
         workspaceDbKey: this.workspaceDbKey,
+        forceFull,
       });
       const hasRemoteDataChanges = (result?.pulled ?? 0) > 0 || (result?.pruned ?? 0) > 0;
       refreshUnread = refreshUnread || hasRemoteDataChanges;
       refreshRecentChanges = refreshRecentChanges || (hasRemoteDataChanges && this.navSection === 'status');
-      this.updateSyncSession({ phase: 'applying' });
+      this.handleSyncProgressUpdate({ phase: 'applying' });
       if (!silent || hasRemoteDataChanges) {
         await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
         await this.ensureTaskFamilyBackfill();
@@ -992,11 +1237,11 @@ export const syncManagerMixin = {
           await this.loadDocComments(this.selectedDocId);
         }
       }
-      this.updateSyncSession({ phase: 'done', finishedAt: Date.now(), lastSuccessAt: Date.now(), state: 'synced' });
+      this.handleSyncProgressUpdate({ phase: 'done', finishedAt: Date.now(), lastSuccessAt: Date.now(), state: 'synced' });
     } catch (error) {
       syncError = error;
       if (!silent) this.error = error.message;
-      this.updateSyncSession({ phase: 'error', state: 'error', error: error.message, finishedAt: Date.now() });
+      this.handleSyncProgressUpdate({ phase: 'error', state: 'error', error: error.message, finishedAt: Date.now() });
       flightDeckLog('error', 'sync', 'sync failed', {
         backendUrl: this.backendUrl,
         ownerNpub: this.workspaceOwnerNpub || null,
@@ -1023,8 +1268,9 @@ export const syncManagerMixin = {
   },
 
   async syncNow() {
+    this.showAvatarMenu = false;
     try {
-      await this.performSync({ silent: false });
+      await this.performSync({ silent: false, forceFull: true, manual: true });
     } catch (e) {
       // performSync already surfaced the error state
     }

@@ -20,8 +20,15 @@ import { peopleProfilesManagerMixin } from './people-profiles-manager.js';
 import { connectSettingsManagerMixin } from './connect-settings-manager.js';
 import { unreadStoreMixin } from './unread-store.js';
 import { flowsManagerMixin } from './flows-manager.js';
+import { personsManagerMixin } from './persons-manager.js';
 import { createShellState } from './shell-state.js';
 import { getTaskFlowInfo, buildAttachFlowPatch, buildDetachFlowPatch } from './task-flow-helpers.js';
+import {
+  buildPredecessorTaskSuggestions,
+  describePredecessorRelationship,
+  getTaskPredecessorReferenceRows,
+  normalizePredecessorTaskIds,
+} from './task-predecessor-helpers.js';
 import {
   taskBoardStateMixin,
   dedupeTasksByRecordId,
@@ -224,7 +231,7 @@ export function initApp() {
     get signingNpub() {
       return getActiveWorkspaceKeyNpub() || this.session?.npub || null;
     },
-    settingsTab: 'workspace',
+    settingsTab: 'connection',
     navSection: initialRoute.section,
     calendarViews: CALENDAR_VIEWS,
     calendarView: 'month',
@@ -235,6 +242,7 @@ export function initApp() {
     popstateHandler: null,
     showAvatarMenu: false,
     showChannelSettingsModal: false,
+    channelDeleteConfirmArmed: false,
     presetConnecting: false,
     // Connect modal (two-step)
     showConnectModal: false,
@@ -262,14 +270,19 @@ export function initApp() {
       startedAt: null,
       finishedAt: null,
       lastSuccessAt: null,
+      manual: false,
       currentFamily: null,
+      currentFamilyHash: null,
       completedFamilies: 0,
       totalFamilies: 0,
       pushed: 0,
       pushTotal: 0,
       pulled: 0,
+      heartbeat: false,
       error: null,
     },
+    syncFamilyProgress: [],
+    showSyncProgressModal: false,
     hasForcedInitialBackfill: false,
     hasForcedTaskFamilyBackfill: false,
     backgroundSyncTimer: null,
@@ -337,6 +350,44 @@ export function initApp() {
     approvalDecisionNote: '',
     showApprovalHistory: false,
     approvalHistoryFilter: '',
+    approvalHistoryScope: 'all',
+    approvalLinkedNames: {},
+    approvalPreviewIndex: 0,
+    approvalPreviewType: null,
+    approvalPreviewRecord: null,
+    approvalPreviewComments: [],
+    approvalPreviewCommentBody: '',
+    approvalPreviewAnchorLine: null,
+    approvalPreviewExpanded: false,
+    recordVersionModalOpen: false,
+    recordVersionFamilyId: '',
+    recordVersionRecordId: '',
+    recordVersionLabel: '',
+    recordVersionHistory: [],
+    recordVersionLoading: false,
+    recordVersionError: null,
+    recordVersionSelectedIndex: -1,
+    persons: [],
+    organisations: [],
+    peopleSubTab: 'people',
+    editingPersonId: null,
+    editingOrgId: null,
+    showPersonEditor: false,
+    showOrgEditor: false,
+    personFilter: '',
+    orgFilter: '',
+    personFormTitle: '',
+    personFormDescription: '',
+    personFormTags: '',
+    personFormContacts: [],
+    orgFormTitle: '',
+    orgFormDescription: '',
+    orgFormPositioning: '',
+    orgFormTags: '',
+    orgFormContacts: [],
+    linkPickerOpen: false,
+    linkPickerTarget: null,
+    linkPickerRole: '',
     activeTaskId: null,
     tasks: [],
     schedules: [],
@@ -360,6 +411,8 @@ export function initApp() {
     copiedTaskLinkId: null,
     editingTask: null,
     taskAssigneeQuery: '',
+    predecessorTaskQuery: '',
+    showPredecessorTaskPicker: false,
     taskScopeCascadePending: false,
     taskScopeCascadeMessage: '',
     showNewScheduleModal: false,
@@ -388,6 +441,7 @@ export function initApp() {
     scopesLoaded: false,
     scopePickerQuery: '',
     showScopePicker: false,
+    showChannelScopePicker: false,
     scopePickerTarget: null, // 'task' or record family being scoped
     newScopeTitle: '',
     newScopeDescription: '',
@@ -402,6 +456,22 @@ export function initApp() {
     editingScopeDescription: '',
     editingScopeAssignedGroupIds: [],
     editingScopeGroupQuery: '',
+    scopePolicyRepairBusy: false,
+    scopePolicyRepairSummary: '',
+    scopeRepairSession: {
+      phase: 'idle',
+      startedAt: null,
+      finishedAt: null,
+      currentFamily: null,
+      completedFamilies: 0,
+      totalFamilies: 0,
+      processedRecords: 0,
+      rewrittenRecords: 0,
+      totalRecords: 0,
+      error: null,
+    },
+    scopeRepairProgress: [],
+    showScopeRepairModal: false,
     // @mentions
     mentionActive: false,
     mentionQuery: '',
@@ -1642,10 +1712,15 @@ export function initApp() {
 
     openChannelSettings() {
       if (!this.selectedChannel) return;
+      this.closeScopePicker();
+      this.closeChannelScopePicker();
+      this.channelDeleteConfirmArmed = false;
       this.showChannelSettingsModal = true;
     },
 
     closeChannelSettings() {
+      this.closeChannelScopePicker();
+      this.channelDeleteConfirmArmed = false;
       this.showChannelSettingsModal = false;
     },
 
@@ -2401,10 +2476,13 @@ export function initApp() {
         if (!hasStoredRefs && this.editingTask.description) {
           this.editingTask.references = parseReferencesFromDescription(this.editingTask.description);
         }
+        this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
       }
       if (this.editingTask?.assigned_to_npub) {
         this.resolveChatProfile(this.editingTask.assigned_to_npub);
       }
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
       this.showTaskDetail = Boolean(selectedTask);
       this.taskDescriptionEditing = !this.editingTask?.description;
     },
@@ -2444,8 +2522,22 @@ export function initApp() {
     },
 
     openNewScheduleModal() {
-      this.resetNewScheduleForm();
-      this.showNewScheduleModal = true;
+      this.error = null;
+      try {
+        this.cancelEditSchedule();
+        this.resetNewScheduleForm();
+        this.showNewScheduleModal = true;
+        if (typeof window !== 'undefined') {
+          window.requestAnimationFrame(() => {
+            const input = document.querySelector('[data-new-schedule-title-input]');
+            input?.focus();
+            input?.select?.();
+          });
+        }
+      } catch (error) {
+        this.showNewScheduleModal = false;
+        this.error = error?.message || 'Failed to open the new schedule form.';
+      }
     },
 
     closeNewScheduleModal() {
@@ -2728,6 +2820,7 @@ export function initApp() {
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
+        predecessor_task_ids: null,
         flow_id: flowLinkage.flow_id,
         flow_run_id: flowLinkage.flow_run_id,
         flow_step: flowLinkage.flow_step,
@@ -2888,6 +2981,7 @@ export function initApp() {
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
+        predecessor_task_ids: null,
         references: [],
         sync_status: 'pending',
         record_state: 'active',
@@ -2965,7 +3059,8 @@ export function initApp() {
         references: descRefs,
         flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
       });
-      const updated = toRaw({
+      const predecessorTaskIds = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
+      const draft = toRaw({
         ...task,
         title: this.editingTask.title,
         description: this.editingTask.description,
@@ -2973,6 +3068,7 @@ export function initApp() {
         priority: this.editingTask.priority,
         scheduled_for: this.editingTask.scheduled_for,
         tags: this.editingTask.tags,
+        predecessor_task_ids: predecessorTaskIds.length > 0 ? predecessorTaskIds : null,
         assigned_to_npub: this.editingTask.assigned_to_npub ?? null,
         scope_id: this.editingTask.scope_id ?? null,
         scope_l1_id: this.editingTask.scope_l1_id ?? null,
@@ -2980,10 +3076,42 @@ export function initApp() {
         scope_l3_id: this.editingTask.scope_l3_id ?? null,
         scope_l4_id: this.editingTask.scope_l4_id ?? null,
         scope_l5_id: this.editingTask.scope_l5_id ?? null,
+        scope_policy_group_ids: this.editingTask.scope_policy_group_ids ?? task.scope_policy_group_ids ?? null,
+        board_group_id: this.editingTask.board_group_id ?? task.board_group_id ?? null,
+        shares: toRaw(this.editingTask.shares ?? task.shares ?? []),
+        group_ids: toRaw(this.editingTask.group_ids ?? task.group_ids ?? []),
         flow_id: flowLinkage.flow_id ?? task.flow_id ?? null,
         flow_run_id: flowLinkage.flow_run_id ?? task.flow_run_id ?? null,
         flow_step: flowLinkage.flow_step ?? task.flow_step ?? null,
         references: flowLinkage.references,
+      });
+      const scopePolicyPatch = draft.scope_id
+        ? (() => {
+          const previousScopeGroupIds = draft.scope_id !== task.scope_id && task.scope_id
+            ? this.getResolvedScopePolicyGroupIds(task.scope_id)
+            : [];
+          if (
+            draft.scope_id !== task.scope_id
+            || this.shouldRefreshScopedPolicy(draft, draft.scope_id, { allowLegacyGroupFallback: true })
+          ) {
+            return this.buildScopedPolicyRepairPatch(draft, {
+              scopeId: draft.scope_id,
+              previousScopeGroupIds,
+              includeBoardGroupId: true,
+              fallbackPolicyGroupIds: task.group_ids || [],
+            });
+          }
+          return {
+            scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(draft.scope_id),
+            board_group_id: draft.board_group_id || draft.group_ids?.[0] || null,
+          };
+        })()
+        : {
+          scope_policy_group_ids: null,
+        };
+      const updated = toRaw({
+        ...draft,
+        ...scopePolicyPatch,
         version: nextVersion,
         sync_status: 'pending',
         updated_at: new Date().toISOString(),
@@ -2992,6 +3120,7 @@ export function initApp() {
       await upsertTask(updated);
       this.tasks = this.tasks.map(t => t.record_id === updated.record_id ? updated : t);
       this.editingTask = { ...updated };
+      this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
       if (this.activeTaskId === updated.record_id) this.scheduleStorageImageHydration();
 
       await this.queueTaskWrite(updated, task);
@@ -3084,11 +3213,14 @@ export function initApp() {
         if (!hasStoredRefs && this.editingTask.description) {
           this.editingTask.references = parseReferencesFromDescription(this.editingTask.description);
         }
+        this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
       }
       if (this.editingTask?.assigned_to_npub) {
         this.resolveChatProfile(this.editingTask.assigned_to_npub);
       }
       this.taskAssigneeQuery = '';
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
       this.showTaskDetail = true;
       this.taskDescriptionEditing = !this.editingTask?.description;
       this.newSubtaskTitle = '';
@@ -3105,6 +3237,8 @@ export function initApp() {
       this.activeTaskId = null;
       this.editingTask = null;
       this.taskAssigneeQuery = '';
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
       this.taskScopeCascadePending = false;
       this.taskScopeCascadeMessage = '';
       this.taskComments = [];
@@ -3162,6 +3296,76 @@ export function initApp() {
       if (this.taskAssigneeQuery.startsWith('npub1') && this.taskAssigneeQuery.length >= 20) {
         this.resolveChatProfile(this.taskAssigneeQuery);
       }
+    },
+
+    getEditingTaskPredecessorRows() {
+      return getTaskPredecessorReferenceRows(this.editingTask, this.tasks);
+    },
+
+    getPredecessorTaskScopeMeta(task) {
+      if (!task?.record_id || task.missing_predecessor) return 'Missing task';
+      const relationship = describePredecessorRelationship(this.editingTask, task, this.scopesMap);
+      const scopeId = task.scope_id
+        ?? task.scope_l5_id
+        ?? task.scope_l4_id
+        ?? task.scope_l3_id
+        ?? task.scope_l2_id
+        ?? task.scope_l1_id
+        ?? null;
+      const scopeLabel = scopeId ? this.getScopeBreadcrumb(scopeId) : 'Unscoped';
+      return `${relationship} • ${scopeLabel}`;
+    },
+
+    get predecessorTaskSuggestions() {
+      if (!this.editingTask) return [];
+      return buildPredecessorTaskSuggestions(this.tasks, this.editingTask, this.scopesMap, {
+        query: this.predecessorTaskQuery,
+        excludedIds: this.editingTask.predecessor_task_ids || [],
+        scopeLabelForTask: (task) => {
+          const scopeId = task.scope_id
+            ?? task.scope_l5_id
+            ?? task.scope_l4_id
+            ?? task.scope_l3_id
+            ?? task.scope_l2_id
+            ?? task.scope_l1_id
+            ?? null;
+          return scopeId ? this.getScopeBreadcrumb(scopeId) : 'Unscoped';
+        },
+      });
+    },
+
+    openPredecessorTaskPicker() {
+      this.showPredecessorTaskPicker = true;
+    },
+
+    closePredecessorTaskPicker() {
+      this.showPredecessorTaskPicker = false;
+      this.predecessorTaskQuery = '';
+    },
+
+    handlePredecessorTaskInput(value) {
+      this.predecessorTaskQuery = value;
+      this.showPredecessorTaskPicker = true;
+    },
+
+    async addEditingTaskPredecessor(taskId) {
+      if (!this.editingTask || !this.session?.npub) return;
+      this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds([
+        ...(this.editingTask.predecessor_task_ids || []),
+        taskId,
+      ], this.editingTask.record_id);
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
+      await this.saveEditingTask();
+    },
+
+    async removeEditingTaskPredecessor(taskId) {
+      if (!this.editingTask || !this.session?.npub) return;
+      this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(
+        (this.editingTask.predecessor_task_ids || []).filter((candidate) => candidate !== taskId),
+        this.editingTask.record_id,
+      );
+      await this.saveEditingTask();
     },
 
     async assignEditingTask(npub) {
@@ -3582,6 +3786,7 @@ export function initApp() {
             scope_l3_id: item.scope_l3_id ?? null,
             scope_l4_id: item.scope_l4_id ?? null,
             scope_l5_id: item.scope_l5_id ?? null,
+            scope_policy_group_ids: item.scope_policy_group_ids ?? null,
             shares,
             version: nextVersion,
             previous_version: item.version ?? 1,
@@ -3858,6 +4063,9 @@ export function initApp() {
         ...scopeAssignment,
         shares,
         group_ids: groupIds,
+        scope_policy_group_ids: scopeAssignment.scope_id
+          ? this.getResolvedScopePolicyGroupIds(scopeAssignment.scope_id)
+          : null,
         sync_status: 'pending',
         version: nextVersion,
         updated_at: new Date().toISOString(),
@@ -3886,6 +4094,7 @@ export function initApp() {
           scope_l3_id: updated.scope_l3_id ?? null,
           scope_l4_id: updated.scope_l4_id ?? null,
           scope_l5_id: updated.scope_l5_id ?? null,
+          scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
@@ -3904,6 +4113,7 @@ export function initApp() {
           scope_l3_id: updated.scope_l3_id ?? null,
           scope_l4_id: updated.scope_l4_id ?? null,
           scope_l5_id: updated.scope_l5_id ?? null,
+          scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
@@ -4542,6 +4752,7 @@ export function initApp() {
     sectionLiveQueryMixin,
     unreadStoreMixin,
     flowsManagerMixin,
+    personsManagerMixin,
   );
 
   Alpine.store('chat', storeObj);

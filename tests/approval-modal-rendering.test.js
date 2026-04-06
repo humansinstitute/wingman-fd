@@ -47,12 +47,8 @@ describe('linked tasks are clickable in approval modal', () => {
     expect(modalHtml).toMatch(/approval-linked-tasks[\s\S]*?@click/);
   });
 
-  it('clicking a task navigates via navigateToLinkedTask', () => {
-    expect(modalHtml).toMatch(/approval-linked-tasks[\s\S]*?navigateToLinkedTask/);
-  });
-
-  it('clicking a task closes the approval modal', () => {
-    expect(modalHtml).toMatch(/approval-linked-tasks[\s\S]*?showApprovalDetail\s*=\s*false/);
+  it('clicking a task loads it into the preview pane', () => {
+    expect(modalHtml).toMatch(/approval-linked-tasks[\s\S]*?loadApprovalPreview/);
   });
 });
 
@@ -89,8 +85,8 @@ describe('artifacts section resolves and is clickable', () => {
     expect(modalHtml).toMatch(/approval-artifact-list[\s\S]*?@click/);
   });
 
-  it('clicking an artifact navigates via navigateToArtifact', () => {
-    expect(modalHtml).toMatch(/approval-artifact-list[\s\S]*?navigateToArtifact/);
+  it('clicking an artifact loads it into the preview pane', () => {
+    expect(modalHtml).toMatch(/approval-artifact-list[\s\S]*?loadApprovalPreview/);
   });
 });
 

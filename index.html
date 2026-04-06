@@ -25,6 +25,87 @@
       </div>
     </div>
   </template>
+  <div
+    class="sync-progress-modal-overlay"
+    x-show="$store.chat.showSyncProgressModal"
+    x-cloak
+    @click.self="$store.chat.closeSyncProgressModal()"
+  >
+    <div class="sync-progress-modal">
+      <div class="sync-progress-modal-header">
+        <div>
+          <p class="sync-progress-modal-eyebrow">Manual Sync</p>
+          <h2>Full workspace sync</h2>
+        </div>
+        <button
+          type="button"
+          class="modal-close"
+          x-show="['idle', 'done', 'error'].includes($store.chat.syncSession.phase)"
+          @click="$store.chat.closeSyncProgressModal()"
+        >&times;</button>
+      </div>
+      <p class="sync-progress-modal-copy" x-text="$store.chat.syncProgressLabel() || 'Preparing full sync…'"></p>
+      <div class="sync-progress-bar-track sync-progress-modal-bar">
+        <div class="sync-progress-bar-fill" :style="'width:' + $store.chat.syncProgressPercent() + '%'"></div>
+      </div>
+      <div class="sync-progress-modal-meta">
+        <span x-text="`${$store.chat.syncSession.completedFamilies} / ${$store.chat.syncSession.totalFamilies || $store.chat.syncFamilyProgress.length} families complete`"></span>
+        <span x-show="$store.chat.syncSession.pushTotal > 0" x-text="`Pushed ${$store.chat.syncSession.pushed} / ${$store.chat.syncSession.pushTotal}`"></span>
+      </div>
+      <div class="sync-progress-family-list">
+        <template x-for="family in $store.chat.syncFamilyProgress" :key="family.id">
+          <div class="sync-progress-family-row" :data-status="family.status">
+            <span class="sync-progress-family-icon" aria-hidden="true"></span>
+            <span class="sync-progress-family-label" x-text="family.label"></span>
+            <span class="sync-progress-family-state" x-text="family.status === 'done' ? 'Done' : family.status === 'active' ? 'Syncing' : family.status === 'error' ? 'Error' : 'Pending'"></span>
+          </div>
+        </template>
+      </div>
+      <p class="sync-error-text" x-show="$store.chat.syncSession.error" x-text="$store.chat.syncSession.error"></p>
+    </div>
+  </div>
+  <div
+    class="sync-progress-modal-overlay"
+    x-show="$store.chat.showScopeRepairModal"
+    x-cloak
+    @click.self="$store.chat.closeScopeRepairModal()"
+  >
+    <div class="sync-progress-modal">
+      <div class="sync-progress-modal-header">
+        <div>
+          <p class="sync-progress-modal-eyebrow">Scope Crypto</p>
+          <h2>Reapply group crypto</h2>
+        </div>
+        <button
+          type="button"
+          class="modal-close"
+          x-show="['idle', 'done', 'error'].includes($store.chat.scopeRepairSession.phase)"
+          @click="$store.chat.closeScopeRepairModal()"
+        >&times;</button>
+      </div>
+      <p class="sync-progress-modal-copy" x-text="$store.chat.scopeRepairProgressLabel() || 'Preparing scope rewrite…'"></p>
+      <div class="sync-progress-bar-track sync-progress-modal-bar">
+        <div class="sync-progress-bar-fill" :style="'width:' + $store.chat.scopeRepairProgressPercent() + '%'"></div>
+      </div>
+      <div class="sync-progress-modal-meta">
+        <span x-text="`${$store.chat.scopeRepairSession.completedFamilies} / ${$store.chat.scopeRepairSession.totalFamilies || $store.chat.scopeRepairProgress.length} families complete`"></span>
+        <span x-text="`${$store.chat.scopeRepairSession.rewrittenRecords} rewritten / ${$store.chat.scopeRepairSession.totalRecords} live records`"></span>
+      </div>
+      <div class="sync-progress-family-list">
+        <template x-for="family in $store.chat.scopeRepairProgress" :key="family.id">
+          <div class="sync-progress-family-row" :data-status="family.status">
+            <span class="sync-progress-family-icon" aria-hidden="true"></span>
+            <div class="sync-progress-family-copy">
+              <span class="sync-progress-family-label" x-text="family.label"></span>
+              <small class="sync-progress-family-meta" x-text="`${family.rewritten} rewritten / ${family.total} live`"></small>
+            </div>
+            <span class="sync-progress-family-state" x-text="family.status === 'done' ? 'Done' : family.status === 'active' ? 'Rewriting' : family.status === 'error' ? 'Error' : 'Pending'"></span>
+          </div>
+        </template>
+      </div>
+      <p class="sync-error-text" x-show="$store.chat.scopeRepairSession.error" x-text="$store.chat.scopeRepairSession.error"></p>
+    </div>
+  </div>
   <main class="app-shell">
     <template x-if="$store.chat.error">
       <div class="error-bar" x-text="$store.chat.error"></div>
@@ -156,7 +237,7 @@
     <p class="hero-hint" x-show="!$store.chat.isLoggedIn">Sign in above to open Wingman and start chatting.</p>
 
     <div
-      class="modal-overlay"
+      class="modal-overlay modal-overlay-opaque"
       x-show="$store.chat.showWorkspaceBootstrapModal"
       x-cloak
       @click.self="$store.chat.closeWorkspaceBootstrapModal()"
@@ -188,7 +269,7 @@
 
     <!-- Connect modal (two-step: host then workspace) -->
     <div
-      class="modal-overlay"
+      class="modal-overlay modal-overlay-opaque"
       x-show="$store.chat.showConnectModal"
       x-cloak
       @click.self="$store.chat.closeConnectModal()"
@@ -1241,7 +1322,7 @@
                       <button
                         type="button"
                         @click="if ($store.chat.editingTask?.record_id) $store.chat.openRecordStatusModal({ familyId: 'task', recordId: $store.chat.editingTask.record_id, label: $store.chat.editingTask.title || 'Task' }); open = false"
-                      >Check status</button>
+                      >Versioning</button>
                       <button type="button" class="doc-actions-delete" @click="if($store.chat.editingTask?.record_id && confirm('Delete this task?')) $store.chat.deleteTask($store.chat.editingTask.record_id); open = false">Delete task</button>
                     </div>
                   </div>
@@ -1393,6 +1474,58 @@
                     <div class="task-inline-status" x-show="$store.chat.taskScopeCascadePending || $store.chat.taskScopeCascadeMessage">
                       <span class="task-inline-spinner" x-show="$store.chat.taskScopeCascadePending" aria-hidden="true"></span>
                       <span x-text="$store.chat.taskScopeCascadePending ? 'Updating subtasks and permissions…' : $store.chat.taskScopeCascadeMessage"></span>
+                    </div>
+                  </div>
+
+                  <div class="task-field task-field-wide" x-data="{ predIdx: 0 }" @click.outside="$store.chat.closePredecessorTaskPicker()">
+                    <label class="task-field-label">Predecessors</label>
+                    <div class="task-predecessor-list" x-show="$store.chat.getEditingTaskPredecessorRows().length > 0">
+                      <template x-for="pred in $store.chat.getEditingTaskPredecessorRows()" :key="pred.record_id">
+                        <div class="task-predecessor-row">
+                          <button
+                            type="button"
+                            class="task-predecessor-link"
+                            @click="if (!pred.missing_predecessor) $store.chat.openTaskDetail(pred.record_id)"
+                            :disabled="pred.missing_predecessor"
+                          >
+                            <span class="task-predecessor-title" x-text="pred.title || pred.record_id"></span>
+                            <span class="task-predecessor-meta" x-text="$store.chat.getPredecessorTaskScopeMeta(pred)"></span>
+                          </button>
+                          <button type="button" class="task-inline-clear-btn" @click.stop="$store.chat.removeEditingTaskPredecessor(pred.record_id)">Remove</button>
+                        </div>
+                      </template>
+                    </div>
+                    <div class="scope-typeahead-wrapper">
+                      <input
+                        type="text"
+                        x-model="$store.chat.predecessorTaskQuery"
+                        placeholder="Type to add predecessor tasks from the same scope tree..."
+                        @focus="$store.chat.openPredecessorTaskPicker(); predIdx = 0"
+                        @input="$store.chat.handlePredecessorTaskInput($event.target.value); predIdx = 0"
+                        @keydown.escape="$store.chat.closePredecessorTaskPicker()"
+                        @keydown.arrow-down.prevent="predIdx = Math.min(predIdx + 1, $store.chat.predecessorTaskSuggestions.length - 1)"
+                        @keydown.arrow-up.prevent="predIdx = Math.max(predIdx - 1, 0)"
+                        @keydown.enter.prevent="if ($store.chat.predecessorTaskSuggestions[predIdx]) $store.chat.addEditingTaskPredecessor($store.chat.predecessorTaskSuggestions[predIdx].record_id)"
+                      />
+                      <ul class="scope-typeahead-results task-predecessor-results" x-show="$store.chat.showPredecessorTaskPicker && $store.chat.predecessorTaskSuggestions.length > 0" x-cloak>
+                        <template x-for="(item, idx) in $store.chat.predecessorTaskSuggestions" :key="item.record_id">
+                          <li
+                            class="scope-typeahead-option task-predecessor-option"
+                            :class="{ 'scope-typeahead-active': idx === predIdx }"
+                            @click="$store.chat.addEditingTaskPredecessor(item.record_id)"
+                            @mouseenter="predIdx = idx"
+                          >
+                            <span class="task-predecessor-option-copy">
+                              <strong x-text="item.title || item.record_id"></strong>
+                              <small x-text="$store.chat.getPredecessorTaskScopeMeta(item)"></small>
+                            </span>
+                            <span class="badge" :class="`state-${item.state || 'new'}`" x-text="$store.chat.formatState(item.state || 'new')"></span>
+                          </li>
+                        </template>
+                      </ul>
+                      <div class="scope-typeahead-empty" x-show="$store.chat.showPredecessorTaskPicker && $store.chat.predecessorTaskSuggestions.length === 0">
+                        No matching tasks found.
+                      </div>
                     </div>
                   </div>
 
@@ -2918,243 +3051,251 @@
         </template>
 
         <template x-if="$store.chat.navSection === 'schedules'">
-          <div class="schedules-section">
-          <div class="schedules-header">
-            <div>
-              <h2>Schedules</h2>
-              <p class="schedules-subtitle">Recurring windows that can trigger routine work and wake-time prompts.</p>
-            </div>
-            <button type="button" class="schedule-primary-btn schedule-create-open-btn" @click="$store.chat.openNewScheduleModal()">+ New Schedule</button>
-          </div>
+          <div>
+            <div class="schedules-section">
+              <div class="schedules-header">
+                <div>
+                  <h2>Schedules</h2>
+                  <p class="schedules-subtitle">Recurring windows that can trigger routine work and wake-time prompts.</p>
+                </div>
+                <button
+                  type="button"
+                  class="btn-primary schedule-create-open-btn"
+                  :class="{ 'schedule-create-open-btn-active': $store.chat.showNewScheduleModal }"
+                  :aria-expanded="$store.chat.showNewScheduleModal"
+                  @click.stop.prevent="$store.chat.openNewScheduleModal()"
+                >New schedule</button>
+              </div>
 
-          <p class="error-text" x-show="$store.chat.error" x-text="$store.chat.error"></p>
+              <p class="error-text" x-show="$store.chat.error" x-text="$store.chat.error"></p>
 
-          <div class="scope-empty" x-show="$store.chat.schedules.length === 0">
-            <p>No schedules yet. Create one from the button above.</p>
-          </div>
+              <div class="scope-empty" x-show="$store.chat.schedules.length === 0">
+                <p>No schedules yet. Create one from the button above.</p>
+              </div>
 
-          <div class="schedule-list" x-show="$store.chat.schedules.length > 0">
-            <template x-for="schedule in $store.chat.schedules" :key="schedule.record_id">
-              <div class="schedule-card">
-                <template x-if="$store.chat.editingScheduleId !== schedule.record_id">
-                  <div class="schedule-card-body">
-                    <div class="schedule-card-main">
-                      <div class="schedule-card-title-row">
-                        <h3 x-text="schedule.title || 'Untitled schedule'"></h3>
-                        <span class="badge" :class="schedule.active ? 'state-done' : 'state-new'" x-text="schedule.active ? 'Active' : 'Paused'"></span>
-                      </div>
-                      <p class="schedule-card-meta">
-                        <span x-text="$store.chat.formatScheduleDays(schedule.days)"></span>
-                        <span>•</span>
-                        <span x-text="`${schedule.time_start || '??:??'}-${schedule.time_end || '??:??'}`"></span>
-                        <span>•</span>
-                        <span x-text="schedule.timezone || 'Australia/Perth'"></span>
-                        <span>•</span>
-                        <span x-text="schedule.repeat || 'daily'"></span>
-                        <template x-if="schedule.assigned_group_id">
-                          <span>
-                            • Group:
-                            <strong x-text="$store.chat.getScheduleAssignedGroupLabel(schedule.assigned_group_id)"></strong>
-                          </span>
-                        </template>
-                      </p>
-                      <p x-show="schedule.description" x-text="schedule.description"></p>
-                      <p class="schedule-card-meta" x-show="schedule.last_run">
-                        Last run: <span x-text="new Date(schedule.last_run).toLocaleString()"></span>
-                      </p>
-                    </div>
-                    <div class="schedule-card-actions">
-                      <button type="button" class="scope-action-btn" @click="$store.chat.toggleSchedule(schedule.record_id)" x-text="schedule.active ? 'Pause' : 'Resume'"></button>
-                      <button type="button" class="scope-action-btn" @click="$store.chat.startEditSchedule(schedule.record_id)">Edit</button>
-                      <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this schedule?')) $store.chat.deleteSchedule(schedule.record_id)">Delete</button>
-                    </div>
-                  </div>
-                </template>
-                <template x-if="$store.chat.editingScheduleId === schedule.record_id && $store.chat.editingScheduleDraft">
-                  <div class="schedule-edit-form">
-                    <div class="schedule-grid">
-                      <div class="scope-field">
-                        <label class="scope-field-label">Title</label>
-                        <input type="text" x-model="$store.chat.editingScheduleDraft.title" />
-                      </div>
-                      <div class="scope-field">
-                        <label class="scope-field-label">Timezone</label>
-                        <input type="text" x-model="$store.chat.editingScheduleDraft.timezone" />
-                      </div>
-                      <div class="scope-field">
-                        <label class="scope-field-label">Start</label>
-                        <input type="time" x-model="$store.chat.editingScheduleDraft.time_start" />
-                      </div>
-                      <div class="scope-field">
-                        <label class="scope-field-label">End</label>
-                        <input type="time" x-model="$store.chat.editingScheduleDraft.time_end" />
-                      </div>
-                      <div class="scope-field">
-                        <label class="scope-field-label">Repeat</label>
-                        <select x-model="$store.chat.editingScheduleDraft.repeat">
-                          <option value="daily">Daily</option>
-                          <option value="weekly">Weekly</option>
-                          <option value="once">Once</option>
-                        </select>
-                      </div>
-                      <div class="scope-field schedule-field-wide">
-                        <label class="scope-field-label">Group</label>
-                        <template x-if="$store.chat.editingScheduleDraft.assigned_group_id">
-                          <div class="schedule-group-selected">
-                            <div class="docs-share-suggestion-copy">
-                              <span class="new-channel-profile-name" x-text="$store.chat.getScheduleAssignedGroupLabel($store.chat.editingScheduleDraft.assigned_group_id)"></span>
-                              <small x-text="$store.chat.editingScheduleDraft.assigned_group_id"></small>
-                            </div>
-                            <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearEditingScheduleGroup()">Clear</button>
+              <div class="schedule-list" x-show="$store.chat.schedules.length > 0">
+                <template x-for="schedule in $store.chat.schedules" :key="schedule.record_id">
+                  <div class="schedule-card">
+                    <template x-if="$store.chat.editingScheduleId !== schedule.record_id">
+                      <div class="schedule-card-body">
+                        <div class="schedule-card-main">
+                          <div class="schedule-card-title-row">
+                            <h3 x-text="schedule.title || 'Untitled schedule'"></h3>
+                            <span class="badge" :class="schedule.active ? 'state-done' : 'state-new'" x-text="schedule.active ? 'Active' : 'Paused'"></span>
                           </div>
-                        </template>
-                        <input
-                          type="text"
-                          x-model="$store.chat.editingScheduleGroupQuery"
-                          @input="$store.chat.handleEditingScheduleGroupInput($event.target.value)"
-                          placeholder="Type a group name"
-                        />
-                        <ul class="docs-share-suggestions" x-show="$store.chat.editingScheduleGroupSuggestions.length > 0">
-                          <template x-for="group in $store.chat.editingScheduleGroupSuggestions" :key="`schedule-edit-group-${group.groupId}`">
-                            <li>
-                              <button type="button" class="docs-share-suggestion" @click="$store.chat.assignEditingScheduleGroup(group.groupId)">
-                                <span class="docs-share-suggestion-copy">
-                                  <strong x-text="group.label"></strong>
-                                  <small x-text="group.subtitle"></small>
-                                </span>
-                              </button>
-                            </li>
-                          </template>
-                        </ul>
-                      </div>
-                      <div class="scope-field">
-                        <label class="scope-field-label">Last Run</label>
-                        <input type="text" x-model="$store.chat.editingScheduleDraft.last_run" placeholder="ISO timestamp or blank" />
-                      </div>
-                      <div class="scope-field">
-                        <label class="scope-field-label">Active</label>
-                        <label class="schedule-active-toggle">
-                          <input type="checkbox" x-model="$store.chat.editingScheduleDraft.active" />
-                          <span x-text="$store.chat.editingScheduleDraft.active ? 'Active' : 'Paused'"></span>
-                        </label>
-                      </div>
-                      <div class="scope-field schedule-field-wide">
-                        <label class="scope-field-label">Description</label>
-                        <textarea x-model="$store.chat.editingScheduleDraft.description" rows="3"></textarea>
-                      </div>
-                      <div class="scope-field schedule-field-wide">
-                        <label class="scope-field-label">Days</label>
-                        <div class="schedule-days">
-                          <template x-for="day in $store.chat.weekdayOptions" :key="`edit-${day}`">
-                            <button
-                              type="button"
-                              class="tag-chip"
-                              :class="{ 'tag-chip-active': ($store.chat.editingScheduleDraft.days || []).includes(day) }"
-                              @click="$store.chat.toggleEditingScheduleDay(day)"
-                              x-text="day"
-                            ></button>
-                          </template>
+                          <p class="schedule-card-meta">
+                            <span x-text="$store.chat.formatScheduleDays(schedule.days)"></span>
+                            <span>•</span>
+                            <span x-text="`${schedule.time_start || '??:??'}-${schedule.time_end || '??:??'}`"></span>
+                            <span>•</span>
+                            <span x-text="schedule.timezone || 'Australia/Perth'"></span>
+                            <span>•</span>
+                            <span x-text="schedule.repeat || 'daily'"></span>
+                            <template x-if="schedule.assigned_group_id">
+                              <span>
+                                • Group:
+                                <strong x-text="$store.chat.getScheduleAssignedGroupLabel(schedule.assigned_group_id)"></strong>
+                              </span>
+                            </template>
+                          </p>
+                          <p x-show="schedule.description" x-text="schedule.description"></p>
+                          <p class="schedule-card-meta" x-show="schedule.last_run">
+                            Last run: <span x-text="new Date(schedule.last_run).toLocaleString()"></span>
+                          </p>
+                        </div>
+                        <div class="schedule-card-actions">
+                          <button type="button" class="scope-action-btn" @click="$store.chat.toggleSchedule(schedule.record_id)" x-text="schedule.active ? 'Pause' : 'Resume'"></button>
+                          <button type="button" class="scope-action-btn" @click="$store.chat.startEditSchedule(schedule.record_id)">Edit</button>
+                          <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this schedule?')) $store.chat.deleteSchedule(schedule.record_id)">Delete</button>
                         </div>
                       </div>
-                    </div>
-                    <div class="scope-new-actions">
-                      <button type="button" class="scope-save-btn schedule-primary-btn" @click="$store.chat.saveEditingSchedule()">Save</button>
-                      <button type="button" class="scope-cancel-btn" @click="$store.chat.cancelEditSchedule()">Cancel</button>
-                    </div>
+                    </template>
+                    <template x-if="$store.chat.editingScheduleId === schedule.record_id && $store.chat.editingScheduleDraft">
+                      <div class="schedule-edit-form">
+                        <div class="schedule-grid">
+                          <div class="scope-field">
+                            <label class="scope-field-label">Title</label>
+                            <input type="text" x-model="$store.chat.editingScheduleDraft.title" />
+                          </div>
+                          <div class="scope-field">
+                            <label class="scope-field-label">Timezone</label>
+                            <input type="text" x-model="$store.chat.editingScheduleDraft.timezone" />
+                          </div>
+                          <div class="scope-field">
+                            <label class="scope-field-label">Start</label>
+                            <input type="time" x-model="$store.chat.editingScheduleDraft.time_start" />
+                          </div>
+                          <div class="scope-field">
+                            <label class="scope-field-label">End</label>
+                            <input type="time" x-model="$store.chat.editingScheduleDraft.time_end" />
+                          </div>
+                          <div class="scope-field">
+                            <label class="scope-field-label">Repeat</label>
+                            <select x-model="$store.chat.editingScheduleDraft.repeat">
+                              <option value="daily">Daily</option>
+                              <option value="weekly">Weekly</option>
+                              <option value="once">Once</option>
+                            </select>
+                          </div>
+                          <div class="scope-field schedule-field-wide">
+                            <label class="scope-field-label">Group</label>
+                            <template x-if="$store.chat.editingScheduleDraft.assigned_group_id">
+                              <div class="schedule-group-selected">
+                                <div class="docs-share-suggestion-copy">
+                                  <span class="new-channel-profile-name" x-text="$store.chat.getScheduleAssignedGroupLabel($store.chat.editingScheduleDraft.assigned_group_id)"></span>
+                                  <small x-text="$store.chat.editingScheduleDraft.assigned_group_id"></small>
+                                </div>
+                                <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearEditingScheduleGroup()">Clear</button>
+                              </div>
+                            </template>
+                            <input
+                              type="text"
+                              x-model="$store.chat.editingScheduleGroupQuery"
+                              @input="$store.chat.handleEditingScheduleGroupInput($event.target.value)"
+                              placeholder="Type a group name"
+                            />
+                            <ul class="docs-share-suggestions" x-show="$store.chat.editingScheduleGroupSuggestions.length > 0">
+                              <template x-for="group in $store.chat.editingScheduleGroupSuggestions" :key="`schedule-edit-group-${group.groupId}`">
+                                <li>
+                                  <button type="button" class="docs-share-suggestion" @click="$store.chat.assignEditingScheduleGroup(group.groupId)">
+                                    <span class="docs-share-suggestion-copy">
+                                      <strong x-text="group.label"></strong>
+                                      <small x-text="group.subtitle"></small>
+                                    </span>
+                                  </button>
+                                </li>
+                              </template>
+                            </ul>
+                          </div>
+                          <div class="scope-field">
+                            <label class="scope-field-label">Last Run</label>
+                            <input type="text" x-model="$store.chat.editingScheduleDraft.last_run" placeholder="ISO timestamp or blank" />
+                          </div>
+                          <div class="scope-field">
+                            <label class="scope-field-label">Active</label>
+                            <label class="schedule-active-toggle">
+                              <input type="checkbox" x-model="$store.chat.editingScheduleDraft.active" />
+                              <span x-text="$store.chat.editingScheduleDraft.active ? 'Active' : 'Paused'"></span>
+                            </label>
+                          </div>
+                          <div class="scope-field schedule-field-wide">
+                            <label class="scope-field-label">Description</label>
+                            <textarea x-model="$store.chat.editingScheduleDraft.description" rows="3"></textarea>
+                          </div>
+                          <div class="scope-field schedule-field-wide">
+                            <label class="scope-field-label">Days</label>
+                            <div class="schedule-days">
+                              <template x-for="day in $store.chat.weekdayOptions" :key="`edit-${day}`">
+                                <button
+                                  type="button"
+                                  class="tag-chip"
+                                  :class="{ 'tag-chip-active': ($store.chat.editingScheduleDraft.days || []).includes(day) }"
+                                  @click="$store.chat.toggleEditingScheduleDay(day)"
+                                  x-text="day"
+                                ></button>
+                              </template>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="scope-new-actions">
+                          <button type="button" class="scope-save-btn schedule-primary-btn" @click="$store.chat.saveEditingSchedule()">Save</button>
+                          <button type="button" class="scope-cancel-btn" @click="$store.chat.cancelEditSchedule()">Cancel</button>
+                        </div>
+                      </div>
+                    </template>
                   </div>
                 </template>
               </div>
-            </template>
-          </div>
-        </div>
+            </div>
 
-        <div class="doc-modal-backdrop" x-show="$store.chat.showNewScheduleModal" x-cloak @click.self="$store.chat.closeNewScheduleModal()">
-          <div class="doc-modal-card schedule-modal">
-            <button class="modal-close" type="button" @click="$store.chat.closeNewScheduleModal()">&times;</button>
-            <h3>New Schedule</h3>
-            <p class="schedules-subtitle">Recurring windows that can trigger routine work and wake-time prompts.</p>
-            <p class="error-text" x-show="$store.chat.error" x-text="$store.chat.error"></p>
-            <form class="schedule-create-form" @submit.prevent="$store.chat.addSchedule()">
-              <div class="schedule-grid">
-                <div class="scope-field">
-                  <label class="scope-field-label">Title</label>
-                  <input type="text" x-model="$store.chat.newScheduleTitle" placeholder="Daily wrap-up" required />
-                </div>
-                <div class="scope-field">
-                  <label class="scope-field-label">Timezone</label>
-                  <input type="text" x-model="$store.chat.newScheduleTimezone" placeholder="Australia/Perth" />
-                </div>
-                <div class="scope-field">
-                  <label class="scope-field-label">Start</label>
-                  <input type="time" x-model="$store.chat.newScheduleStart" required />
-                </div>
-                <div class="scope-field">
-                  <label class="scope-field-label">End</label>
-                  <input type="time" x-model="$store.chat.newScheduleEnd" required />
-                </div>
-                <div class="scope-field">
-                  <label class="scope-field-label">Repeat</label>
-                  <select x-model="$store.chat.newScheduleRepeat">
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="once">Once</option>
-                  </select>
-                </div>
-                <div class="scope-field schedule-field-wide">
-                  <label class="scope-field-label">Group</label>
-                  <template x-if="$store.chat.newScheduleAssignedGroupId">
-                    <div class="schedule-group-selected">
-                      <div class="docs-share-suggestion-copy">
-                        <span class="new-channel-profile-name" x-text="$store.chat.getScheduleAssignedGroupLabel($store.chat.newScheduleAssignedGroupId)"></span>
-                        <small x-text="$store.chat.newScheduleAssignedGroupId"></small>
-                      </div>
-                      <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearNewScheduleGroup()">Clear</button>
+            <div class="doc-modal-backdrop" x-show="$store.chat.showNewScheduleModal" x-cloak @click.self="$store.chat.closeNewScheduleModal()">
+              <div class="doc-modal-card schedule-modal">
+                <button class="modal-close" type="button" @click="$store.chat.closeNewScheduleModal()">&times;</button>
+                <h3>New Schedule</h3>
+                <p class="schedules-subtitle">Recurring windows that can trigger routine work and wake-time prompts.</p>
+                <p class="error-text" x-show="$store.chat.error" x-text="$store.chat.error"></p>
+                <form class="schedule-create-form" @submit.prevent="$store.chat.addSchedule()">
+                  <div class="schedule-grid">
+                    <div class="scope-field">
+                      <label class="scope-field-label">Title</label>
+                      <input type="text" x-model="$store.chat.newScheduleTitle" placeholder="Daily wrap-up" required data-new-schedule-title-input />
                     </div>
-                  </template>
-                  <input
-                    type="text"
-                    x-model="$store.chat.newScheduleGroupQuery"
-                    @input="$store.chat.handleNewScheduleGroupInput($event.target.value)"
-                    placeholder="Type a group name"
-                  />
-                  <ul class="docs-share-suggestions" x-show="$store.chat.newScheduleGroupSuggestions.length > 0">
-                    <template x-for="group in $store.chat.newScheduleGroupSuggestions" :key="`schedule-new-group-${group.groupId}`">
-                      <li>
-                        <button type="button" class="docs-share-suggestion" @click="$store.chat.assignNewScheduleGroup(group.groupId)">
-                          <span class="docs-share-suggestion-copy">
-                            <strong x-text="group.label"></strong>
-                            <small x-text="group.subtitle"></small>
-                          </span>
-                        </button>
-                      </li>
-                    </template>
-                  </ul>
-                </div>
-                <div class="scope-field schedule-field-wide">
-                  <label class="scope-field-label">Description</label>
-                  <textarea x-model="$store.chat.newScheduleDescription" placeholder="Optional detail..." rows="3"></textarea>
-                </div>
-                <div class="scope-field schedule-field-wide">
-                  <label class="scope-field-label">Days</label>
-                  <div class="schedule-days">
-                    <template x-for="day in $store.chat.weekdayOptions" :key="`new-${day}`">
-                      <button
-                        type="button"
-                        class="tag-chip"
-                        :class="{ 'tag-chip-active': $store.chat.newScheduleDays.includes(day) }"
-                        @click="$store.chat.toggleNewScheduleDay(day)"
-                        x-text="day"
-                      ></button>
-                    </template>
+                    <div class="scope-field">
+                      <label class="scope-field-label">Timezone</label>
+                      <input type="text" x-model="$store.chat.newScheduleTimezone" placeholder="Australia/Perth" />
+                    </div>
+                    <div class="scope-field">
+                      <label class="scope-field-label">Start</label>
+                      <input type="time" x-model="$store.chat.newScheduleStart" required />
+                    </div>
+                    <div class="scope-field">
+                      <label class="scope-field-label">End</label>
+                      <input type="time" x-model="$store.chat.newScheduleEnd" required />
+                    </div>
+                    <div class="scope-field">
+                      <label class="scope-field-label">Repeat</label>
+                      <select x-model="$store.chat.newScheduleRepeat">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="once">Once</option>
+                      </select>
+                    </div>
+                    <div class="scope-field schedule-field-wide">
+                      <label class="scope-field-label">Group</label>
+                      <template x-if="$store.chat.newScheduleAssignedGroupId">
+                        <div class="schedule-group-selected">
+                          <div class="docs-share-suggestion-copy">
+                            <span class="new-channel-profile-name" x-text="$store.chat.getScheduleAssignedGroupLabel($store.chat.newScheduleAssignedGroupId)"></span>
+                            <small x-text="$store.chat.newScheduleAssignedGroupId"></small>
+                          </div>
+                          <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearNewScheduleGroup()">Clear</button>
+                        </div>
+                      </template>
+                      <input
+                        type="text"
+                        x-model="$store.chat.newScheduleGroupQuery"
+                        @input="$store.chat.handleNewScheduleGroupInput($event.target.value)"
+                        placeholder="Type a group name"
+                      />
+                      <ul class="docs-share-suggestions" x-show="$store.chat.newScheduleGroupSuggestions.length > 0">
+                        <template x-for="group in $store.chat.newScheduleGroupSuggestions" :key="`schedule-new-group-${group.groupId}`">
+                          <li>
+                            <button type="button" class="docs-share-suggestion" @click="$store.chat.assignNewScheduleGroup(group.groupId)">
+                              <span class="docs-share-suggestion-copy">
+                                <strong x-text="group.label"></strong>
+                                <small x-text="group.subtitle"></small>
+                              </span>
+                            </button>
+                          </li>
+                        </template>
+                      </ul>
+                    </div>
+                    <div class="scope-field schedule-field-wide">
+                      <label class="scope-field-label">Description</label>
+                      <textarea x-model="$store.chat.newScheduleDescription" placeholder="Optional detail..." rows="3"></textarea>
+                    </div>
+                    <div class="scope-field schedule-field-wide">
+                      <label class="scope-field-label">Days</label>
+                      <div class="schedule-days">
+                        <template x-for="day in $store.chat.weekdayOptions" :key="`new-${day}`">
+                          <button
+                            type="button"
+                            class="tag-chip"
+                            :class="{ 'tag-chip-active': $store.chat.newScheduleDays.includes(day) }"
+                            @click="$store.chat.toggleNewScheduleDay(day)"
+                            x-text="day"
+                          ></button>
+                        </template>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                  <div class="scope-new-actions schedule-modal-actions">
+                    <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeNewScheduleModal()">Cancel</button>
+                    <button type="submit" class="scope-save-btn schedule-primary-btn">Create schedule</button>
+                  </div>
+                </form>
               </div>
-              <div class="scope-new-actions schedule-modal-actions">
-                <button type="button" class="scope-cancel-btn schedule-cancel-btn" @click="$store.chat.closeNewScheduleModal()">Cancel</button>
-                <button type="submit" class="scope-save-btn schedule-primary-btn">Create schedule</button>
-              </div>
-            </form>
-          </div>
+            </div>
           </div>
         </template>
 
@@ -3288,11 +3429,13 @@
           </div>
 
           <!-- New scope form -->
-          <div class="scope-create-bar">
+          <div class="scope-create-bar" x-show="$store.chat.canAdminWorkspace">
             <div class="scope-create-actions">
               <button type="button" class="scope-add-btn" @click="$store.chat.startNewScope('l1')">+ Scope</button>
             </div>
           </div>
+          <p class="scope-edit-hint scope-section-notice" x-show="$store.chat.scopePolicyRepairBusy">Reapplying group crypto across this scope…</p>
+          <p class="settings-success scope-section-notice" x-show="$store.chat.scopePolicyRepairSummary" x-text="$store.chat.scopePolicyRepairSummary"></p>
 
           <!-- Scope layout: cards + tree nav -->
           <div class="scope-layout" x-show="$store.chat.scopeTree.length > 0">
@@ -3300,13 +3443,22 @@
             <!-- Cards area (5-level nested) -->
             <div class="scope-cards">
               <template x-for="s1 in $store.chat.scopeTree" :key="s1.record_id">
-                <div class="scope-card" :data-level="s1.level" :id="'scope-' + s1.record_id" x-data="{ expanded: false }">
+                <div class="scope-card" :data-level="s1.level" :id="'scope-' + s1.record_id" x-data="{ expanded: false, actionsOpen: false }">
                   <div class="scope-card-header">
                     <span class="scope-level-badge" :data-level="s1.level" x-text="$store.chat.scopeLevelLabel(s1.level)"></span>
-                    <div class="scope-card-actions">
-                      <button x-show="parseInt(s1.level.slice(1)) < 5" type="button" class="scope-action-btn" @click="$store.chat.startNewScope('l' + (parseInt(s1.level.slice(1)) + 1), s1.record_id)" title="Add child">+ Child</button>
-                      <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s1.record_id)" title="Edit">Edit</button>
-                      <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s1.record_id)" title="Delete">Delete</button>
+                    <div class="scope-card-actions" x-show="$store.chat.canAdminWorkspace">
+                      <div class="doc-actions-menu scope-actions-menu" @click.outside="actionsOpen = false">
+                        <button type="button" class="doc-actions-toggle" title="Scope actions" aria-label="Scope actions" @click.stop="actionsOpen = !actionsOpen">
+                          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+                        </button>
+                        <div class="doc-actions-popover" x-show="actionsOpen" x-cloak x-transition>
+                          <button x-show="parseInt(s1.level.slice(1)) < 5" type="button" @click.stop="$store.chat.startNewScope('l' + (parseInt(s1.level.slice(1)) + 1), s1.record_id); actionsOpen = false">Add child scope</button>
+                          <button type="button" @click.stop="$store.chat.startEditScope(s1.record_id); actionsOpen = false">Edit scope</button>
+                          <button type="button" @click.stop="$store.chat.openRecordStatusModal({ familyId: 'scope', recordId: s1.record_id, label: s1.title || 'Untitled scope' }); actionsOpen = false">Check status</button>
+                          <button type="button" @click.stop="$store.chat.reapplyScopeGroupCrypto(s1.record_id); actionsOpen = false" :disabled="$store.chat.scopePolicyRepairBusy">Reapply group crypto</button>
+                          <button type="button" class="doc-actions-delete" @click.stop="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s1.record_id); actionsOpen = false">Delete scope</button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div class="scope-card-clickable" @click="expanded = !expanded">
@@ -3325,13 +3477,22 @@
                   <!-- Level 2 children -->
                   <div x-show="expanded" class="scope-card-children">
                     <template x-for="s2 in (s1.children || [])" :key="s2.record_id">
-                      <div class="scope-card" :data-level="s2.level" :id="'scope-' + s2.record_id" x-data="{ expanded: false }">
+                      <div class="scope-card" :data-level="s2.level" :id="'scope-' + s2.record_id" x-data="{ expanded: false, actionsOpen: false }">
                         <div class="scope-card-header">
                           <span class="scope-level-badge" :data-level="s2.level" x-text="$store.chat.scopeLevelLabel(s2.level)"></span>
-                          <div class="scope-card-actions">
-                            <button x-show="parseInt(s2.level.slice(1)) < 5" type="button" class="scope-action-btn" @click="$store.chat.startNewScope('l' + (parseInt(s2.level.slice(1)) + 1), s2.record_id)" title="Add child">+ Child</button>
-                            <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s2.record_id)" title="Edit">Edit</button>
-                            <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s2.record_id)" title="Delete">Delete</button>
+                          <div class="scope-card-actions" x-show="$store.chat.canAdminWorkspace">
+                            <div class="doc-actions-menu scope-actions-menu" @click.outside="actionsOpen = false">
+                              <button type="button" class="doc-actions-toggle" title="Scope actions" aria-label="Scope actions" @click.stop="actionsOpen = !actionsOpen">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+                              </button>
+                              <div class="doc-actions-popover" x-show="actionsOpen" x-cloak x-transition>
+                                <button x-show="parseInt(s2.level.slice(1)) < 5" type="button" @click.stop="$store.chat.startNewScope('l' + (parseInt(s2.level.slice(1)) + 1), s2.record_id); actionsOpen = false">Add child scope</button>
+                                <button type="button" @click.stop="$store.chat.startEditScope(s2.record_id); actionsOpen = false">Edit scope</button>
+                                <button type="button" @click.stop="$store.chat.openRecordStatusModal({ familyId: 'scope', recordId: s2.record_id, label: s2.title || 'Untitled scope' }); actionsOpen = false">Check status</button>
+                                <button type="button" @click.stop="$store.chat.reapplyScopeGroupCrypto(s2.record_id); actionsOpen = false" :disabled="$store.chat.scopePolicyRepairBusy">Reapply group crypto</button>
+                                <button type="button" class="doc-actions-delete" @click.stop="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s2.record_id); actionsOpen = false">Delete scope</button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                         <div class="scope-card-clickable" @click="if ((s2.children || []).length > 0) expanded = !expanded">
@@ -3350,13 +3511,22 @@
                         <!-- Level 3 children -->
                         <div x-show="expanded" class="scope-card-children">
                           <template x-for="s3 in (s2.children || [])" :key="s3.record_id">
-                            <div class="scope-card" :data-level="s3.level" :id="'scope-' + s3.record_id" x-data="{ expanded: false }">
+                            <div class="scope-card" :data-level="s3.level" :id="'scope-' + s3.record_id" x-data="{ expanded: false, actionsOpen: false }">
                               <div class="scope-card-header">
                                 <span class="scope-level-badge" :data-level="s3.level" x-text="$store.chat.scopeLevelLabel(s3.level)"></span>
-                                <div class="scope-card-actions">
-                                  <button x-show="parseInt(s3.level.slice(1)) < 5" type="button" class="scope-action-btn" @click="$store.chat.startNewScope('l' + (parseInt(s3.level.slice(1)) + 1), s3.record_id)" title="Add child">+ Child</button>
-                                  <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s3.record_id)" title="Edit">Edit</button>
-                                  <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s3.record_id)" title="Delete">Delete</button>
+                                <div class="scope-card-actions" x-show="$store.chat.canAdminWorkspace">
+                                  <div class="doc-actions-menu scope-actions-menu" @click.outside="actionsOpen = false">
+                                    <button type="button" class="doc-actions-toggle" title="Scope actions" aria-label="Scope actions" @click.stop="actionsOpen = !actionsOpen">
+                                      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+                                    </button>
+                                    <div class="doc-actions-popover" x-show="actionsOpen" x-cloak x-transition>
+                                      <button x-show="parseInt(s3.level.slice(1)) < 5" type="button" @click.stop="$store.chat.startNewScope('l' + (parseInt(s3.level.slice(1)) + 1), s3.record_id); actionsOpen = false">Add child scope</button>
+                                      <button type="button" @click.stop="$store.chat.startEditScope(s3.record_id); actionsOpen = false">Edit scope</button>
+                                      <button type="button" @click.stop="$store.chat.openRecordStatusModal({ familyId: 'scope', recordId: s3.record_id, label: s3.title || 'Untitled scope' }); actionsOpen = false">Check status</button>
+                                      <button type="button" @click.stop="$store.chat.reapplyScopeGroupCrypto(s3.record_id); actionsOpen = false" :disabled="$store.chat.scopePolicyRepairBusy">Reapply group crypto</button>
+                                      <button type="button" class="doc-actions-delete" @click.stop="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s3.record_id); actionsOpen = false">Delete scope</button>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
                               <div class="scope-card-clickable" @click="if ((s3.children || []).length > 0) expanded = !expanded">
@@ -3375,13 +3545,22 @@
                               <!-- Level 4 children -->
                               <div x-show="expanded" class="scope-card-children">
                                 <template x-for="s4 in (s3.children || [])" :key="s4.record_id">
-                                  <div class="scope-card" :data-level="s4.level" :id="'scope-' + s4.record_id" x-data="{ expanded: false }">
+                                  <div class="scope-card" :data-level="s4.level" :id="'scope-' + s4.record_id" x-data="{ expanded: false, actionsOpen: false }">
                                     <div class="scope-card-header">
                                       <span class="scope-level-badge" :data-level="s4.level" x-text="$store.chat.scopeLevelLabel(s4.level)"></span>
-                                      <div class="scope-card-actions">
-                                        <button x-show="parseInt(s4.level.slice(1)) < 5" type="button" class="scope-action-btn" @click="$store.chat.startNewScope('l' + (parseInt(s4.level.slice(1)) + 1), s4.record_id)" title="Add child">+ Child</button>
-                                        <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s4.record_id)" title="Edit">Edit</button>
-                                        <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s4.record_id)" title="Delete">Delete</button>
+                                      <div class="scope-card-actions" x-show="$store.chat.canAdminWorkspace">
+                                        <div class="doc-actions-menu scope-actions-menu" @click.outside="actionsOpen = false">
+                                          <button type="button" class="doc-actions-toggle" title="Scope actions" aria-label="Scope actions" @click.stop="actionsOpen = !actionsOpen">
+                                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+                                          </button>
+                                          <div class="doc-actions-popover" x-show="actionsOpen" x-cloak x-transition>
+                                            <button x-show="parseInt(s4.level.slice(1)) < 5" type="button" @click.stop="$store.chat.startNewScope('l' + (parseInt(s4.level.slice(1)) + 1), s4.record_id); actionsOpen = false">Add child scope</button>
+                                            <button type="button" @click.stop="$store.chat.startEditScope(s4.record_id); actionsOpen = false">Edit scope</button>
+                                            <button type="button" @click.stop="$store.chat.openRecordStatusModal({ familyId: 'scope', recordId: s4.record_id, label: s4.title || 'Untitled scope' }); actionsOpen = false">Check status</button>
+                                            <button type="button" @click.stop="$store.chat.reapplyScopeGroupCrypto(s4.record_id); actionsOpen = false" :disabled="$store.chat.scopePolicyRepairBusy">Reapply group crypto</button>
+                                            <button type="button" class="doc-actions-delete" @click.stop="if(confirm('Delete this scope and its children?')) $store.chat.deleteScope(s4.record_id); actionsOpen = false">Delete scope</button>
+                                          </div>
+                                        </div>
                                       </div>
                                     </div>
                                     <div class="scope-card-clickable" @click="if ((s4.children || []).length > 0) expanded = !expanded">
@@ -3400,12 +3579,21 @@
                                     <!-- Level 5 children (leaf) -->
                                     <div x-show="expanded" class="scope-card-children">
                                       <template x-for="s5 in (s4.children || [])" :key="s5.record_id">
-                                        <div class="scope-card" :data-level="s5.level" :id="'scope-' + s5.record_id">
+                                        <div class="scope-card" :data-level="s5.level" :id="'scope-' + s5.record_id" x-data="{ actionsOpen: false }">
                                           <div class="scope-card-header">
                                             <span class="scope-level-badge" :data-level="s5.level" x-text="$store.chat.scopeLevelLabel(s5.level)"></span>
-                                            <div class="scope-card-actions">
-                                              <button type="button" class="scope-action-btn" @click="$store.chat.startEditScope(s5.record_id)" title="Edit">Edit</button>
-                                              <button type="button" class="scope-action-btn scope-delete-btn" @click="if(confirm('Delete this scope?')) $store.chat.deleteScope(s5.record_id)" title="Delete">Delete</button>
+                                            <div class="scope-card-actions" x-show="$store.chat.canAdminWorkspace">
+                                              <div class="doc-actions-menu scope-actions-menu" @click.outside="actionsOpen = false">
+                                                <button type="button" class="doc-actions-toggle" title="Scope actions" aria-label="Scope actions" @click.stop="actionsOpen = !actionsOpen">
+                                                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+                                                </button>
+                                                <div class="doc-actions-popover" x-show="actionsOpen" x-cloak x-transition>
+                                                  <button type="button" @click.stop="$store.chat.startEditScope(s5.record_id); actionsOpen = false">Edit scope</button>
+                                                  <button type="button" @click.stop="$store.chat.openRecordStatusModal({ familyId: 'scope', recordId: s5.record_id, label: s5.title || 'Untitled scope' }); actionsOpen = false">Check status</button>
+                                                  <button type="button" @click.stop="$store.chat.reapplyScopeGroupCrypto(s5.record_id); actionsOpen = false" :disabled="$store.chat.scopePolicyRepairBusy">Reapply group crypto</button>
+                                                  <button type="button" class="doc-actions-delete" @click.stop="if(confirm('Delete this scope?')) $store.chat.deleteScope(s5.record_id); actionsOpen = false">Delete scope</button>
+                                                </div>
+                                              </div>
                                             </div>
                                           </div>
                                           <h5 class="scope-card-title" x-text="s5.title"></h5>
@@ -3534,6 +3722,12 @@
                 <span class="scope-level-badge" x-text="$store.chat.editingScopeLevelLabel || 'Scope'"></span>
                 <span class="scope-node-desc" x-text="$store.chat.getScopeGroupSummary($store.chat.editingScope)"></span>
               </div>
+              <p
+                class="scope-edit-hint"
+                x-show="!$store.chat.showNewScopeForm && $store.chat.editingScopeHasGroupChanges"
+              >Save changes updates the scope defaults. Use the re-encrypt action to rewrite existing tasks, docs, folders, flows, and approvals in this scope for the new groups.</p>
+              <p class="scope-edit-hint" x-show="$store.chat.scopePolicyRepairBusy">Re-encrypting scoped records…</p>
+              <p class="settings-success" x-show="$store.chat.scopePolicyRepairSummary" x-text="$store.chat.scopePolicyRepairSummary"></p>
 
               <div class="scope-modal-form" x-show="$store.chat.showNewScopeForm">
                 <div class="scope-field">
@@ -3677,7 +3871,14 @@
               <template x-if="!$store.chat.showNewScopeForm">
                 <div class="scope-modal-actions">
                   <button type="button" class="scope-cancel-btn" @click="$store.chat.cancelEditScope()">Cancel</button>
-                  <button type="button" class="scope-save-btn" @click="$store.chat.saveEditScope()">Save changes</button>
+                  <button type="button" class="scope-save-btn" @click="$store.chat.saveEditScope()" :disabled="$store.chat.scopePolicyRepairBusy">Save changes</button>
+                  <button
+                    type="button"
+                    class="scope-save-btn scope-repair-btn"
+                    x-show="$store.chat.editingScopeHasGroupChanges"
+                    @click="$store.chat.saveEditScope({ repairScopedRecords: true })"
+                    :disabled="$store.chat.scopePolicyRepairBusy"
+                  >Save + Re-encrypt scoped records</button>
                 </div>
               </template>
             </div>
@@ -4051,80 +4252,219 @@
         </template>
 
         <!-- Approval detail modal (global — reachable from status and flows sections) -->
-        <div class="approval-detail-overlay" x-show="$store.chat.showApprovalDetail" x-transition.opacity @click.self="$store.chat.showApprovalDetail = false" x-cloak
+        <div class="approval-detail-overlay" x-show="$store.chat.showApprovalDetail" x-transition.opacity @click.self="$store.chat.showApprovalDetail = false; $store.chat.approvalPreviewExpanded = false" x-cloak
           x-data="{
             get approval() {
               const id = $store.chat.activeApprovalId;
               return $store.chat.approvals.find(a => a.record_id === id) || null;
             },
           }"
+          x-effect="if ($store.chat.showApprovalDetail && approval) { $store.chat.resolveApprovalLinkedNames(approval).then(() => { if (window.innerWidth >= 900) $store.chat.loadApprovalPreview(approval, 0); }); }"
         >
-          <div class="approval-detail-panel" x-show="approval">
+          <div class="approval-detail-panel" x-show="approval"
+            :class="{ 'approval-has-preview': $store.chat.approvalPreviewRecord, 'approval-expanded': $store.chat.approvalPreviewExpanded && $store.chat.approvalPreviewRecord }">
             <div class="approval-detail-header">
               <h2 x-text="approval?.title || 'Approval'"></h2>
-              <button type="button" @click="$store.chat.showApprovalDetail = false">Close</button>
+              <button type="button" @click="$store.chat.showApprovalDetail = false; $store.chat.approvalPreviewExpanded = false">Close</button>
             </div>
 
-            <div class="approval-detail-status-row">
-              <span class="approval-status-badge" :style="'background:' + ({pending:'#fbbf24',approved:'#34d399',rejected:'#f87171',needs_revision:'#a78bfa'}[approval?.status] || '#9ca3af')"
-                x-text="{pending:'Pending',approved:'Approved',rejected:'Rejected',needs_revision:'Needs Revision'}[approval?.status] || approval?.status"></span>
-              <span x-show="approval?.confidence_score != null" x-text="'Confidence: ' + Math.round((approval?.confidence_score || 0) * 100) + '%'"></span>
-              <span x-show="approval?.approval_mode" x-text="approval?.approval_mode === 'agent' ? 'Agent review' : 'Manual review'"></span>
-            </div>
+            <div class="approval-detail-columns">
+              <!-- Left column: approval info -->
+              <div class="approval-detail-left">
+                <div class="approval-detail-status-row">
+                  <span class="approval-status-badge" :style="'background:' + ({pending:'#fbbf24',approved:'#34d399',rejected:'#f87171',needs_revision:'#a78bfa'}[approval?.status] || '#9ca3af')"
+                    x-text="{pending:'Pending',approved:'Approved',rejected:'Rejected',needs_revision:'Needs Revision'}[approval?.status] || approval?.status"></span>
+                  <span x-show="approval?.confidence_score != null" x-text="'Confidence: ' + Math.round((approval?.confidence_score || 0) * 100) + '%'"></span>
+                  <span x-show="approval?.approval_mode" x-text="approval?.approval_mode === 'agent' ? 'Agent review' : 'Manual review'"></span>
+                </div>
 
-            <!-- Brief -->
-            <div class="approval-detail-section">
-              <h3>Brief</h3>
-              <p x-html="$store.chat.approvalBriefHtml(approval)" @click="$store.chat.handleBriefLinkClick($event)"></p>
-            </div>
+                <!-- Brief -->
+                <div class="approval-detail-section">
+                  <h3>Brief</h3>
+                  <p x-html="$store.chat.approvalBriefHtml(approval)" @click="$store.chat.handleBriefLinkClick($event)"></p>
+                </div>
 
-            <!-- Agent review -->
-            <div class="approval-detail-section" x-show="approval?.agent_review_note">
-              <h3>Agent Review</h3>
-              <p><strong x-text="approval?.agent_review_by ? 'Reviewed by: ' + approval.agent_review_by.slice(0, 16) + '...' : ''"></strong></p>
-              <p x-text="approval?.agent_review_note"></p>
-            </div>
+                <!-- Agent review -->
+                <div class="approval-detail-section" x-show="approval?.agent_review_note">
+                  <h3>Agent Review</h3>
+                  <p><strong x-text="approval?.agent_review_by ? 'Reviewed by: ' + approval.agent_review_by.slice(0, 16) + '...' : ''"></strong></p>
+                  <p x-text="approval?.agent_review_note"></p>
+                </div>
 
-            <!-- Linked tasks -->
-            <div class="approval-detail-section" x-show="approval?.task_ids?.length > 0">
-              <h3>Linked Tasks (<span x-text="approval?.task_ids?.length || 0"></span>)</h3>
-              <ul class="approval-linked-tasks">
-                <template x-for="taskId in (approval?.task_ids || [])" :key="taskId">
-                  <li class="approval-linked-task-item" @click="$store.chat.showApprovalDetail = false; $store.chat.navigateToLinkedTask(taskId)">
-                    <span x-text="($store.chat.tasks.find(t => t.record_id === taskId)?.title) || taskId.slice(0, 12) + '...'"></span>
-                    <span class="approval-task-state" x-text="$store.chat.tasks.find(t => t.record_id === taskId)?.state || 'unknown'"></span>
-                  </li>
-                </template>
-              </ul>
-            </div>
+                <!-- Linked tasks -->
+                <div class="approval-detail-section" x-show="approval?.task_ids?.length > 0">
+                  <h3>Linked Tasks (<span x-text="approval?.task_ids?.length || 0"></span>)</h3>
+                  <ul class="approval-linked-tasks">
+                    <template x-for="(taskId, idx) in (approval?.task_ids || [])" :key="taskId">
+                      <li class="approval-linked-task-item"
+                        :class="{ 'approval-preview-active': $store.chat.approvalPreviewRecord?.record_id === taskId }"
+                        @click="$store.chat.loadApprovalPreview(approval, $store.chat.approvalPreviewItems(approval).findIndex(i => i.id === taskId))">
+                        <span x-text="($store.chat.linkedName(taskId)?.title) || taskId.slice(0, 12) + '...'"></span>
+                        <span class="approval-task-state" x-text="$store.chat.linkedName(taskId)?.state || 'unknown'"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
 
-            <!-- Artifact refs -->
-            <div class="approval-detail-section" x-show="$store.chat.resolvedArtifacts(approval).length > 0">
-              <h3>Artifacts</h3>
-              <ul class="approval-artifact-list">
-                <template x-for="ref in $store.chat.resolvedArtifacts(approval)" :key="ref.record_id">
-                  <li class="approval-artifact-item" @click="$store.chat.navigateToArtifact(ref)" :class="{ 'approval-artifact-clickable': ref.type === 'task' || ref.type === 'document' }">
-                    <span x-text="ref.title || (ref.record_id.slice(0, 12) + '...')"></span>
-                    <span class="approval-artifact-type" x-text="ref.type"></span>
-                  </li>
-                </template>
-              </ul>
-            </div>
+                <!-- Artifact refs -->
+                <div class="approval-detail-section" x-show="$store.chat.resolvedArtifacts(approval).length > 0">
+                  <h3>Artifacts</h3>
+                  <ul class="approval-artifact-list">
+                    <template x-for="ref in $store.chat.resolvedArtifacts(approval)" :key="ref.record_id">
+                      <li class="approval-artifact-item"
+                        :class="{ 'approval-artifact-clickable': ref.type === 'task' || ref.type === 'document', 'approval-preview-active': $store.chat.approvalPreviewRecord?.record_id === ref.record_id }"
+                        @click="$store.chat.loadApprovalPreview(approval, $store.chat.approvalPreviewItems(approval).findIndex(i => i.id === ref.record_id))">
+                        <span x-text="ref.title || (ref.record_id.slice(0, 12) + '...')"></span>
+                        <span class="approval-artifact-type" x-text="ref.type"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
 
-            <!-- Decision -->
-            <div class="approval-detail-section" x-show="approval?.decision_note">
-              <h3>Decision Note</h3>
-              <p x-text="approval?.decision_note"></p>
-              <p x-show="approval?.approved_by" x-text="'Decided by: ' + (approval?.approved_by || '').slice(0, 16) + '...'"></p>
-              <p x-show="approval?.approved_at" x-text="'At: ' + (approval?.approved_at || '')"></p>
-            </div>
+                <!-- Decision -->
+                <div class="approval-detail-section" x-show="approval?.decision_note">
+                  <h3>Decision Note</h3>
+                  <p x-text="approval?.decision_note"></p>
+                  <p x-show="approval?.approved_by" x-text="'Decided by: ' + (approval?.approved_by || '').slice(0, 16) + '...'"></p>
+                  <p x-show="approval?.approved_at" x-text="'At: ' + (approval?.approved_at || '')"></p>
+                </div>
 
-            <!-- Actions -->
-            <div class="approval-detail-actions" x-show="approval?.status === 'pending'">
-              <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Approve</button>
-              <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Reject</button>
-              <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Improve</button>
-              <input type="text" x-model="$store.chat.approvalDecisionNote" placeholder="Decision note (optional)" class="approval-decision-input" />
+                <!-- Actions -->
+                <div class="approval-detail-actions" x-show="approval?.status === 'pending'">
+                  <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Approve</button>
+                  <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Reject</button>
+                  <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Improve</button>
+                  <input type="text" x-model="$store.chat.approvalDecisionNote" placeholder="Decision note (optional)" class="approval-decision-input" />
+                </div>
+              </div>
+
+              <!-- Content column (desktop only, shown when a linked item is selected) -->
+              <div class="approval-preview-content-col" x-show="$store.chat.approvalPreviewRecord" x-cloak>
+                <!-- Pagination header -->
+                <div class="approval-preview-header">
+                  <button type="button" class="approval-preview-nav" :disabled="$store.chat.approvalPreviewIndex === 0"
+                    @click="$store.chat.loadApprovalPreview(approval, $store.chat.approvalPreviewIndex - 1)">&larr;</button>
+                  <span class="approval-preview-title" x-text="$store.chat.approvalPreviewRecord?.title || 'Preview'"></span>
+                  <span class="approval-preview-counter" x-text="($store.chat.approvalPreviewIndex + 1) + ' / ' + $store.chat.approvalPreviewItems(approval).length"></span>
+                  <button type="button" class="approval-preview-nav" :disabled="$store.chat.approvalPreviewIndex >= $store.chat.approvalPreviewItems(approval).length - 1"
+                    @click="$store.chat.loadApprovalPreview(approval, $store.chat.approvalPreviewIndex + 1)">&rarr;</button>
+                  <button type="button" class="approval-preview-expand" @click="$store.chat.approvalPreviewExpanded = !$store.chat.approvalPreviewExpanded"
+                    :title="$store.chat.approvalPreviewExpanded ? 'Collapse' : 'Expand'">
+                    <svg x-show="!$store.chat.approvalPreviewExpanded" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                    <svg x-show="$store.chat.approvalPreviewExpanded" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14h6v6M14 4h6v6M14 10l7-7M3 21l7-7"/></svg>
+                  </button>
+                </div>
+
+                <!-- Task: simple view -->
+                <div class="approval-preview-body" x-show="$store.chat.approvalPreviewType === 'task'">
+                  <div class="approval-preview-task-meta">
+                    <span class="approval-task-state" x-text="$store.chat.approvalPreviewRecord?.state || 'unknown'"></span>
+                    <span x-show="$store.chat.approvalPreviewRecord?.priority" class="approval-preview-priority" x-text="$store.chat.approvalPreviewRecord?.priority"></span>
+                    <span x-show="$store.chat.approvalPreviewRecord?.assigned_to_npub" class="approval-preview-assignee"
+                      x-text="'Assigned: ' + $store.chat.getSenderName($store.chat.approvalPreviewRecord?.assigned_to_npub)"></span>
+                  </div>
+                  <div class="approval-preview-content chat-post-markdown" x-show="$store.chat.approvalPreviewRecord?.description"
+                    x-html="$store.chat.renderMarkdown($store.chat.approvalPreviewRecord?.description || '')"></div>
+                  <p class="approval-preview-empty" x-show="!$store.chat.approvalPreviewRecord?.description">No description.</p>
+                </div>
+
+                <!-- Document: block-based with comment triggers -->
+                <div class="approval-preview-body" x-show="$store.chat.approvalPreviewType === 'document'">
+                  <template x-for="(block, blockIdx) in $store.chat.approvalPreviewBlocks" :key="block.id">
+                    <div class="approval-preview-block-row"
+                      :class="{ 'approval-preview-block-has-comments': $store.chat.getPreviewCommentsForBlock(block).length > 0 }">
+                      <div class="approval-preview-block-content chat-post-markdown" x-html="$store.chat.renderMarkdown(block.raw)"></div>
+                      <button type="button" class="approval-preview-block-comment-btn"
+                        :class="{ 'has-comments': $store.chat.getPreviewCommentsForBlock(block).length > 0 }"
+                        :title="'Comment on this section'"
+                        @click="$store.chat.startPreviewBlockComment(block)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <span class="approval-preview-block-comment-count" x-show="$store.chat.getPreviewCommentsForBlock(block).length > 0"
+                          x-text="$store.chat.getPreviewCommentsForBlock(block).length"></span>
+                      </button>
+                    </div>
+                  </template>
+                  <p class="approval-preview-empty" x-show="$store.chat.approvalPreviewBlocks.length === 0">No content.</p>
+                </div>
+              </div>
+
+              <!-- Comments column (desktop only) -->
+              <div class="approval-preview-comments-col" x-show="$store.chat.approvalPreviewRecord" x-cloak>
+                <h4>Comments (<span x-text="$store.chat.approvalPreviewComments.filter(c => !c.parent_comment_id && c.record_state !== 'deleted').length"></span>)</h4>
+
+                <!-- Task: always-visible comment input -->
+                <div class="approval-preview-comment-add approval-preview-comment-add-simple" x-show="$store.chat.approvalPreviewType === 'task'">
+                  <div class="approval-preview-comment-input-row">
+                    <textarea x-model="$store.chat.approvalPreviewCommentBody" placeholder="Add a comment..." rows="2"
+                      @keydown.meta.enter="$store.chat.addApprovalPreviewComment()"
+                      @keydown.ctrl.enter="$store.chat.addApprovalPreviewComment()"></textarea>
+                    <button type="button" class="approval-preview-post-btn" @click="$store.chat.addApprovalPreviewComment()" :disabled="!$store.chat.approvalPreviewCommentBody.trim()">Post</button>
+                  </div>
+                </div>
+
+                <!-- Document: anchored comment input (shown when a block is clicked) -->
+                <div class="approval-preview-comment-add" x-show="$store.chat.approvalPreviewType === 'document' && $store.chat.approvalPreviewAnchorLine != null">
+                  <div class="approval-preview-comment-anchor-label">
+                    Commenting on line <span x-text="$store.chat.approvalPreviewAnchorLine"></span>
+                    <button type="button" class="approval-preview-anchor-dismiss" @click="$store.chat.approvalPreviewAnchorLine = null">&times;</button>
+                  </div>
+                  <div class="approval-preview-comment-input-row">
+                    <textarea x-model="$store.chat.approvalPreviewCommentBody" placeholder="Add a comment..." rows="2"
+                      @keydown.meta.enter="$store.chat.addApprovalPreviewComment()"
+                      @keydown.ctrl.enter="$store.chat.addApprovalPreviewComment()"></textarea>
+                    <button type="button" class="approval-preview-post-btn" @click="$store.chat.addApprovalPreviewComment()" :disabled="!$store.chat.approvalPreviewCommentBody.trim()">Post</button>
+                  </div>
+                </div>
+
+                <!-- Document: comments grouped by block -->
+                <div class="approval-preview-comments-list" x-show="$store.chat.approvalPreviewType === 'document'">
+                  <template x-for="block in $store.chat.approvalPreviewBlocks" :key="'comments-' + block.id">
+                    <div x-show="$store.chat.getPreviewCommentsForBlock(block).length > 0" class="approval-preview-block-comments-group">
+                      <div class="approval-preview-block-ref" x-text="block.raw.split('\\n')[0].slice(0, 60) + (block.raw.length > 60 ? '...' : '')"></div>
+                      <template x-for="comment in $store.chat.getPreviewCommentsForBlock(block)" :key="comment.record_id">
+                        <div class="approval-preview-comment-row">
+                          <div class="approval-preview-comment-header">
+                            <span class="approval-preview-comment-sender" x-text="$store.chat.getSenderName(comment.sender_npub)"></span>
+                            <span class="approval-preview-comment-time" x-text="$store.chat.formatRelativeTime(comment.updated_at)"></span>
+                          </div>
+                          <div class="approval-preview-comment-body chat-post-markdown" x-html="$store.chat.renderMarkdown(comment.body)"></div>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                  <!-- Unanchored / general comments -->
+                  <template x-for="comment in $store.chat.previewUnanchoredComments" :key="comment.record_id">
+                    <div class="approval-preview-comment-row">
+                      <div class="approval-preview-comment-header">
+                        <span class="approval-preview-comment-sender" x-text="$store.chat.getSenderName(comment.sender_npub)"></span>
+                        <span class="approval-preview-comment-time" x-text="$store.chat.formatRelativeTime(comment.updated_at)"></span>
+                      </div>
+                      <div class="approval-preview-comment-body chat-post-markdown" x-html="$store.chat.renderMarkdown(comment.body)"></div>
+                    </div>
+                  </template>
+                  <div class="approval-preview-comments-empty" x-show="$store.chat.approvalPreviewComments.filter(c => !c.parent_comment_id && c.record_state !== 'deleted').length === 0">
+                    <p>No comments yet. Click a section to add one.</p>
+                  </div>
+                </div>
+
+                <!-- Task: flat comment list -->
+                <div class="approval-preview-comments-list" x-show="$store.chat.approvalPreviewType === 'task'">
+                  <template x-for="comment in $store.chat.approvalPreviewComments.filter(c => !c.parent_comment_id && c.record_state !== 'deleted')" :key="comment.record_id">
+                    <div class="approval-preview-comment-row">
+                      <div class="approval-preview-comment-header">
+                        <span class="approval-preview-comment-sender" x-text="$store.chat.getSenderName(comment.sender_npub)"></span>
+                        <span class="approval-preview-comment-time" x-text="$store.chat.formatRelativeTime(comment.updated_at)"></span>
+                      </div>
+                      <div class="approval-preview-comment-body chat-post-markdown" x-html="$store.chat.renderMarkdown(comment.body)"></div>
+                    </div>
+                  </template>
+                  <div class="approval-preview-comments-empty" x-show="$store.chat.approvalPreviewComments.filter(c => !c.parent_comment_id && c.record_state !== 'deleted').length === 0">
+                    <p>No comments yet.</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -4172,22 +4512,353 @@
         </div>
 
         <template x-if="$store.chat.navSection === 'people'">
-          <div class="placeholder-panel">
-            <h2>People</h2>
-            <p>People and groups will materialize from the same V4 sync boundary once that slice is added.</p>
+          <div class="people-section">
+            <!-- Sub-tab bar -->
+            <div class="people-subtabs">
+              <button class="people-subtab" :class="{ active: $store.chat.peopleSubTab === 'people' }" @click="$store.chat.peopleSubTab = 'people'; $store.chat.showPersonEditor = false; $store.chat.showOrgEditor = false;">People</button>
+              <button class="people-subtab" :class="{ active: $store.chat.peopleSubTab === 'organisations' }" @click="$store.chat.peopleSubTab = 'organisations'; $store.chat.showPersonEditor = false; $store.chat.showOrgEditor = false;">Organisations</button>
+            </div>
+
+            <!-- ============ PEOPLE LIST ============ -->
+            <template x-if="$store.chat.peopleSubTab === 'people' && !$store.chat.showPersonEditor">
+              <div class="people-list-view">
+                <div class="people-list-header">
+                  <input type="text" class="people-filter-input" placeholder="Filter people..." x-model="$store.chat.personFilter">
+                  <button class="btn btn-sm btn-primary" @click="
+                    $store.chat.editingPersonId = null;
+                    $store.chat.personFormTitle = '';
+                    $store.chat.personFormDescription = '';
+                    $store.chat.personFormTags = '';
+                    $store.chat.personFormContacts = [];
+                    $store.chat.showPersonEditor = true;
+                  ">+ Person</button>
+                </div>
+                <div class="people-list">
+                  <template x-for="person in $store.chat.persons.filter(p => {
+                    const q = ($store.chat.personFilter || '').toLowerCase();
+                    if (!q) return true;
+                    return (p.title || '').toLowerCase().includes(q) || (p.tags || '').toLowerCase().includes(q);
+                  }).sort((a,b) => (a.title || '').localeCompare(b.title || ''))" :key="person.record_id">
+                    <div class="people-list-item" @click="
+                      $store.chat.editingPersonId = person.record_id;
+                      $store.chat.personFormTitle = person.title || '';
+                      $store.chat.personFormDescription = person.description || '';
+                      $store.chat.personFormTags = person.tags || '';
+                      $store.chat.personFormContacts = JSON.parse(JSON.stringify(person.contacts || []));
+                      $store.chat.showPersonEditor = true;
+                    ">
+                      <div class="people-list-item-top">
+                        <div class="people-list-item-name" x-text="person.title || 'Unnamed'"></div>
+                        <div class="people-list-item-actions" @click.stop>
+                          <button class="augment-btn" :class="{ active: person.augment_please }" :title="person.augment_please ? 'Augment requested — click to cancel' : 'Request agent augmentation'" @click.stop="$store.chat.toggleAugmentPerson(person.record_id)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="person.augment_please ? '#f59e0b' : 'currentColor'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M9 18h6"></path>
+                              <path d="M10 22h4"></path>
+                              <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" :fill="person.augment_please ? '#fef3c7' : 'none'"></path>
+                            </svg>
+                          </button>
+                          <details class="people-record-menu" @click.outside="$el.open = false">
+                            <summary title="Record actions">
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="12" cy="19" r="1.8"></circle></svg>
+                            </summary>
+                            <div class="people-record-menu-popover">
+                              <button type="button" @click="$store.chat.openRecordStatusModal({ familyId: 'person', recordId: person.record_id, label: person.title || 'Person' }); $event.target.closest('details').open = false">Check sync status</button>
+                              <button type="button" @click="$store.chat.openRecordVersionHistory({ familyId: 'person', recordId: person.record_id, label: person.title || 'Person' }); $event.target.closest('details').open = false">Version history</button>
+                            </div>
+                          </details>
+                        </div>
+                      </div>
+                      <div class="people-list-item-meta">
+                        <span class="people-contact-count" x-show="(person.contacts || []).length > 0" x-text="(person.contacts || []).length + ' contact' + ((person.contacts || []).length !== 1 ? 's' : '')"></span>
+                        <span class="people-org-count" x-show="(person.organisation_links || []).length > 0" x-text="(person.organisation_links || []).length + ' org' + ((person.organisation_links || []).length !== 1 ? 's' : '')"></span>
+                        <span class="people-augment-badge" x-show="person.augment_please">Augment requested</span>
+                      </div>
+                      <div class="people-list-item-tags" x-show="person.tags" x-text="person.tags"></div>
+                    </div>
+                  </template>
+                  <div class="people-empty" x-show="$store.chat.persons.length === 0">
+                    <p>No people yet. Add your first person to get started.</p>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ============ PERSON EDITOR ============ -->
+            <template x-if="$store.chat.peopleSubTab === 'people' && $store.chat.showPersonEditor">
+              <div class="person-editor">
+                <div class="person-editor-header">
+                  <button class="btn btn-sm" @click="$store.chat.showPersonEditor = false">&larr; Back</button>
+                  <h3 x-text="$store.chat.editingPersonId ? 'Edit Person' : 'New Person'"></h3>
+                  <div class="person-editor-actions">
+                    <button class="augment-btn" x-show="$store.chat.editingPersonId" :class="{ active: $store.chat.persons.find(p => p.record_id === $store.chat.editingPersonId)?.augment_please }" :title="$store.chat.persons.find(p => p.record_id === $store.chat.editingPersonId)?.augment_please ? 'Augment requested — click to cancel' : 'Request agent augmentation'" @click="$store.chat.toggleAugmentPerson($store.chat.editingPersonId)">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="$store.chat.persons.find(p => p.record_id === $store.chat.editingPersonId)?.augment_please ? '#f59e0b' : 'currentColor'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 18h6"></path><path d="M10 22h4"></path>
+                        <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" :fill="$store.chat.persons.find(p => p.record_id === $store.chat.editingPersonId)?.augment_please ? '#fef3c7' : 'none'"></path>
+                      </svg>
+                    </button>
+                    <button class="btn btn-sm btn-danger" x-show="$store.chat.editingPersonId" @click="
+                      if (confirm('Delete this person?')) {
+                        $store.chat.deletePerson($store.chat.editingPersonId);
+                        $store.chat.showPersonEditor = false;
+                      }
+                    ">Delete</button>
+                  </div>
+                </div>
+                <div class="person-editor-form">
+                  <label>Name</label>
+                  <input type="text" x-model="$store.chat.personFormTitle" placeholder="Person name">
+                  <label>Description</label>
+                  <textarea x-model="$store.chat.personFormDescription" placeholder="Bio, notes..." rows="3"></textarea>
+                  <label>Tags</label>
+                  <input type="text" x-model="$store.chat.personFormTags" placeholder="Comma-separated tags">
+
+                  <!-- Contacts -->
+                  <label>Contacts</label>
+                  <div class="contacts-editor">
+                    <template x-for="(contact, idx) in $store.chat.personFormContacts" :key="idx">
+                      <div class="contact-row">
+                        <input type="text" class="contact-type" x-model="contact.type" placeholder="Type (email, phone, npub, website...)">
+                        <input type="text" class="contact-value" x-model="contact.value" placeholder="Value">
+                        <input type="text" class="contact-label" x-model="contact.label" placeholder="Label (optional)">
+                        <button class="btn btn-sm btn-danger contact-remove" @click="$store.chat.personFormContacts.splice(idx, 1)">&times;</button>
+                      </div>
+                    </template>
+                    <button class="btn btn-sm" @click="$store.chat.personFormContacts.push({ type: '', value: '', label: '' })">+ Add contact</button>
+                  </div>
+
+                  <!-- Organisation links (read-only display + link/unlink) -->
+                  <template x-if="$store.chat.editingPersonId">
+                    <div class="person-org-links">
+                      <label>Organisations</label>
+                      <template x-for="link in ($store.chat.persons.find(p => p.record_id === $store.chat.editingPersonId)?.organisation_links || [])" :key="link.organisation_id">
+                        <div class="link-row">
+                          <span class="link-name" x-text="$store.chat.getOrgName(link.organisation_id) || link.organisation_id.slice(0,12) + '...'"></span>
+                          <span class="link-role" x-show="link.role" x-text="'(' + link.role + ')'"></span>
+                          <button class="btn btn-sm btn-danger" @click="$store.chat.unlinkPersonFromOrg($store.chat.editingPersonId, link.organisation_id)">&times;</button>
+                        </div>
+                      </template>
+                      <div class="link-picker-inline" x-show="!$store.chat.linkPickerOpen">
+                        <button class="btn btn-sm" @click="$store.chat.linkPickerOpen = true; $store.chat.linkPickerTarget = 'person'; $store.chat.linkPickerRole = '';">+ Link to organisation</button>
+                      </div>
+                      <div class="link-picker-inline" x-show="$store.chat.linkPickerOpen && $store.chat.linkPickerTarget === 'person'">
+                        <select @change="
+                          if ($event.target.value) {
+                            $store.chat.linkPersonToOrg($store.chat.editingPersonId, $event.target.value, $store.chat.linkPickerRole);
+                            $event.target.value = '';
+                            $store.chat.linkPickerOpen = false;
+                          }
+                        ">
+                          <option value="">Select organisation...</option>
+                          <template x-for="org in $store.chat.organisations" :key="org.record_id">
+                            <option :value="org.record_id" x-text="org.title || 'Unnamed'"></option>
+                          </template>
+                        </select>
+                        <input type="text" x-model="$store.chat.linkPickerRole" placeholder="Role (optional)">
+                        <button class="btn btn-sm" @click="$store.chat.linkPickerOpen = false">Cancel</button>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div class="person-editor-save">
+                    <button class="btn btn-primary" @click="
+                      const contacts = $store.chat.personFormContacts.filter(c => c.value.trim());
+                      if ($store.chat.editingPersonId) {
+                        $store.chat.updatePerson($store.chat.editingPersonId, {
+                          title: $store.chat.personFormTitle,
+                          description: $store.chat.personFormDescription,
+                          tags: $store.chat.personFormTags,
+                          contacts,
+                        });
+                      } else {
+                        $store.chat.createPerson({
+                          title: $store.chat.personFormTitle,
+                          description: $store.chat.personFormDescription,
+                          tags: $store.chat.personFormTags,
+                          contacts,
+                        });
+                      }
+                      $store.chat.showPersonEditor = false;
+                    ">Save</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ============ ORGANISATIONS LIST ============ -->
+            <template x-if="$store.chat.peopleSubTab === 'organisations' && !$store.chat.showOrgEditor">
+              <div class="people-list-view">
+                <div class="people-list-header">
+                  <input type="text" class="people-filter-input" placeholder="Filter organisations..." x-model="$store.chat.orgFilter">
+                  <button class="btn btn-sm btn-primary" @click="
+                    $store.chat.editingOrgId = null;
+                    $store.chat.orgFormTitle = '';
+                    $store.chat.orgFormDescription = '';
+                    $store.chat.orgFormPositioning = '';
+                    $store.chat.orgFormTags = '';
+                    $store.chat.orgFormContacts = [];
+                    $store.chat.showOrgEditor = true;
+                  ">+ Organisation</button>
+                </div>
+                <div class="people-list">
+                  <template x-for="org in $store.chat.organisations.filter(o => {
+                    const q = ($store.chat.orgFilter || '').toLowerCase();
+                    if (!q) return true;
+                    return (o.title || '').toLowerCase().includes(q) || (o.tags || '').toLowerCase().includes(q);
+                  }).sort((a,b) => (a.title || '').localeCompare(b.title || ''))" :key="org.record_id">
+                    <div class="people-list-item" @click="
+                      $store.chat.editingOrgId = org.record_id;
+                      $store.chat.orgFormTitle = org.title || '';
+                      $store.chat.orgFormDescription = org.description || '';
+                      $store.chat.orgFormPositioning = org.positioning || '';
+                      $store.chat.orgFormTags = org.tags || '';
+                      $store.chat.orgFormContacts = JSON.parse(JSON.stringify(org.contacts || []));
+                      $store.chat.showOrgEditor = true;
+                    ">
+                      <div class="people-list-item-top">
+                        <div class="people-list-item-name" x-text="org.title || 'Unnamed'"></div>
+                        <div class="people-list-item-actions" @click.stop>
+                          <button class="augment-btn" :class="{ active: org.augment_please }" :title="org.augment_please ? 'Augment requested — click to cancel' : 'Request agent augmentation'" @click.stop="$store.chat.toggleAugmentOrganisation(org.record_id)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="org.augment_please ? '#f59e0b' : 'currentColor'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M9 18h6"></path>
+                              <path d="M10 22h4"></path>
+                              <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" :fill="org.augment_please ? '#fef3c7' : 'none'"></path>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="people-list-item-meta">
+                        <span class="people-contact-count" x-show="(org.contacts || []).length > 0" x-text="(org.contacts || []).length + ' contact' + ((org.contacts || []).length !== 1 ? 's' : '')"></span>
+                        <span class="people-org-count" x-show="(org.person_links || []).length > 0" x-text="(org.person_links || []).length + ' person' + ((org.person_links || []).length !== 1 ? 's' : '')"></span>
+                        <span class="people-augment-badge" x-show="org.augment_please">Augment requested</span>
+                      </div>
+                      <div class="people-list-item-positioning" x-show="org.positioning" x-text="org.positioning"></div>
+                      <div class="people-list-item-tags" x-show="org.tags" x-text="org.tags"></div>
+                    </div>
+                  </template>
+                  <div class="people-empty" x-show="$store.chat.organisations.length === 0">
+                    <p>No organisations yet. Add your first organisation to get started.</p>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ============ ORGANISATION EDITOR ============ -->
+            <template x-if="$store.chat.peopleSubTab === 'organisations' && $store.chat.showOrgEditor">
+              <div class="person-editor">
+                <div class="person-editor-header">
+                  <button class="btn btn-sm" @click="$store.chat.showOrgEditor = false">&larr; Back</button>
+                  <h3 x-text="$store.chat.editingOrgId ? 'Edit Organisation' : 'New Organisation'"></h3>
+                  <div class="person-editor-actions">
+                    <button class="augment-btn" x-show="$store.chat.editingOrgId" :class="{ active: $store.chat.organisations.find(o => o.record_id === $store.chat.editingOrgId)?.augment_please }" :title="$store.chat.organisations.find(o => o.record_id === $store.chat.editingOrgId)?.augment_please ? 'Augment requested — click to cancel' : 'Request agent augmentation'" @click="$store.chat.toggleAugmentOrganisation($store.chat.editingOrgId)">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="$store.chat.organisations.find(o => o.record_id === $store.chat.editingOrgId)?.augment_please ? '#f59e0b' : 'currentColor'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 18h6"></path><path d="M10 22h4"></path>
+                        <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" :fill="$store.chat.organisations.find(o => o.record_id === $store.chat.editingOrgId)?.augment_please ? '#fef3c7' : 'none'"></path>
+                      </svg>
+                    </button>
+                    <button class="btn btn-sm btn-danger" x-show="$store.chat.editingOrgId" @click="
+                      if (confirm('Delete this organisation?')) {
+                        $store.chat.deleteOrganisation($store.chat.editingOrgId);
+                        $store.chat.showOrgEditor = false;
+                      }
+                    ">Delete</button>
+                  </div>
+                </div>
+                <div class="person-editor-form">
+                  <label>Name</label>
+                  <input type="text" x-model="$store.chat.orgFormTitle" placeholder="Organisation name">
+                  <label>Positioning</label>
+                  <textarea x-model="$store.chat.orgFormPositioning" placeholder="Why this organisation matters..." rows="2"></textarea>
+                  <label>Description</label>
+                  <textarea x-model="$store.chat.orgFormDescription" placeholder="Notes, details..." rows="3"></textarea>
+                  <label>Tags</label>
+                  <input type="text" x-model="$store.chat.orgFormTags" placeholder="Comma-separated tags">
+
+                  <!-- Contacts -->
+                  <label>Contacts</label>
+                  <div class="contacts-editor">
+                    <template x-for="(contact, idx) in $store.chat.orgFormContacts" :key="idx">
+                      <div class="contact-row">
+                        <input type="text" class="contact-type" x-model="contact.type" placeholder="Type (email, phone, npub, website...)">
+                        <input type="text" class="contact-value" x-model="contact.value" placeholder="Value">
+                        <input type="text" class="contact-label" x-model="contact.label" placeholder="Label (optional)">
+                        <button class="btn btn-sm btn-danger contact-remove" @click="$store.chat.orgFormContacts.splice(idx, 1)">&times;</button>
+                      </div>
+                    </template>
+                    <button class="btn btn-sm" @click="$store.chat.orgFormContacts.push({ type: '', value: '', label: '' })">+ Add contact</button>
+                  </div>
+
+                  <!-- Person links (read-only display + link/unlink) -->
+                  <template x-if="$store.chat.editingOrgId">
+                    <div class="person-org-links">
+                      <label>People</label>
+                      <template x-for="link in ($store.chat.organisations.find(o => o.record_id === $store.chat.editingOrgId)?.person_links || [])" :key="link.person_id">
+                        <div class="link-row">
+                          <span class="link-name" x-text="$store.chat.getPersonName(link.person_id) || link.person_id.slice(0,12) + '...'"></span>
+                          <span class="link-role" x-show="link.role" x-text="'(' + link.role + ')'"></span>
+                          <button class="btn btn-sm btn-danger" @click="$store.chat.unlinkPersonFromOrg(link.person_id, $store.chat.editingOrgId)">&times;</button>
+                        </div>
+                      </template>
+                      <div class="link-picker-inline" x-show="!$store.chat.linkPickerOpen">
+                        <button class="btn btn-sm" @click="$store.chat.linkPickerOpen = true; $store.chat.linkPickerTarget = 'org'; $store.chat.linkPickerRole = '';">+ Link person</button>
+                      </div>
+                      <div class="link-picker-inline" x-show="$store.chat.linkPickerOpen && $store.chat.linkPickerTarget === 'org'">
+                        <select @change="
+                          if ($event.target.value) {
+                            $store.chat.linkPersonToOrg($event.target.value, $store.chat.editingOrgId, $store.chat.linkPickerRole);
+                            $event.target.value = '';
+                            $store.chat.linkPickerOpen = false;
+                          }
+                        ">
+                          <option value="">Select person...</option>
+                          <template x-for="person in $store.chat.persons" :key="person.record_id">
+                            <option :value="person.record_id" x-text="person.title || 'Unnamed'"></option>
+                          </template>
+                        </select>
+                        <input type="text" x-model="$store.chat.linkPickerRole" placeholder="Role (optional)">
+                        <button class="btn btn-sm" @click="$store.chat.linkPickerOpen = false">Cancel</button>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div class="person-editor-save">
+                    <button class="btn btn-primary" @click="
+                      const contacts = $store.chat.orgFormContacts.filter(c => c.value.trim());
+                      if ($store.chat.editingOrgId) {
+                        $store.chat.updateOrganisation($store.chat.editingOrgId, {
+                          title: $store.chat.orgFormTitle,
+                          description: $store.chat.orgFormDescription,
+                          positioning: $store.chat.orgFormPositioning,
+                          tags: $store.chat.orgFormTags,
+                          contacts,
+                        });
+                      } else {
+                        $store.chat.createOrganisation({
+                          title: $store.chat.orgFormTitle,
+                          description: $store.chat.orgFormDescription,
+                          positioning: $store.chat.orgFormPositioning,
+                          tags: $store.chat.orgFormTags,
+                          contacts,
+                        });
+                      }
+                      $store.chat.showOrgEditor = false;
+                    ">Save</button>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
         </template>
 
         <template x-if="$store.chat.navSection === 'settings'">
           <div class="settings-section">
           <div class="settings-tabs">
-            <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'workspace' }" @click="$store.chat.settingsTab = 'workspace'">Workspace</button>
+            <button x-show="$store.chat.canAdminWorkspace" class="settings-tab" :class="{ active: $store.chat.settingsTab === 'workspace' }" @click="$store.chat.settingsTab = 'workspace'">Workspace</button>
             <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'connection' }" @click="$store.chat.settingsTab = 'connection'">Connection</button>
-            <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'automation' }" @click="$store.chat.settingsTab = 'automation'">Automation</button>
+            <button x-show="$store.chat.canAdminWorkspace" class="settings-tab" :class="{ active: $store.chat.settingsTab === 'automation' }" @click="$store.chat.settingsTab = 'automation'">Automation</button>
             <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'data' }" @click="$store.chat.settingsTab = 'data'">Data</button>
-            <button class="settings-tab" :class="{ active: $store.chat.settingsTab === 'sharing' }" @click="$store.chat.settingsTab = 'sharing'">Sharing</button>
+            <button x-show="$store.chat.canAdminWorkspace" class="settings-tab" :class="{ active: $store.chat.settingsTab === 'sharing' }" @click="$store.chat.settingsTab = 'sharing'">Sharing</button>
           </div>
-          <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'workspace'">
+          <div class="settings-tab-content" x-show="$store.chat.canAdminWorkspace && $store.chat.settingsTab === 'workspace'">
           <section class="settings-panel workspace-settings-panel">
             <div class="settings-panel-header">
               <div>
@@ -4487,7 +5158,7 @@
           </section>
           </div>
 
-          <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'automation'">
+          <div class="settings-tab-content" x-show="$store.chat.canAdminWorkspace && $store.chat.settingsTab === 'automation'">
           <section class="settings-panel">
             <div class="settings-panel-header">
               <div>
@@ -4693,9 +5364,27 @@
               </div>
             </div>
           </section>
+
+          <section class="settings-panel" style="margin-top: 1.5rem;">
+            <div class="settings-panel-header">
+              <div>
+                <h2>Workspace Removal</h2>
+                <p>Remove this workspace from this browser only. The workspace stays on SuperBased and can be re-added later.</p>
+              </div>
+            </div>
+            <div class="settings-actions">
+              <button
+                type="button"
+                class="btn-danger"
+                @click="$store.chat.removeWorkspace($store.chat.currentWorkspaceKey || $store.chat.currentWorkspaceOwnerNpub)"
+                :disabled="!($store.chat.currentWorkspaceKey || $store.chat.currentWorkspaceOwnerNpub) || $store.chat.removingWorkspace"
+                x-text="$store.chat.removingWorkspace ? 'Removing...' : 'Remove workspace'"
+              ></button>
+            </div>
+          </section>
           </div>
 
-          <div class="settings-tab-content" x-show="$store.chat.settingsTab === 'sharing'">
+          <div class="settings-tab-content" x-show="$store.chat.canAdminWorkspace && $store.chat.settingsTab === 'sharing'">
           <section class="settings-panel">
             <div class="groups-header">
               <div>
@@ -4723,7 +5412,7 @@
                         </summary>
                         <div class="group-actions-popover">
                           <button type="button" class="group-action-item" :disabled="$store.chat.groupActionsLocked" @click="$event.currentTarget.closest('details')?.removeAttribute('open'); $store.chat.openEditGroupModal(group.group_id)">Edit group</button>
-                          <button type="button" class="group-action-item group-action-delete" :disabled="$store.chat.groupActionsLocked" @click="$event.currentTarget.closest('details')?.removeAttribute('open'); $store.chat.deleteSharingGroup(group.group_id)" x-text="$store.chat.isGroupDeletePending(group.group_id) ? 'Deleting…' : 'Delete group'"></button>
+                          <button type="button" class="group-action-item group-action-delete" x-show="!$store.chat.isProtectedWorkspaceGroup(group)" :disabled="$store.chat.groupActionsLocked" @click="$event.currentTarget.closest('details')?.removeAttribute('open'); $store.chat.deleteSharingGroup(group.group_id)" x-text="$store.chat.isGroupDeletePending(group.group_id) ? 'Deleting…' : 'Delete group'"></button>
                         </div>
                       </details>
                     </div>
@@ -4858,7 +5547,7 @@
             <p class="new-group-hint">Rename the group and manage who can use it for sharing.</p>
 
             <label class="docs-field-label">Name</label>
-            <input class="new-group-input" type="text" x-model="$store.chat.editGroupName" placeholder="e.g. Team, Clients, Reviewers" @keydown.enter.prevent="$store.chat.saveGroupEdits()" :disabled="$store.chat.groupEditPending" />
+            <input class="new-group-input" type="text" x-model="$store.chat.editGroupName" placeholder="e.g. Team, Clients, Reviewers" @keydown.enter.prevent="$store.chat.saveGroupEdits()" :disabled="$store.chat.groupEditPending || $store.chat.isProtectedWorkspaceGroup($store.chat.editGroupId)" />
 
             <label class="docs-field-label">Members</label>
             <input class="new-group-input" type="text" x-model="$store.chat.editGroupMemberQuery" placeholder="Paste npub or comma-separated npubs" @keydown.enter.prevent="$store.chat.addEditGroupMemberFromQuery()" @input="if($event.target.value.includes(',')) $store.chat.addEditGroupMemberFromQuery()" :disabled="$store.chat.groupEditPending" />
@@ -4908,8 +5597,8 @@
           </div>
         </div>
 
-        <div class="doc-modal-backdrop" x-show="$store.chat.showChannelSettingsModal" x-cloak>
-          <div class="doc-modal-card new-doc-modal">
+        <div class="doc-modal-backdrop channel-settings-modal-backdrop" x-show="$store.chat.showChannelSettingsModal" x-cloak @click.self="$store.chat.closeChannelSettings()">
+          <div class="doc-modal-card new-doc-modal channel-settings-modal">
             <h3>Channel settings</h3>
             <p class="docs-browser-empty" x-text="$store.chat.selectedChannel ? $store.chat.getChannelLabel($store.chat.selectedChannel) : ''"></p>
             <p class="docs-browser-empty" x-text="$store.chat.selectedChannel ? (($store.chat.getChannelParticipants($store.chat.selectedChannel) || []).length + ' participants') : ''"></p>
@@ -4925,10 +5614,10 @@
                     <button type="button" class="scope-clear-btn" @click="$store.chat.clearChannelScope()" title="Remove scope">x</button>
                   </div>
                 </template>
-                <button type="button" class="scope-picker-toggle" @click="$store.chat.openScopePicker()"
+                <button type="button" class="scope-picker-toggle" @click="$store.chat.openChannelScopePicker()"
                   x-text="$store.chat.selectedChannel?.scope_id ? 'Change' : 'Set scope...'"></button>
-                <div class="scope-picker-popover" x-show="$store.chat.showScopePicker" x-cloak>
-                  <input type="text" class="scope-picker-input" x-model="$store.chat.scopePickerQuery" placeholder="Search scopes..." @keydown.escape="$store.chat.closeScopePicker()" />
+                <div class="scope-picker-popover" x-show="$store.chat.showChannelScopePicker" x-cloak>
+                  <input type="text" class="scope-picker-input" x-model="$store.chat.scopePickerQuery" placeholder="Search scopes..." @keydown.escape="$store.chat.closeChannelScopePicker()" />
                   <div class="scope-picker-results">
                     <template x-for="[levelKey, levelScopes] in Object.entries($store.chat.scopePickerResults)" :key="levelKey">
                       <template x-if="levelScopes.length > 0">
@@ -4954,7 +5643,12 @@
 
             <div class="new-doc-modal-actions">
               <button type="button" class="btn-cancel" @click="$store.chat.closeChannelSettings()">Close</button>
-              <button type="button" class="btn-delete-doc" @click="$store.chat.deleteSelectedChannel()">Delete channel</button>
+              <button
+                type="button"
+                class="btn-delete-doc"
+                :class="{ 'btn-delete-doc-confirm': $store.chat.channelDeleteConfirmArmed }"
+                @click.stop.prevent="$store.chat.deleteSelectedChannel()"
+                x-text="$store.chat.channelDeleteConfirmArmed ? 'Confirm delete' : 'Delete channel'"></button>
             </div>
           </div>
         </div>
@@ -5122,6 +5816,64 @@
                 :disabled="$store.chat.newChannelMode === 'dm' ? !($store.chat.newChannelDmNpub.startsWith('npub1') && $store.chat.newChannelDmNpub.length >= 63) : !$store.chat.newChannelName.trim() || !$store.chat.newChannelGroupId">
                 Create
               </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop" x-show="$store.chat.recordVersionModalOpen" x-cloak @click.self="$store.chat.closeRecordVersionHistory()">
+          <div class="doc-modal-card record-version-modal">
+            <div class="record-version-header">
+              <div>
+                <h3>Version History</h3>
+                <span class="record-version-label" x-text="$store.chat.recordVersionLabel"></span>
+              </div>
+              <div class="record-version-header-actions">
+                <button type="button" class="doc-versioning-action-btn" :disabled="$store.chat.recordVersionSelectedIndex < 0" @click="$store.chat.copyRecordVersionJson()">Copy JSON</button>
+                <button class="modal-close" type="button" @click="$store.chat.closeRecordVersionHistory()">&times;</button>
+              </div>
+            </div>
+            <div class="record-version-body">
+              <aside class="record-version-list">
+                <template x-if="$store.chat.recordVersionLoading">
+                  <div class="doc-versioning-status">Loading versions...</div>
+                </template>
+                <template x-if="$store.chat.recordVersionError">
+                  <div class="doc-versioning-status doc-versioning-error" x-text="$store.chat.recordVersionError"></div>
+                </template>
+                <template x-if="!$store.chat.recordVersionLoading && !$store.chat.recordVersionError && $store.chat.recordVersionHistory.length === 0">
+                  <div class="doc-versioning-status">No version history available.</div>
+                </template>
+                <template x-for="(ver, index) in $store.chat.recordVersionHistory" :key="ver.version">
+                  <button type="button"
+                    class="doc-version-item"
+                    :class="{ 'doc-version-item-selected': $store.chat.recordVersionSelectedIndex === index }"
+                    @click="$store.chat.selectRecordVersion(index)">
+                    <span class="doc-version-number" x-text="'v' + ver.version"></span>
+                    <span class="doc-version-title" x-text="ver.data?.title || ver.data?.record_state || ('Version ' + ver.version)"></span>
+                    <span class="doc-version-date" x-text="$store.chat.formatRelativeTime(ver.updated_at)"></span>
+                  </button>
+                </template>
+              </aside>
+              <div class="record-version-detail">
+                <template x-if="$store.chat.selectedRecordVersion && $store.chat.selectedRecordVersion.decryptError">
+                  <div class="record-version-decrypt-error">Could not decrypt this version.</div>
+                </template>
+                <template x-if="$store.chat.selectedRecordVersion && $store.chat.selectedRecordVersion.data">
+                  <div class="record-version-fields">
+                    <template x-for="key in Object.keys($store.chat.selectedRecordVersion.data).filter(k => !['record_state','shares','scope_id','scope_l1_id','scope_l2_id','scope_l3_id','scope_l4_id','scope_l5_id'].includes(k))" :key="key">
+                      <div class="record-version-field">
+                        <label class="record-version-field-label" x-text="key.replace(/_/g, ' ')"></label>
+                        <div class="record-version-field-value" :class="{ 'record-version-field-pre': Array.isArray($store.chat.selectedRecordVersion.data[key]) || typeof $store.chat.selectedRecordVersion.data[key] === 'object' }">
+                          <span x-text="$store.chat.formatRecordVersionField(key, $store.chat.selectedRecordVersion.data[key])"></span>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="!$store.chat.selectedRecordVersion">
+                  <div class="record-version-empty">Select a version to view its fields.</div>
+                </template>
+              </div>
             </div>
           </div>
         </div>
