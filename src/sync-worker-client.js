@@ -1,4 +1,3 @@
-import { setBaseUrl } from './api.js';
 import { getExtensionPublicKey, signEventWithExtension } from './auth/nostr.js';
 import { exportDecryptedKeys, getActiveSessionNpub } from './crypto/group-keys.js';
 import { exportWorkspaceKeyForWorker } from './crypto/workspace-keys.js';
@@ -11,11 +10,14 @@ const AUTH_RESPONSE_TYPE = 'sync-worker:auth-response';
 const BOOTSTRAP_KEYS_TYPE = 'sync-worker:bootstrap-keys';
 const SSE_STATUS_TYPE = 'sync-worker:sse-status';
 
+const MAX_RECOVERY_ATTEMPTS = 2;
+const RECOVERY_DELAY_MS = 500;
+
 let _sseStatusCallback = null;
+let _workerDegradedCallback = null;
 
 let workerInstance = null;
 let nextRequestId = 1;
-let localModulePromise = null;
 const pendingRequests = new Map();
 const requestQueue = [];
 let drainingQueue = false;
@@ -32,8 +34,7 @@ function createWorkerInstance() {
     worker.addEventListener('error', handleWorkerError);
     worker.addEventListener('messageerror', handleWorkerError);
     return worker;
-  } catch (error) {
-    workerInstance = null;
+  } catch {
     return null;
   }
 }
@@ -52,7 +53,7 @@ function resetWorkerInstance() {
       workerInstance.removeEventListener('messageerror', handleWorkerError);
       workerInstance.terminate();
     } catch {
-      // Ignore termination failures; the client will fall back cleanly.
+      // Ignore termination failures during cleanup.
     }
   }
   workerInstance = null;
@@ -166,55 +167,6 @@ function deserializeWorkerError(error) {
   return reconstructed;
 }
 
-async function getLocalWorkerModule() {
-  if (!localModulePromise) {
-    localModulePromise = import('./worker/sync-worker.js');
-  }
-  return localModulePromise;
-}
-
-function primeRequestBaseUrl(payload) {
-  const backendUrl = String(payload?.options?.backendUrl || '').trim();
-  if (backendUrl) {
-    setBaseUrl(backendUrl);
-  }
-}
-
-async function invokeLocally(method, payload) {
-  primeRequestBaseUrl(payload);
-  const mod = await getLocalWorkerModule();
-  switch (method) {
-    case 'runSync':
-      return mod.runSync(
-        payload.ownerNpub,
-        payload.viewerNpub,
-        payload.onProgress,
-        payload.options,
-      );
-    case 'pullRecordsForFamilies':
-      return mod.pullRecordsForFamilies(
-        payload.ownerNpub,
-        payload.viewerNpub,
-        payload.families,
-        payload.options,
-        payload.onProgress,
-      );
-    case 'pruneOnLogin':
-      return mod.pruneOnLogin(
-        payload.viewerNpub,
-        payload.ownerNpub,
-        payload.options,
-      );
-    case 'checkStaleness':
-      return mod.checkStaleness(
-        payload.ownerNpub,
-        payload.options,
-      );
-    default:
-      throw new Error(`Unsupported sync worker method: ${method}`);
-  }
-}
-
 function syncKeysToWorker(worker) {
   if (!worker) return;
   try {
@@ -229,13 +181,17 @@ function syncKeysToWorker(worker) {
   }
 }
 
-function invokeWithWorker(method, payload, onProgress) {
-  const worker = ensureWorkerInstance();
-  if (!worker) {
-    return invokeLocally(method, { ...payload, onProgress });
+function notifyDegraded(reason) {
+  if (typeof _workerDegradedCallback === 'function') {
+    _workerDegradedCallback({ degraded: true, reason });
   }
-  syncKeysToWorker(worker);
+}
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function sendToWorker(worker, method, payload, onProgress) {
   return new Promise((resolve, reject) => {
     const id = nextRequestId++;
     pendingRequests.set(id, { resolve, reject, onProgress });
@@ -248,10 +204,44 @@ function invokeWithWorker(method, payload, onProgress) {
       });
     } catch (error) {
       pendingRequests.delete(id);
-      resetWorkerInstance();
-      invokeLocally(method, { ...payload, onProgress }).then(resolve, reject);
+      reject(error);
     }
   });
+}
+
+async function invokeWithWorker(method, payload, onProgress) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= MAX_RECOVERY_ATTEMPTS; attempt++) {
+    const worker = ensureWorkerInstance();
+    if (!worker) {
+      const reason = supportsWorker()
+        ? 'Sync worker could not be created'
+        : 'Web Workers are not supported in this browser';
+      notifyDegraded(reason);
+      throw new Error(`Sync unavailable: ${reason}. Queued writes are preserved for later retry.`);
+    }
+
+    syncKeysToWorker(worker);
+
+    try {
+      return await sendToWorker(worker, method, payload, onProgress);
+    } catch (error) {
+      lastError = error;
+      // Reset the dead worker so ensureWorkerInstance creates a fresh one
+      resetWorkerInstance();
+      if (attempt < MAX_RECOVERY_ATTEMPTS) {
+        await delay(RECOVERY_DELAY_MS);
+      }
+    }
+  }
+
+  notifyDegraded(lastError?.message || 'Worker recovery failed');
+  const surfaced = new Error(
+    `Sync worker recovery failed after ${MAX_RECOVERY_ATTEMPTS} attempts: ${lastError?.message || 'unknown error'}. Queued writes are preserved for later retry.`,
+  );
+  surfaced.cause = lastError;
+  throw surfaced;
 }
 
 function enqueue(method, payload, onProgress) {
@@ -342,6 +332,10 @@ export async function checkStaleness(ownerNpub, options = {}) {
 
 export function setSSEStatusCallback(callback) {
   _sseStatusCallback = callback;
+}
+
+export function setWorkerDegradedCallback(callback) {
+  _workerDegradedCallback = callback;
 }
 
 export function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey) {
