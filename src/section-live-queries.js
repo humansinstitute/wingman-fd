@@ -15,6 +15,8 @@ import {
   getCommentsByTarget,
   getFlowsByOwner,
   getApprovalsByStatus,
+  getPersonsByOwner,
+  getOrganisationsByOwner,
 } from './db.js';
 import { recordFamilyHash } from './translators/chat.js';
 
@@ -220,6 +222,20 @@ function buildWorkspaceSpecs(store) {
           key: 'flows:scopes',
           query: () => getScopesByOwner(ownerNpub),
           onNext: (scopes) => store.applyScopes(scopes),
+        },
+      ];
+      break;
+    case 'people':
+      sectionSpecs = [
+        {
+          key: 'people:persons',
+          query: () => getPersonsByOwner(ownerNpub),
+          onNext: (persons) => store.applyPersons(persons),
+        },
+        {
+          key: 'people:organisations',
+          query: () => getOrganisationsByOwner(ownerNpub),
+          onNext: (orgs) => store.applyOrganisations(orgs),
         },
       ];
       break;

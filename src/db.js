@@ -51,6 +51,8 @@ const WORKSPACE_STORES = {
   scopes:             'record_id, owner_npub, level, parent_id, l1_id, l2_id, l3_id, l4_id, l5_id, updated_at',
   flows:              'record_id, owner_npub, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, sync_status, updated_at, *group_ids',
   approvals:          'record_id, owner_npub, flow_id, flow_run_id, flow_step, status, approval_mode, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, sync_status, updated_at, *group_ids, *task_ids',
+  persons:            'record_id, owner_npub, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
+  organisations:      'record_id, owner_npub, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
   sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
   pending_writes:     '++row_id, record_id, record_family_hash, created_at',
   sync_state:         'key',
@@ -109,7 +111,12 @@ function createWorkspaceDb(workspaceDbKey) {
   delete WORKSPACE_STORES_V4.approvals;
   db.version(4).stores(WORKSPACE_STORES_V4);
   // v5: add flows, approvals tables + task flow extension indexes
-  db.version(5).stores(WORKSPACE_STORES);
+  const WORKSPACE_STORES_V5 = { ...WORKSPACE_STORES };
+  delete WORKSPACE_STORES_V5.persons;
+  delete WORKSPACE_STORES_V5.organisations;
+  db.version(5).stores(WORKSPACE_STORES_V5);
+  // v6: add persons, organisations tables
+  db.version(6).stores(WORKSPACE_STORES);
   return db;
 }
 
@@ -343,6 +350,27 @@ export async function upsertChannel(channel) {
 
 export async function getChannelById(recordId) {
   return wsDb().channels.get(recordId);
+}
+
+export async function deleteChannelRuntimeState(channelId) {
+  if (!channelId) {
+    return { deletedChannels: 0, deletedMessages: 0, deletedPendingWrites: 0 };
+  }
+
+  const db = wsDb();
+  return db.transaction('rw', db.channels, db.chat_messages, db.pending_writes, async () => {
+    const messageIds = (await db.chat_messages.where('channel_id').equals(channelId).primaryKeys())
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const pendingWriteRecordIds = [...new Set([channelId, ...messageIds])];
+    const deletedMessages = await db.chat_messages.where('channel_id').equals(channelId).delete();
+    const deletedPendingWrites = pendingWriteRecordIds.length > 0
+      ? await db.pending_writes.where('record_id').anyOf(pendingWriteRecordIds).delete()
+      : 0;
+    const deletedChannels = await db.channels.where('record_id').equals(channelId).delete();
+
+    return { deletedChannels, deletedMessages, deletedPendingWrites };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -765,6 +793,45 @@ export async function getApprovalsByStatus(status) {
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
+export async function getAllApprovals() {
+  const rows = await wsDb().approvals.toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
+// persons — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertPerson(person) {
+  return wsDb().persons.put(sanitizeForStorage(person));
+}
+
+export async function getPersonById(recordId) {
+  return wsDb().persons.get(recordId);
+}
+
+export async function getPersonsByOwner(ownerNpub) {
+  const rows = await wsDb().persons.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
+// organisations — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertOrganisation(organisation) {
+  return wsDb().organisations.put(sanitizeForStorage(organisation));
+}
+
+export async function getOrganisationById(recordId) {
+  return wsDb().organisations.get(recordId);
+}
+
+export async function getOrganisationsByOwner(ownerNpub) {
+  const rows = await wsDb().organisations.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
 // ---------------------------------------------------------------------------
 // Bulk clear helpers — workspace DB
 // ---------------------------------------------------------------------------
@@ -784,6 +851,8 @@ export async function clearRuntimeData() {
     db.scopes.clear(),
     db.flows.clear(),
     db.approvals.clear(),
+    db.persons.clear(),
+    db.organisations.clear(),
     db.sync_quarantine.clear(),
     db.groups.clear(),
     db.pending_writes.clear(),

@@ -27,6 +27,8 @@ import {
   upsertScope,
   upsertFlow,
   upsertApproval,
+  upsertPerson,
+  upsertOrganisation,
   getSyncState,
   setSyncState,
   upsertSyncQuarantineEntry,
@@ -46,6 +48,8 @@ import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
 import { inboundFlow, recordFamilyHash as flowFamilyHash } from '../translators/flows.js';
 import { inboundApproval, recordFamilyHash as approvalFamilyHash } from '../translators/approvals.js';
+import { inboundPerson, recordFamilyHash as personFamilyHash } from '../translators/persons.js';
+import { inboundOrganisation, recordFamilyHash as organisationFamilyHash } from '../translators/organisations.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
 import { pruneInaccessibleRecords, repairStaleGroupRefs } from '../access-pruner.js';
@@ -64,6 +68,8 @@ const AUDIO_NOTE_FAMILY = recordFamilyHash('audio_note');
 const SCOPE_FAMILY = recordFamilyHash('scope');
 const FLOW_FAMILY = flowFamilyHash('flow');
 const APPROVAL_FAMILY = approvalFamilyHash('approval');
+const PERSON_FAMILY = personFamilyHash('person');
+const ORGANISATION_FAMILY = organisationFamilyHash('organisation');
 const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
 const WRITE_BATCH_SIZE = 25;
 
@@ -111,6 +117,12 @@ async function materializeRecordForFamily(family, record) {
   } else if (family === APPROVAL_FAMILY) {
     const row = await inboundApproval(record);
     await upsertApproval(row);
+  } else if (family === PERSON_FAMILY) {
+    const row = await inboundPerson(record);
+    await upsertPerson(row);
+  } else if (family === ORGANISATION_FAMILY) {
+    const row = await inboundOrganisation(record);
+    await upsertOrganisation(row);
   }
 }
 
@@ -261,6 +273,17 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
     const { sinceKey, since } = cursorEntries[i];
     const label = familyLabel(family);
 
+    if (onProgress) {
+      onProgress({
+        phase: 'pulling',
+        completedFamilies,
+        totalFamilies,
+        currentFamily: label,
+        currentFamilyHash: family,
+        pulled: totalPulled,
+      });
+    }
+
     let latestApplied = since ?? '';
     let appliedCount = 0;
     let skippedCount = 0;
@@ -284,7 +307,14 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
     totalPulled += records.length;
     completedFamilies++;
 
-    if (onProgress) onProgress({ phase: 'pulling', completedFamilies, totalFamilies, currentFamily: label, pulled: totalPulled });
+    if (onProgress) onProgress({
+      phase: 'pulling',
+      completedFamilies,
+      totalFamilies,
+      currentFamily: label,
+      currentFamilyHash: family,
+      pulled: totalPulled,
+    });
 
     if (appliedCount > 0 && skippedCount === 0 && latestApplied) {
       await setSyncState(sinceKey, latestApplied);
@@ -446,6 +476,20 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, opt
   if (onProgress) onProgress({ phase: 'checking' });
 
   const pushResult = await flushPendingWrites(ownerNpub, onProgress, options);
+
+  if (options.forceFull === true) {
+    if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: DEFAULT_FAMILIES.length, currentFamily: null, currentFamilyHash: null, pulled: 0, heartbeat: false });
+    const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress, options);
+
+    if (onProgress) onProgress({ phase: 'applying' });
+    const pruneResult = pullResult.pulled > 0
+      ? await maybePruneAfterSync(viewerNpub, ownerNpub)
+      : { pruned: 0 };
+    if (pullResult.pulled > 0 || pruneResult.pruned > 0) {
+      await updateUnreadSummaries(viewerNpub);
+    }
+    return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: false, forcedFull: true };
+  }
 
   // Heartbeat: ask server which families have updates
   const heartbeat = await heartbeatCheck(ownerNpub, viewerNpub, options);
