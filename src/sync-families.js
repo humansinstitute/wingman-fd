@@ -5,6 +5,8 @@ import { recordFamilyHash as scheduleFamilyHash } from './translators/schedules.
 import { recordFamilyHash as settingsFamilyHash } from './translators/settings.js';
 import { recordFamilyHash as flowFamilyHash } from './translators/flows.js';
 import { recordFamilyHash as approvalFamilyHash } from './translators/approvals.js';
+import { recordFamilyHash as personFamilyHash } from './translators/persons.js';
+import { recordFamilyHash as organisationFamilyHash } from './translators/organisations.js';
 
 export const SYNC_FAMILY_OPTIONS = Object.freeze([
   { id: 'settings', label: 'Workspace settings', hash: settingsFamilyHash('settings'), table: 'workspace_settings' },
@@ -20,6 +22,8 @@ export const SYNC_FAMILY_OPTIONS = Object.freeze([
   { id: 'scope', label: 'Scopes', hash: chatFamilyHash('scope'), table: 'scopes' },
   { id: 'flow', label: 'Flows', hash: flowFamilyHash('flow'), table: 'flows' },
   { id: 'approval', label: 'Approvals', hash: approvalFamilyHash('approval'), table: 'approvals' },
+  { id: 'person', label: 'People', hash: personFamilyHash('person'), table: 'persons' },
+  { id: 'organisation', label: 'Organisations', hash: organisationFamilyHash('organisation'), table: 'organisations' },
 ]);
 
 export const DEFAULT_SYNC_FAMILY_IDS = Object.freeze(SYNC_FAMILY_OPTIONS.map((family) => family.id));
