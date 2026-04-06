@@ -15,10 +15,15 @@ vi.mock('../src/translators/record-crypto.js', () => ({
 }));
 
 import { APP_NPUB } from '../src/app-identity.js';
+import { SYNC_FAMILY_OPTIONS } from '../src/sync-families.js';
+import { outboundApproval } from '../src/translators/approvals.js';
 import { outboundAudioNote } from '../src/translators/audio-notes.js';
 import { outboundChannel, outboundChatMessage } from '../src/translators/chat.js';
 import { outboundComment } from '../src/translators/comments.js';
 import { outboundDirectory, outboundDocument } from '../src/translators/docs.js';
+import { outboundFlow } from '../src/translators/flows.js';
+import { outboundOrganisation } from '../src/translators/organisations.js';
+import { outboundPerson } from '../src/translators/persons.js';
 import { outboundReport } from '../src/translators/reports.js';
 import { outboundSchedule } from '../src/translators/schedules.js';
 import { outboundScope } from '../src/translators/scopes.js';
@@ -30,12 +35,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const schemaDir = path.resolve(__dirname, '../../sb-publisher/schemas/flightdeck');
 
 const expectedFamilies = [
+  'approval',
   'audio_note',
   'channel',
   'chat_message',
   'comment',
   'directory',
   'document',
+  'flow',
+  'organisation',
+  'person',
   'report',
   'schedule',
   'scope',
@@ -63,8 +72,33 @@ describe('published Flight Deck schema manifests', () => {
     expect(families).toEqual(expectedFamilies);
   });
 
+  it('sync-family registry matches published schema set', () => {
+    const registryIds = SYNC_FAMILY_OPTIONS.map((f) => f.id).sort();
+    expect(registryIds).toEqual(expectedFamilies);
+  });
+
   it('validate real outbound Flight Deck payloads', async () => {
     const payloads = {
+      approval: JSON.parse((await outboundApproval({
+        record_id: 'approval-1',
+        owner_npub: 'npub_owner',
+        title: 'Gate review',
+        flow_id: 'flow-1',
+        flow_run_id: 'run-1',
+        flow_step: 2,
+        task_ids: ['task-1'],
+        status: 'pending',
+        approval_mode: 'manual',
+        brief: 'Looks good',
+        scope_id: 'deliverable-1',
+        scope_l1_id: 'product-1',
+        scope_l2_id: 'project-1',
+        scope_l3_id: 'deliverable-1',
+        scope_l4_id: null,
+        scope_l5_id: null,
+        shares: [],
+        group_ids: ['group-1'],
+      })).owner_payload.ciphertext),
       audio_note: JSON.parse((await outboundAudioNote({
         record_id: 'audio-1',
         owner_npub: 'npub_owner',
@@ -119,6 +153,55 @@ describe('published Flight Deck schema manifests', () => {
         scope_l4_id: null,
         scope_l5_id: null,
         shares: [],
+      })).owner_payload.ciphertext),
+      flow: JSON.parse((await outboundFlow({
+        record_id: 'flow-1',
+        owner_npub: 'npub_owner',
+        title: 'Release pipeline',
+        description: 'Standard release flow',
+        steps: [{ title: 'Build', type: 'task' }],
+        next_flow_id: null,
+        scope_id: 'product-1',
+        scope_l1_id: 'product-1',
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        shares: [],
+        group_ids: ['group-1'],
+      })).owner_payload.ciphertext),
+      organisation: JSON.parse((await outboundOrganisation({
+        record_id: 'org-1',
+        owner_npub: 'npub_owner',
+        title: 'Acme Corp',
+        description: 'Widget manufacturer',
+        positioning: 'Market leader',
+        contacts: [{ type: 'email', value: 'info@acme.test' }],
+        person_links: ['person-1'],
+        scope_id: 'product-1',
+        scope_l1_id: 'product-1',
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        shares: [],
+        group_ids: ['group-1'],
+      })).owner_payload.ciphertext),
+      person: JSON.parse((await outboundPerson({
+        record_id: 'person-1',
+        owner_npub: 'npub_owner',
+        title: 'Jane Doe',
+        description: 'Engineer',
+        contacts: [{ type: 'email', value: 'jane@acme.test' }],
+        organisation_links: ['org-1'],
+        scope_id: 'product-1',
+        scope_l1_id: 'product-1',
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        shares: [],
+        group_ids: ['group-1'],
       })).owner_payload.ciphertext),
       report: JSON.parse((await outboundReport({
         record_id: 'report-1',

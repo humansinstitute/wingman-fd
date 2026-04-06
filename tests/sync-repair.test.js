@@ -42,6 +42,8 @@ describe('sync repair helpers', () => {
       'scope',
       'flow',
       'approval',
+      'person',
+      'organisation',
     ]);
     expect(getSyncFamily('comment')?.table).toBe('comments');
     expect(getSyncStateKeyForFamily('audio_note')).toBe(`sync_since:${getSyncFamily('audio_note')?.hash}`);
