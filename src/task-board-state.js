@@ -22,6 +22,11 @@ import {
   normalizeGroupIds,
 } from './scope-delivery.js';
 import {
+  separateScopeShares,
+  rebuildAccessForScope,
+  mergeShareLists,
+} from './scope-move.js';
+import {
   getTaskBoardScopeLabel,
   isTaskUnscoped,
   matchesTaskBoardScope,
@@ -31,6 +36,29 @@ import {
   buildTaskCalendar,
 } from './task-calendar.js';
 import { toRaw } from './utils/state-helpers.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Shallow-compare two arrays of primitives or share objects (avoids JSON.stringify). */
+function sameShallowArray(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      // For object entries (shares), compare by stringified key fields only
+      if (typeof a[i] === 'object' && typeof b[i] === 'object') {
+        const ak = a[i], bk = b[i];
+        if ((ak?.group_npub ?? null) !== (bk?.group_npub ?? null)
+          || (ak?.via_group_npub ?? null) !== (bk?.via_group_npub ?? null)) return false;
+      } else {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,6 +83,41 @@ const EMPTY_ARRAY = Object.freeze([]);
 const scopesMapCache = new WeakMap();
 const taskGraphCache = new WeakMap();
 const taskBoardDerivedCache = new WeakMap();
+
+function chooseTaskRecord(current, candidate) {
+  const currentVersion = Number(current?.version ?? 0);
+  const candidateVersion = Number(candidate?.version ?? 0);
+  if (candidateVersion !== currentVersion) {
+    return candidateVersion > currentVersion ? candidate : current;
+  }
+  const currentUpdatedAt = String(current?.updated_at || '');
+  const candidateUpdatedAt = String(candidate?.updated_at || '');
+  if (candidateUpdatedAt !== currentUpdatedAt) {
+    return candidateUpdatedAt > currentUpdatedAt ? candidate : current;
+  }
+  return current;
+}
+
+export function dedupeTasksByRecordId(tasks = []) {
+  if (!Array.isArray(tasks) || tasks.length <= 1) return Array.isArray(tasks) ? tasks : [];
+  const deduped = [];
+  const indexByRecordId = new Map();
+  for (const task of tasks) {
+    const recordId = String(task?.record_id || '').trim();
+    if (!recordId) {
+      deduped.push(task);
+      continue;
+    }
+    const existingIndex = indexByRecordId.get(recordId);
+    if (existingIndex === undefined) {
+      indexByRecordId.set(recordId, deduped.length);
+      deduped.push(task);
+      continue;
+    }
+    deduped[existingIndex] = chooseTaskRecord(deduped[existingIndex], task);
+  }
+  return deduped;
+}
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -281,8 +344,8 @@ export function normalizeTaskRowGroupRefs(task, resolverFn) {
     : task.shares;
 
   const changed = nextBoardId !== (task.board_group_id ?? null)
-    || JSON.stringify(nextGroupIds) !== JSON.stringify(task.group_ids || [])
-    || JSON.stringify(nextShares) !== JSON.stringify(task.shares || []);
+    || !sameShallowArray(nextGroupIds, task.group_ids || [])
+    || !sameShallowArray(nextShares, task.shares || []);
 
   if (!changed) return task;
 
@@ -336,8 +399,8 @@ export function normalizeScheduleRowGroupRefs(schedule, resolverFn) {
     : schedule.shares;
 
   const changed = nextAssignedGroupId !== (schedule.assigned_group_id ?? null)
-    || JSON.stringify(nextGroupIds) !== JSON.stringify(schedule.group_ids || [])
-    || JSON.stringify(nextShares) !== JSON.stringify(schedule.shares || []);
+    || !sameShallowArray(nextGroupIds, schedule.group_ids || [])
+    || !sameShallowArray(nextShares, schedule.shares || []);
 
   if (!changed) return schedule;
 
@@ -407,9 +470,12 @@ export function computeFilteredTasks(boardScopedTasks, query, filterTags, assign
 }
 
 export function computeBoardColumns(activeTasks, doneTasks, summaryTasks) {
+  const normalizedSummaryTasks = dedupeTasksByRecordId(summaryTasks);
+  const normalizedActiveTasks = dedupeTasksByRecordId(activeTasks);
+  const normalizedDoneTasks = dedupeTasksByRecordId(doneTasks);
   const cols = [];
-  if (summaryTasks.length > 0) {
-    cols.push({ state: 'summary', label: 'Summary', tasks: summaryTasks });
+  if (normalizedSummaryTasks.length > 0) {
+    cols.push({ state: 'summary', label: 'Summary', tasks: normalizedSummaryTasks });
   }
   const states = ['new', 'ready', 'in_progress', 'review', 'done'];
   const labels = {
@@ -421,8 +487,8 @@ export function computeBoardColumns(activeTasks, doneTasks, summaryTasks) {
   };
   for (const state of states) {
     const tasks = state === 'done'
-      ? doneTasks
-      : activeTasks.filter(t => t.state === state);
+      ? normalizedDoneTasks
+      : normalizedActiveTasks.filter(t => t.state === state);
     cols.push({ state, label: labels[state], tasks });
   }
   return cols;
@@ -468,6 +534,10 @@ export const taskBoardStateMixin = {
     if (ref.type === 'scope') {
       const scope = this.scopesMap?.get(ref.id);
       return scope?.title || ref.id.slice(0, 8);
+    }
+    if (ref.type === 'flow') {
+      const flow = this.flows.find(f => f.record_id === ref.id);
+      return flow?.title || ref.id.slice(0, 8);
     }
     return ref.id.slice(0, 8);
   },
@@ -653,8 +723,13 @@ export const taskBoardStateMixin = {
 
   buildTaskBoardAssignment(scopeId, fallbackTask = null) {
     if (scopeId === ALL_TASK_BOARD_ID || scopeId === RECENT_TASK_BOARD_ID || scopeId === UNSCOPED_TASK_BOARD_ID) {
+      // Moving to unscoped — strip old scope shares, keep explicit
       const groupId = this.getWorkspaceSettingsGroupRef();
-      const shares = groupId ? this.buildScopeDefaultShares([groupId]) : this.getDefaultPrivateShares();
+      const fromScope = fallbackTask?.scope_id ? this.scopesMap.get(fallbackTask.scope_id) : null;
+      const fromGroupIds = fromScope ? this.getScopeShareGroupIds(fromScope) : [];
+      const { explicitShares } = separateScopeShares(toRaw(fallbackTask?.shares ?? []), fromGroupIds);
+      const defaultShares = groupId ? this.buildScopeDefaultShares([groupId]) : this.getDefaultPrivateShares();
+      const merged = mergeShareLists(defaultShares, explicitShares);
       return {
         scope_id: null,
         scope_l1_id: null,
@@ -662,9 +737,10 @@ export const taskBoardStateMixin = {
         scope_l3_id: null,
         scope_l4_id: null,
         scope_l5_id: null,
+        scope_policy_group_ids: null,
         board_group_id: groupId || fallbackTask?.board_group_id || null,
-        group_ids: this.getShareGroupIds(shares),
-        shares: toRaw(shares),
+        group_ids: this.getShareGroupIds(merged),
+        shares: toRaw(merged),
       };
     }
     const scope = this.scopesMap.get(scopeId) || null;
@@ -676,18 +752,27 @@ export const taskBoardStateMixin = {
         scope_l3_id: fallbackTask?.scope_l3_id ?? null,
         scope_l4_id: fallbackTask?.scope_l4_id ?? null,
         scope_l5_id: fallbackTask?.scope_l5_id ?? null,
+        scope_policy_group_ids: toRaw(fallbackTask?.scope_policy_group_ids ?? null),
         board_group_id: fallbackTask?.board_group_id ?? null,
         group_ids: toRaw(fallbackTask?.group_ids ?? []),
         shares: toRaw(fallbackTask?.shares ?? []),
       };
     }
 
-    const groupIds = this.getScopeShareGroupIds(scope);
+    // Scope move: separate old scope shares from explicit, rebuild for destination
+    const fromScope = fallbackTask?.scope_id ? this.scopesMap.get(fallbackTask.scope_id) : null;
+    const fromGroupIds = fromScope ? this.getScopeShareGroupIds(fromScope) : [];
+    const { explicitShares } = separateScopeShares(toRaw(fallbackTask?.shares ?? []), fromGroupIds);
+    const rebuilt = rebuildAccessForScope(explicitShares, scope, this.groups);
+    const groupIds = rebuilt.group_ids.map((id) => this.resolveGroupId(id)).filter(Boolean);
+    const boardGroupId = groupIds.includes(fallbackTask?.board_group_id) ? fallbackTask.board_group_id : (groupIds[0] || null);
+
     return {
       ...buildScopeTags(scope),
-      board_group_id: groupIds[0] || null,
+      scope_policy_group_ids: groupIds,
+      board_group_id: boardGroupId,
       group_ids: groupIds,
-      shares: this.buildScopeDefaultShares(groupIds),
+      shares: toRaw(rebuilt.shares),
     };
   },
 
@@ -730,6 +815,52 @@ export const taskBoardStateMixin = {
 
   normalizeScopeRowGroupRefs(scope) {
     return normalizeScopeRowGroupRefs(scope, (ref) => this.resolveGroupId(ref));
+  },
+
+  // --- section collapse ---
+
+  isSectionCollapsed(state) {
+    return Boolean(this.collapsedSections[state]);
+  },
+
+  toggleSectionCollapse(state) {
+    this.collapsedSections = {
+      ...this.collapsedSections,
+      [state]: !this.collapsedSections[state],
+    };
+    this.persistCollapsedSections();
+  },
+
+  persistCollapsedSections() {
+    if (typeof window === 'undefined') return;
+    const slug = this.currentWorkspaceSlug;
+    const key = slug
+      ? `coworker:${slug}:collapsed-sections`
+      : 'coworker:collapsed-sections';
+    const active = Object.fromEntries(
+      Object.entries(this.collapsedSections).filter(([, v]) => v)
+    );
+    if (Object.keys(active).length > 0) {
+      window.localStorage.setItem(key, JSON.stringify(active));
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  },
+
+  readStoredCollapsedSections() {
+    if (typeof window === 'undefined') return {};
+    const slug = this.currentWorkspaceSlug;
+    const key = slug
+      ? `coworker:${slug}:collapsed-sections`
+      : 'coworker:collapsed-sections';
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    } catch {
+      return {};
+    }
   },
 
   // --- board picker ---
@@ -920,7 +1051,7 @@ export const taskBoardStateMixin = {
   },
 
   get scheduleAssignableGroups() {
-    return this.currentWorkspaceGroups.map((group) => ({
+    return this.currentWorkspaceContentGroups.map((group) => ({
       groupId: group.group_id || group.group_npub,
       label: group.name || 'Group',
       subtitle: group.group_kind === 'private'
@@ -930,7 +1061,7 @@ export const taskBoardStateMixin = {
   },
 
   get scopeAssignableGroups() {
-    return this.currentWorkspaceGroups.map((group) => ({
+    return this.currentWorkspaceContentGroups.map((group) => ({
       groupId: group.group_id || group.group_npub,
       label: group.name || 'Group',
       subtitle: group.group_kind === 'private'

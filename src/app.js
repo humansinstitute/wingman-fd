@@ -19,8 +19,19 @@ import { syncManagerMixin } from './sync-manager.js';
 import { peopleProfilesManagerMixin } from './people-profiles-manager.js';
 import { connectSettingsManagerMixin } from './connect-settings-manager.js';
 import { unreadStoreMixin } from './unread-store.js';
+import { flowsManagerMixin } from './flows-manager.js';
+import { personsManagerMixin } from './persons-manager.js';
+import { createShellState } from './shell-state.js';
+import { getTaskFlowInfo, buildAttachFlowPatch, buildDetachFlowPatch } from './task-flow-helpers.js';
+import {
+  buildPredecessorTaskSuggestions,
+  describePredecessorRelationship,
+  getTaskPredecessorReferenceRows,
+  normalizePredecessorTaskIds,
+} from './task-predecessor-helpers.js';
 import {
   taskBoardStateMixin,
+  dedupeTasksByRecordId,
   UNSCOPED_TASK_BOARD_ID,
   WEEKDAY_OPTIONS,
 } from './task-board-state.js';
@@ -110,7 +121,7 @@ import {
 } from './translators/tasks.js';
 import { outboundSchedule } from './translators/schedules.js';
 import { outboundComment } from './translators/comments.js';
-import { recordFamilyHash as taskFamilyHash, parseReferencesFromDescription } from './translators/tasks.js';
+import { recordFamilyHash as taskFamilyHash, parseReferencesFromDescription, resolveFlowLinkage } from './translators/tasks.js';
 import {
   isTaskUnscoped,
   matchesTaskBoardScope,
@@ -136,6 +147,7 @@ import {
   setActiveSessionNpub,
   wrapKnownGroupKeyForMember,
 } from './crypto/group-keys.js';
+import { getActiveWorkspaceKeyNpub } from './crypto/workspace-keys.js';
 import { findWorkspaceByKey, mergeWorkspaceEntries, workspaceFromToken, findWorkspaceBySlug } from './workspaces.js';
 import { parseRouteLocation } from './route-helpers.js';
 import { extractInviteToken } from './invite-link.js';
@@ -185,6 +197,17 @@ function getReportDerivedCache(cacheStore, store) {
   return created;
 }
 
+function mergeTaskIntoList(tasks = [], nextTask) {
+  const recordId = String(nextTask?.record_id || '').trim();
+  if (!recordId) return Array.isArray(tasks) ? [...tasks] : [];
+  const current = Array.isArray(tasks) ? tasks : [];
+  const existingIndex = current.findIndex((task) => task?.record_id === recordId);
+  if (existingIndex === -1) return [...current, nextTask];
+  const merged = [...current];
+  merged[existingIndex] = nextTask;
+  return merged;
+}
+
 export function initApp() {
   const initialRoute = typeof window === 'undefined'
     ? { section: 'status' }
@@ -192,6 +215,7 @@ export function initApp() {
   const storeObj = {
     FAST_SYNC_MS: 15000,
     IDLE_SYNC_MS: 30000,
+    SSE_HEARTBEAT_CADENCE_MS: 120000,
     BACKGROUND_GROUP_REFRESH_MS: 5 * 60 * 1000,
     MAIN_FEED_PAGE_SIZE: 80,
     MESSAGE_PREVIEW_MAX_LINES: 15,
@@ -204,7 +228,10 @@ export function initApp() {
     ownerNpub: '',
     botNpub: '',
     session: null,
-    settingsTab: 'workspace',
+    get signingNpub() {
+      return getActiveWorkspaceKeyNpub() || this.session?.npub || null;
+    },
+    settingsTab: 'connection',
     navSection: initialRoute.section,
     calendarViews: CALENDAR_VIEWS,
     calendarView: 'month',
@@ -215,6 +242,7 @@ export function initApp() {
     popstateHandler: null,
     showAvatarMenu: false,
     showChannelSettingsModal: false,
+    channelDeleteConfirmArmed: false,
     presetConnecting: false,
     // Connect modal (two-step)
     showConnectModal: false,
@@ -242,19 +270,26 @@ export function initApp() {
       startedAt: null,
       finishedAt: null,
       lastSuccessAt: null,
+      manual: false,
       currentFamily: null,
+      currentFamilyHash: null,
       completedFamilies: 0,
       totalFamilies: 0,
       pushed: 0,
       pushTotal: 0,
       pulled: 0,
+      heartbeat: false,
       error: null,
     },
+    syncFamilyProgress: [],
+    showSyncProgressModal: false,
     hasForcedInitialBackfill: false,
     hasForcedTaskFamilyBackfill: false,
     backgroundSyncTimer: null,
     backgroundSyncInFlight: false,
     syncBackoffMs: 0,
+    sseStatus: 'disconnected',
+    catchUpSyncActive: false,
     hasBootstrappedUnreadTracking: false,
     visibilityHandler: null,
     lastGroupsRefreshAt: 0,
@@ -302,6 +337,57 @@ export function initApp() {
     docVersioningError: null,
     docVersioningSelectedIndex: -1,
     docVersioningPreviewHtml: '',
+    flows: [],
+    approvals: [],
+    editingFlowId: null,
+    showFlowEditor: false,
+    showFlowStartConfirm: false,
+    flowStartTarget: null,
+    flowStartContext: '',
+    showFlowPicker: false,
+    showApprovalDetail: false,
+    activeApprovalId: null,
+    approvalDecisionNote: '',
+    showApprovalHistory: false,
+    approvalHistoryFilter: '',
+    approvalHistoryScope: 'all',
+    approvalLinkedNames: {},
+    approvalPreviewIndex: 0,
+    approvalPreviewType: null,
+    approvalPreviewRecord: null,
+    approvalPreviewComments: [],
+    approvalPreviewCommentBody: '',
+    approvalPreviewAnchorLine: null,
+    approvalPreviewExpanded: false,
+    recordVersionModalOpen: false,
+    recordVersionFamilyId: '',
+    recordVersionRecordId: '',
+    recordVersionLabel: '',
+    recordVersionHistory: [],
+    recordVersionLoading: false,
+    recordVersionError: null,
+    recordVersionSelectedIndex: -1,
+    persons: [],
+    organisations: [],
+    peopleSubTab: 'people',
+    editingPersonId: null,
+    editingOrgId: null,
+    showPersonEditor: false,
+    showOrgEditor: false,
+    personFilter: '',
+    orgFilter: '',
+    personFormTitle: '',
+    personFormDescription: '',
+    personFormTags: '',
+    personFormContacts: [],
+    orgFormTitle: '',
+    orgFormDescription: '',
+    orgFormPositioning: '',
+    orgFormTags: '',
+    orgFormContacts: [],
+    linkPickerOpen: false,
+    linkPickerTarget: null,
+    linkPickerRole: '',
     activeTaskId: null,
     tasks: [],
     schedules: [],
@@ -317,6 +403,7 @@ export function initApp() {
     boardPickerQuery: '',
     showBoardDescendantTasks: false,
     taskViewMode: 'kanban',
+    collapsedSections: {},
     taskBoardScopeSetupInFlight: false,
     newTaskTitle: '',
     newSubtaskTitle: '',
@@ -324,6 +411,8 @@ export function initApp() {
     copiedTaskLinkId: null,
     editingTask: null,
     taskAssigneeQuery: '',
+    predecessorTaskQuery: '',
+    showPredecessorTaskPicker: false,
     taskScopeCascadePending: false,
     taskScopeCascadeMessage: '',
     showNewScheduleModal: false,
@@ -352,6 +441,7 @@ export function initApp() {
     scopesLoaded: false,
     scopePickerQuery: '',
     showScopePicker: false,
+    showChannelScopePicker: false,
     scopePickerTarget: null, // 'task' or record family being scoped
     newScopeTitle: '',
     newScopeDescription: '',
@@ -366,6 +456,22 @@ export function initApp() {
     editingScopeDescription: '',
     editingScopeAssignedGroupIds: [],
     editingScopeGroupQuery: '',
+    scopePolicyRepairBusy: false,
+    scopePolicyRepairSummary: '',
+    scopeRepairSession: {
+      phase: 'idle',
+      startedAt: null,
+      finishedAt: null,
+      currentFamily: null,
+      completedFamilies: 0,
+      totalFamilies: 0,
+      processedRecords: 0,
+      rewrittenRecords: 0,
+      totalRecords: 0,
+      error: null,
+    },
+    scopeRepairProgress: [],
+    showScopeRepairModal: false,
     // @mentions
     mentionActive: false,
     mentionQuery: '',
@@ -486,8 +592,11 @@ export function initApp() {
     recordStatusError: null,
     recordStatusNotice: '',
     recordStatusTowerVersionCount: 0,
+    recordStatusTowerLatestVersion: 0,
     recordStatusTowerUpdatedAt: '',
     recordStatusLocalPresent: false,
+    recordStatusLocalVersion: 0,
+    recordStatusLocalSyncStatus: '',
     recordStatusPendingWriteCount: 0,
     recordStatusWriteGroupRef: '',
     recordStatusWriteGroupLabel: '',
@@ -502,6 +611,7 @@ export function initApp() {
     newTriggerType: 'manual',
     newTriggerName: '',
     newTriggerId: '',
+    newTriggerChannelId: '',
     newTriggerBotNpub: '',
     newTriggerBotQuery: '',
     triggerMessage: {},
@@ -1088,10 +1198,15 @@ export function initApp() {
     async bootstrapSelectedWorkspace(options = {}) {
       if (!this.selectedWorkspaceKey && !this.currentWorkspaceOwnerNpub) return;
       await this.refreshGroups();
+      // Flows are loaded eagerly so flow linkage resolution works from any section
+      this.refreshFlows().catch(() => {});
+      // Fetch ws_key → user_npub mappings for display identity resolution
+      this.refreshWorkspaceKeyMappings().catch(() => {});
       if (options.runAccessPrune === true) {
         this.runAccessPruneOnLogin().catch(() => {});
       }
       this.selectedBoardId = this.readStoredTaskBoardId();
+      this.collapsedSections = this.readStoredCollapsedSections();
       this.validateSelectedBoardId();
       await this.applyRouteFromLocation();
       await this.refreshSyncStatus();
@@ -1597,10 +1712,15 @@ export function initApp() {
 
     openChannelSettings() {
       if (!this.selectedChannel) return;
+      this.closeScopePicker();
+      this.closeChannelScopePicker();
+      this.channelDeleteConfirmArmed = false;
       this.showChannelSettingsModal = true;
     },
 
     closeChannelSettings() {
+      this.closeChannelScopePicker();
+      this.channelDeleteConfirmArmed = false;
       this.showChannelSettingsModal = false;
     },
 
@@ -1615,8 +1735,8 @@ export function initApp() {
       if (activeSection !== 'tasks' && activeSection !== 'calendar') {
         this.tasks = [];
         this.taskComments = [];
-        this.editingTask = null;
         this.showTaskDetail = false;
+        this.editingTask = null;
       }
       if (activeSection !== 'docs') {
         this.documents = [];
@@ -2034,17 +2154,27 @@ export function initApp() {
       // Skip if we already have cached data and no new records were pulled
       if (this.statusRecentChanges.length > 0 && !options.force && !options.hasNewData) return;
       const sinceIso = new Date(Date.now() - this.getStatusRangeMs()).toISOString();
-      const messages = await getRecentChatMessagesSince(sinceIso);
-      const documents = await getRecentDocumentChangesSince(sinceIso);
-      const directories = await getRecentDirectoryChangesSince(sinceIso);
-      const reports = await getRecentReportChangesSince(sinceIso);
-      const tasks = await getRecentTaskChangesSince(sinceIso);
-      const schedules = await getRecentScheduleChangesSince(sinceIso);
-      const comments = await getRecentCommentsSince(sinceIso);
+      const [messages, documents, directories, reports, tasks, schedules, comments] = await Promise.all([
+        getRecentChatMessagesSince(sinceIso),
+        getRecentDocumentChangesSince(sinceIso),
+        getRecentDirectoryChangesSince(sinceIso),
+        getRecentReportChangesSince(sinceIso),
+        getRecentTaskChangesSince(sinceIso),
+        getRecentScheduleChangesSince(sinceIso),
+        getRecentCommentsSince(sinceIso),
+      ]);
       const items = [];
 
+      // Batch-load channels for messages instead of one query per message
+      const messageChannelIds = [...new Set(messages.map((m) => m.channel_id).filter(Boolean))];
+      const channelMap = new Map();
+      await Promise.all(messageChannelIds.map(async (channelId) => {
+        const ch = await getChannelById(channelId);
+        if (ch) channelMap.set(channelId, ch);
+      }));
+
       for (const message of messages) {
-        const channel = await getChannelById(message.channel_id);
+        const channel = channelMap.get(message.channel_id);
         if (!channel || channel.record_state === 'deleted') continue;
 
         this.resolveChatProfile(message.sender_npub);
@@ -2139,9 +2269,17 @@ export function initApp() {
         });
       }
 
-      for (const comment of comments) {
-        if (!String(comment.target_record_family_hash || '').endsWith(':task')) continue;
-        const task = await getTaskById(comment.target_record_id);
+      // Batch-load tasks for comments instead of one query per comment
+      const taskComments = comments.filter((c) => String(c.target_record_family_hash || '').endsWith(':task'));
+      const commentTaskIds = [...new Set(taskComments.map((c) => c.target_record_id).filter(Boolean))];
+      const taskMap = new Map();
+      await Promise.all(commentTaskIds.map(async (taskId) => {
+        const t = await getTaskById(taskId);
+        if (t) taskMap.set(taskId, t);
+      }));
+
+      for (const comment of taskComments) {
+        const task = taskMap.get(comment.target_record_id);
         if (!task || task.record_state === 'deleted') continue;
 
         this.resolveChatProfile(comment.sender_npub);
@@ -2290,24 +2428,25 @@ export function initApp() {
         const normalized = this.normalizeTaskRowScopeRefs(normalizedGroups);
         normalizedTasks.push(normalized);
       }
-      if (!sameListBySignature(this.tasks, normalizedTasks, (task) => [
+      const dedupedTasks = dedupeTasksByRecordId(normalizedTasks);
+      if (!sameListBySignature(this.tasks, dedupedTasks, (task) => [
         String(task?.record_id || ''),
         String(task?.updated_at || ''),
         String(task?.version ?? ''),
         String(task?.record_state || ''),
         String(task?.state || ''),
       ].join('|'))) {
-        this.tasks = normalizedTasks;
+        this.tasks = dedupedTasks;
       }
       // Resolve assignee profiles for display but do NOT write back to
       // Dexie (address book) from a liveQuery handler — that creates a
       // reactive cascade.  Profile resolution is fire-and-forget here.
-      const assignedNpubs = [...new Set(normalizedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
+      const assignedNpubs = [...new Set(dedupedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
       for (const npub of assignedNpubs) {
         this.resolveChatProfile(npub);
       }
       this.selectedTaskIds = this.selectedTaskIds.filter((taskId) =>
-        normalizedTasks.some((task) => task.record_id === taskId && task.record_state !== 'deleted' && !this.isParentTask(taskId))
+        dedupedTasks.some((task) => task.record_id === taskId && task.record_state !== 'deleted' && !this.isParentTask(taskId))
       );
       this.normalizeTaskFilterTags();
       this.updatePageTitle();
@@ -2337,10 +2476,13 @@ export function initApp() {
         if (!hasStoredRefs && this.editingTask.description) {
           this.editingTask.references = parseReferencesFromDescription(this.editingTask.description);
         }
+        this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
       }
       if (this.editingTask?.assigned_to_npub) {
         this.resolveChatProfile(this.editingTask.assigned_to_npub);
       }
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
       this.showTaskDetail = Boolean(selectedTask);
       this.taskDescriptionEditing = !this.editingTask?.description;
     },
@@ -2380,8 +2522,22 @@ export function initApp() {
     },
 
     openNewScheduleModal() {
-      this.resetNewScheduleForm();
-      this.showNewScheduleModal = true;
+      this.error = null;
+      try {
+        this.cancelEditSchedule();
+        this.resetNewScheduleForm();
+        this.showNewScheduleModal = true;
+        if (typeof window !== 'undefined') {
+          window.requestAnimationFrame(() => {
+            const input = document.querySelector('[data-new-schedule-title-input]');
+            input?.focus();
+            input?.select?.();
+          });
+        }
+      } catch (error) {
+        this.showNewScheduleModal = false;
+        this.error = error?.message || 'Failed to open the new schedule form.';
+      }
     },
 
     closeNewScheduleModal() {
@@ -2498,15 +2654,15 @@ export function initApp() {
 
         const envelope = await outboundSchedule({
           ...localRow,
-          signature_npub: this.session.npub,
-          write_group_npub: groupId,
+          signature_npub: this.signingNpub,
+          write_group_ref: groupId,
         });
         await addPendingWrite({
           record_id: localRow.record_id,
           record_family_hash: envelope.record_family_hash,
           envelope,
         });
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
         await this.refreshSchedules();
         this.resetNewScheduleForm();
         this.showNewScheduleModal = false;
@@ -2566,15 +2722,15 @@ export function initApp() {
         const envelope = await outboundSchedule({
           ...updated,
           previous_version: current.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: writeGroupId,
+          signature_npub: this.signingNpub,
+          write_group_ref: writeGroupId,
         });
         await addPendingWrite({
           record_id: updated.record_id,
           record_family_hash: envelope.record_family_hash,
           envelope,
         });
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
         await this.refreshSchedules();
         this.cancelEditSchedule();
       } catch (err) {
@@ -2615,15 +2771,15 @@ export function initApp() {
         const envelope = await outboundSchedule({
           ...updated,
           previous_version: schedule.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: updated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: updated.group_ids?.[0] || null,
         });
         await addPendingWrite({
           record_id: updated.record_id,
           record_family_hash: envelope.record_family_hash,
           envelope,
         });
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
       } catch (err) {
         this.error = `Failed to delete schedule: ${err.message}`;
       }
@@ -2645,6 +2801,13 @@ export function initApp() {
         return;
       }
 
+      const flowLinkage = resolveFlowLinkage({
+        title,
+        description: '',
+        references: [],
+        flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
+      });
+
       const localRow = {
         record_id: recordId,
         owner_npub: ownerNpub,
@@ -2657,7 +2820,11 @@ export function initApp() {
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
-        references: [],
+        predecessor_task_ids: null,
+        flow_id: flowLinkage.flow_id,
+        flow_run_id: flowLinkage.flow_run_id,
+        flow_step: flowLinkage.flow_step,
+        references: flowLinkage.references,
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -2666,20 +2833,20 @@ export function initApp() {
       };
 
       await upsertTask(localRow);
-      this.tasks = [...this.tasks, localRow];
+      this.tasks = mergeTaskIntoList(this.tasks, localRow);
       this.newTaskTitle = '';
 
       const envelope = await outboundTask({
         ...localRow,
-        signature_npub: this.session.npub,
-        write_group_npub: localRow.board_group_id || localRow.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: localRow.board_group_id || localRow.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: recordId,
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshTasks();
     },
 
@@ -2687,8 +2854,8 @@ export function initApp() {
       const envelope = await outboundTask({
         ...updatedTask,
         previous_version: previousTask?.version ?? 0,
-        signature_npub: this.session?.npub,
-        write_group_npub: updatedTask.board_group_id || updatedTask.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: updatedTask.board_group_id || updatedTask.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: updatedTask.record_id,
@@ -2737,7 +2904,7 @@ export function initApp() {
       }
 
       if (options.sync !== false) {
-        await this.performSync({ silent: options.silent !== false });
+        await this.flushAndBackgroundSync();
       }
       if (options.refresh) {
         await this.refreshTasks();
@@ -2814,6 +2981,7 @@ export function initApp() {
         assigned_to_npub: null,
         scheduled_for: null,
         tags: '',
+        predecessor_task_ids: null,
         references: [],
         sync_status: 'pending',
         record_state: 'active',
@@ -2823,20 +2991,20 @@ export function initApp() {
       };
 
       await upsertTask(localRow);
-      this.tasks = [...this.tasks, localRow];
+      this.tasks = mergeTaskIntoList(this.tasks, localRow);
       this.newSubtaskTitle = '';
 
       const envelope = await outboundTask({
         ...localRow,
-        signature_npub: this.session.npub,
-        write_group_npub: localRow.board_group_id || localRow.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: localRow.board_group_id || localRow.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: recordId,
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshTasks();
     },
 
@@ -2884,7 +3052,15 @@ export function initApp() {
       }
 
       const nextVersion = (task.version ?? 1) + 1;
-      const updated = toRaw({
+      const descRefs = parseReferencesFromDescription(this.editingTask.description);
+      const flowLinkage = resolveFlowLinkage({
+        title: this.editingTask.title,
+        description: this.editingTask.description,
+        references: descRefs,
+        flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
+      });
+      const predecessorTaskIds = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
+      const draft = toRaw({
         ...task,
         title: this.editingTask.title,
         description: this.editingTask.description,
@@ -2892,6 +3068,7 @@ export function initApp() {
         priority: this.editingTask.priority,
         scheduled_for: this.editingTask.scheduled_for,
         tags: this.editingTask.tags,
+        predecessor_task_ids: predecessorTaskIds.length > 0 ? predecessorTaskIds : null,
         assigned_to_npub: this.editingTask.assigned_to_npub ?? null,
         scope_id: this.editingTask.scope_id ?? null,
         scope_l1_id: this.editingTask.scope_l1_id ?? null,
@@ -2899,7 +3076,42 @@ export function initApp() {
         scope_l3_id: this.editingTask.scope_l3_id ?? null,
         scope_l4_id: this.editingTask.scope_l4_id ?? null,
         scope_l5_id: this.editingTask.scope_l5_id ?? null,
-        references: parseReferencesFromDescription(this.editingTask.description),
+        scope_policy_group_ids: this.editingTask.scope_policy_group_ids ?? task.scope_policy_group_ids ?? null,
+        board_group_id: this.editingTask.board_group_id ?? task.board_group_id ?? null,
+        shares: toRaw(this.editingTask.shares ?? task.shares ?? []),
+        group_ids: toRaw(this.editingTask.group_ids ?? task.group_ids ?? []),
+        flow_id: flowLinkage.flow_id ?? task.flow_id ?? null,
+        flow_run_id: flowLinkage.flow_run_id ?? task.flow_run_id ?? null,
+        flow_step: flowLinkage.flow_step ?? task.flow_step ?? null,
+        references: flowLinkage.references,
+      });
+      const scopePolicyPatch = draft.scope_id
+        ? (() => {
+          const previousScopeGroupIds = draft.scope_id !== task.scope_id && task.scope_id
+            ? this.getResolvedScopePolicyGroupIds(task.scope_id)
+            : [];
+          if (
+            draft.scope_id !== task.scope_id
+            || this.shouldRefreshScopedPolicy(draft, draft.scope_id, { allowLegacyGroupFallback: true })
+          ) {
+            return this.buildScopedPolicyRepairPatch(draft, {
+              scopeId: draft.scope_id,
+              previousScopeGroupIds,
+              includeBoardGroupId: true,
+              fallbackPolicyGroupIds: task.group_ids || [],
+            });
+          }
+          return {
+            scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(draft.scope_id),
+            board_group_id: draft.board_group_id || draft.group_ids?.[0] || null,
+          };
+        })()
+        : {
+          scope_policy_group_ids: null,
+        };
+      const updated = toRaw({
+        ...draft,
+        ...scopePolicyPatch,
         version: nextVersion,
         sync_status: 'pending',
         updated_at: new Date().toISOString(),
@@ -2908,6 +3120,7 @@ export function initApp() {
       await upsertTask(updated);
       this.tasks = this.tasks.map(t => t.record_id === updated.record_id ? updated : t);
       this.editingTask = { ...updated };
+      this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
       if (this.activeTaskId === updated.record_id) this.scheduleStorageImageHydration();
 
       await this.queueTaskWrite(updated, task);
@@ -2928,7 +3141,7 @@ export function initApp() {
           }
         }
       }
-      await this.performSync({ silent: true });
+      await this.flushAndBackgroundSync();
       await this.refreshTasks();
     },
 
@@ -2960,7 +3173,7 @@ export function initApp() {
         this.closeTaskDetail();
       }
 
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
     },
 
     async _softDeleteTask(task) {
@@ -2979,9 +3192,9 @@ export function initApp() {
       const envelope = await outboundTask({
         ...updated,
         previous_version: task.version ?? 1,
-        signature_npub: this.session.npub,
+        signature_npub: this.signingNpub,
         record_state: 'deleted',
-        write_group_npub: updated.board_group_id || updated.group_ids?.[0] || null,
+        write_group_ref: updated.board_group_id || updated.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: task.record_id,
@@ -3000,11 +3213,14 @@ export function initApp() {
         if (!hasStoredRefs && this.editingTask.description) {
           this.editingTask.references = parseReferencesFromDescription(this.editingTask.description);
         }
+        this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
       }
       if (this.editingTask?.assigned_to_npub) {
         this.resolveChatProfile(this.editingTask.assigned_to_npub);
       }
       this.taskAssigneeQuery = '';
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
       this.showTaskDetail = true;
       this.taskDescriptionEditing = !this.editingTask?.description;
       this.newSubtaskTitle = '';
@@ -3017,14 +3233,42 @@ export function initApp() {
 
     closeTaskDetail(options = {}) {
       this.stopTaskCommentsLiveQuery();
+      this.showTaskDetail = false;
       this.activeTaskId = null;
       this.editingTask = null;
       this.taskAssigneeQuery = '';
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
       this.taskScopeCascadePending = false;
       this.taskScopeCascadeMessage = '';
-      this.showTaskDetail = false;
       this.taskComments = [];
+      this.showFlowPicker = false;
       if (options.syncRoute !== false) this.syncRoute();
+    },
+
+    // --- task ↔ flow linkage helpers ---
+
+    getEditingTaskFlowInfo() {
+      if (!this.editingTask) return null;
+      return getTaskFlowInfo(
+        this.editingTask,
+        (this.flows || []).filter((f) => f.record_state !== 'deleted'),
+      );
+    },
+
+    async attachFlowToEditingTask(flowId) {
+      if (!this.editingTask) return;
+      const patch = buildAttachFlowPatch(flowId, this.editingTask.references || []);
+      Object.assign(this.editingTask, patch);
+      this.showFlowPicker = false;
+      await this.saveEditingTask();
+    },
+
+    async detachFlowFromEditingTask() {
+      if (!this.editingTask) return;
+      const patch = buildDetachFlowPatch(this.editingTask.references || []);
+      Object.assign(this.editingTask, patch);
+      await this.saveEditingTask();
     },
 
     openCalendarTask(taskId) {
@@ -3052,6 +3296,76 @@ export function initApp() {
       if (this.taskAssigneeQuery.startsWith('npub1') && this.taskAssigneeQuery.length >= 20) {
         this.resolveChatProfile(this.taskAssigneeQuery);
       }
+    },
+
+    getEditingTaskPredecessorRows() {
+      return getTaskPredecessorReferenceRows(this.editingTask, this.tasks);
+    },
+
+    getPredecessorTaskScopeMeta(task) {
+      if (!task?.record_id || task.missing_predecessor) return 'Missing task';
+      const relationship = describePredecessorRelationship(this.editingTask, task, this.scopesMap);
+      const scopeId = task.scope_id
+        ?? task.scope_l5_id
+        ?? task.scope_l4_id
+        ?? task.scope_l3_id
+        ?? task.scope_l2_id
+        ?? task.scope_l1_id
+        ?? null;
+      const scopeLabel = scopeId ? this.getScopeBreadcrumb(scopeId) : 'Unscoped';
+      return `${relationship} • ${scopeLabel}`;
+    },
+
+    get predecessorTaskSuggestions() {
+      if (!this.editingTask) return [];
+      return buildPredecessorTaskSuggestions(this.tasks, this.editingTask, this.scopesMap, {
+        query: this.predecessorTaskQuery,
+        excludedIds: this.editingTask.predecessor_task_ids || [],
+        scopeLabelForTask: (task) => {
+          const scopeId = task.scope_id
+            ?? task.scope_l5_id
+            ?? task.scope_l4_id
+            ?? task.scope_l3_id
+            ?? task.scope_l2_id
+            ?? task.scope_l1_id
+            ?? null;
+          return scopeId ? this.getScopeBreadcrumb(scopeId) : 'Unscoped';
+        },
+      });
+    },
+
+    openPredecessorTaskPicker() {
+      this.showPredecessorTaskPicker = true;
+    },
+
+    closePredecessorTaskPicker() {
+      this.showPredecessorTaskPicker = false;
+      this.predecessorTaskQuery = '';
+    },
+
+    handlePredecessorTaskInput(value) {
+      this.predecessorTaskQuery = value;
+      this.showPredecessorTaskPicker = true;
+    },
+
+    async addEditingTaskPredecessor(taskId) {
+      if (!this.editingTask || !this.session?.npub) return;
+      this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds([
+        ...(this.editingTask.predecessor_task_ids || []),
+        taskId,
+      ], this.editingTask.record_id);
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
+      await this.saveEditingTask();
+    },
+
+    async removeEditingTaskPredecessor(taskId) {
+      if (!this.editingTask || !this.session?.npub) return;
+      this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(
+        (this.editingTask.predecessor_task_ids || []).filter((candidate) => candidate !== taskId),
+        this.editingTask.record_id,
+      );
+      await this.saveEditingTask();
     },
 
     async assignEditingTask(npub) {
@@ -3158,7 +3472,7 @@ export function initApp() {
         target_record_id: recordId,
         target_record_family_hash: recordFamilyHash('comment'),
         target_group_ids: toRaw(task?.group_ids ?? []),
-        write_group_npub: task?.board_group_id || task?.group_ids?.[0] || null,
+        write_group_ref: task?.board_group_id || task?.group_ids?.[0] || null,
       });
 
       const localRow = {
@@ -3185,8 +3499,8 @@ export function initApp() {
       const envelope = await outboundComment({
         ...localRow,
         target_group_ids: toRaw(task?.group_ids ?? []),
-        signature_npub: this.session.npub,
-        write_group_npub: task?.board_group_id || task?.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: task?.board_group_id || task?.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -3194,7 +3508,7 @@ export function initApp() {
         envelope,
       });
       this._fireMentionTriggers(body, `task comment on "${task?.title || taskId}"`);
-      await this.performSync({ silent: true });
+      await this.flushAndBackgroundSync();
     },
 
     // --- Scope management (extracted to scopes-manager.js) ---
@@ -3260,6 +3574,19 @@ export function initApp() {
       this.selectedTaskIds = [...new Set([...this.selectedTaskIds, ...visibleTaskIds])];
     },
 
+    selectColumnTasks(columnState) {
+      const col = this.boardColumns.find((c) => c.state === columnState)
+        || this.listGroupedTasks.find((g) => g.state === columnState);
+      if (!col) return;
+      const colIds = col.tasks.map((t) => t.record_id);
+      const allSelected = colIds.length > 0 && colIds.every((id) => this.selectedTaskIds.includes(id));
+      if (allSelected) {
+        this.selectedTaskIds = this.selectedTaskIds.filter((id) => !colIds.includes(id));
+      } else {
+        this.selectedTaskIds = [...new Set([...this.selectedTaskIds, ...colIds])];
+      }
+    },
+
     clearSelectedTasks() {
       this.selectedTaskIds = [];
     },
@@ -3295,7 +3622,7 @@ export function initApp() {
           if (!patch) continue;
           await this.applyTaskPatch(taskId, patch, { sync: false });
         }
-        await this.performSync({ silent: true });
+        await this.flushAndBackgroundSync();
         await this.refreshTasks();
         this.clearSelectedTasks();
       } finally {
@@ -3403,7 +3730,7 @@ export function initApp() {
           });
         }
         this.closeDocMoveModal();
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
         await this.refreshDirectories();
         await this.refreshDocuments();
         this.clearSelectedDocs();
@@ -3459,12 +3786,13 @@ export function initApp() {
             scope_l3_id: item.scope_l3_id ?? null,
             scope_l4_id: item.scope_l4_id ?? null,
             scope_l5_id: item.scope_l5_id ?? null,
+            scope_policy_group_ids: item.scope_policy_group_ids ?? null,
             shares,
             version: nextVersion,
             previous_version: item.version ?? 1,
             record_state: 'deleted',
-            signature_npub: this.session?.npub,
-            write_group_npub: item.group_ids?.[0] || null,
+            signature_npub: this.signingNpub,
+            write_group_ref: item.group_ids?.[0] || null,
           }),
         });
       }
@@ -3489,7 +3817,7 @@ export function initApp() {
           confirmMessage: `Delete ${this.selectedDocIds.length} document${this.selectedDocIds.length === 1 ? '' : 's'}?`,
         });
         if (!removed) return;
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
         await this.refreshDirectories();
         await this.refreshDocuments();
         this.clearSelectedDocs();
@@ -3561,8 +3889,8 @@ export function initApp() {
         const subEnvelope = await outboundTask({
           ...subUpdated,
           previous_version: sub.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: subUpdated.board_group_id || subUpdated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: subUpdated.board_group_id || subUpdated.group_ids?.[0] || null,
         });
         await addPendingWrite({
           record_id: sub.record_id,
@@ -3574,15 +3902,15 @@ export function initApp() {
       const envelope = await outboundTask({
         ...updated,
         previous_version: task.version ?? 1,
-        signature_npub: this.session.npub,
-        write_group_npub: updated.board_group_id || updated.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: updated.board_group_id || updated.group_ids?.[0] || null,
       });
       await addPendingWrite({
         record_id: taskId,
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
-      await this.performSync({ silent: true });
+      await this.flushAndBackgroundSync();
       await this.refreshTasks();
     },
 
@@ -3735,6 +4063,9 @@ export function initApp() {
         ...scopeAssignment,
         shares,
         group_ids: groupIds,
+        scope_policy_group_ids: scopeAssignment.scope_id
+          ? this.getResolvedScopePolicyGroupIds(scopeAssignment.scope_id)
+          : null,
         sync_status: 'pending',
         version: nextVersion,
         updated_at: new Date().toISOString(),
@@ -3763,11 +4094,12 @@ export function initApp() {
           scope_l3_id: updated.scope_l3_id ?? null,
           scope_l4_id: updated.scope_l4_id ?? null,
           scope_l5_id: updated.scope_l5_id ?? null,
+          scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: updated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: updated.group_ids?.[0] || null,
         })
         : await outboundDocument({
           record_id: updated.record_id,
@@ -3781,11 +4113,12 @@ export function initApp() {
           scope_l3_id: updated.scope_l3_id ?? null,
           scope_l4_id: updated.scope_l4_id ?? null,
           scope_l5_id: updated.scope_l5_id ?? null,
+          scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares: updated.shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
-          signature_npub: this.session.npub,
-          write_group_npub: updated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: updated.group_ids?.[0] || null,
         });
 
       await addPendingWrite({
@@ -3795,7 +4128,7 @@ export function initApp() {
       });
 
       if (options.sync !== false) {
-        await this.performSync({ silent: false });
+        await this.flushAndBackgroundSync();
       }
       if (options.refresh !== false) {
         await this.refreshDirectories();
@@ -3848,7 +4181,7 @@ export function initApp() {
       // Parse type prefix: @scope:, @task:, @doc:
       let typeFilter = null;
       let query = rawQuery;
-      const prefixMatch = rawQuery.match(/^(scope|task|doc|person):/i);
+      const prefixMatch = rawQuery.match(/^(scope|task|doc|person|flow):/i);
       if (prefixMatch) {
         typeFilter = prefixMatch[1].toLowerCase();
         query = rawQuery.slice(prefixMatch[0].length);
@@ -3900,6 +4233,16 @@ export function initApp() {
           if (!needle || (scope.title || '').toLowerCase().includes(needle)) {
             const levelLabel = scope.level === 'product' ? 'Product' : scope.level === 'project' ? 'Project' : 'Deliverable';
             results.push({ type: 'scope', id: scope.record_id, label: scope.title || 'Untitled', sublabel: levelLabel });
+          }
+        }
+      }
+
+      // Flows
+      if (!typeFilter || typeFilter === 'flow') {
+        for (const flow of this.flows) {
+          if (flow.record_state === 'deleted') continue;
+          if (!needle || (flow.title || '').toLowerCase().includes(needle)) {
+            results.push({ type: 'flow', id: flow.record_id, label: flow.title || 'Untitled', sublabel: 'Flow' });
           }
         }
       }
@@ -4034,6 +4377,16 @@ export function initApp() {
           this.scopeNavFocus = id;
           document.getElementById('scope-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
+      } else if (type === 'flow') {
+        this.navSection = 'flows';
+        this.mobileNavOpen = false;
+        this.startWorkspaceLiveQueries();
+        this.refreshFlows();
+        this.refreshApprovals();
+        this.$nextTick(() => {
+          this.editingFlowId = id;
+          this.showFlowEditor = true;
+        });
       } else if (type === 'person') {
         this.navSection = 'people';
         this.mobileNavOpen = false;
@@ -4083,9 +4436,9 @@ export function initApp() {
           envelope: await outboundDirectory({
             ...updated,
             previous_version: directory.version ?? 1,
-            signature_npub: this.session.npub,
+            signature_npub: this.signingNpub,
             shares,
-            write_group_npub: updated.group_ids?.[0] || null,
+            write_group_ref: updated.group_ids?.[0] || null,
           }),
         });
       }
@@ -4107,16 +4460,16 @@ export function initApp() {
           envelope: await outboundDocument({
             ...updated,
             previous_version: doc.version ?? 1,
-            signature_npub: this.session.npub,
+            signature_npub: this.signingNpub,
             shares,
-            write_group_npub: updated.group_ids?.[0] || null,
+            write_group_ref: updated.group_ids?.[0] || null,
           }),
         });
       }
 
       // Navigate up to parent
       this.navigateToFolder(dir.parent_directory_id || null);
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshDirectories();
       await this.refreshDocuments();
     },
@@ -4133,7 +4486,7 @@ export function initApp() {
         confirmMessage: 'Delete this document?',
       });
       if (!removed) return;
-      await this.performSync({ silent: false });
+      await this.flushAndBackgroundSync();
       await this.refreshDirectories();
       await this.refreshDocuments();
       const [first] = this.filteredDocRows;
@@ -4374,8 +4727,15 @@ export function initApp() {
     // syncNow — in syncManagerMixin
   };
 
+  // Shell state is applied first — it defines the canonical shell boundary
+  // (identity, session, nav, route, sync status, connect modal, lifecycle methods).
+  // The inline storeObj declarations still exist as fallback defaults;
+  // see src/shell-state.js for the authoritative shell state definition.
+  const shellState = createShellState({ initialSection: initialRoute.section });
+
   applyMixins(
     storeObj,
+    shellState,
     taskBoardStateMixin,
     workspaceManagerMixin,
     chatMessageManagerMixin,
@@ -4391,6 +4751,8 @@ export function initApp() {
     storageImageManagerMixin,
     sectionLiveQueryMixin,
     unreadStoreMixin,
+    flowsManagerMixin,
+    personsManagerMixin,
   );
 
   Alpine.store('chat', storeObj);

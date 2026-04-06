@@ -41,14 +41,18 @@ It does not own:
 - `src/db.js`: Dexie schema and local persistence helpers
 - `src/api.js`: signed requests and backend communication
 - `src/workspaces.js`: workspace normalization and token-derived metadata
-- `src/worker/sync-worker.js`: background sync worker
+- `src/worker/sync-worker.js`: background sync logic (materialization, flush, pull)
+- `src/worker/sync-worker-runner.js`: Web Worker entrypoint — message handler, flush timer, SSE client
+- `src/sync-worker-client.js`: main-thread client for communicating with the Web Worker
+- `src/sync-manager.js`: sync lifecycle mixin (performSync, background sync, SSE orchestration)
 - `src/translators/`: family-specific materialization and outbound payload logic
 - `src/auth/`: signer and secure-store helpers
-- `src/crypto/`: group key handling
+- `src/crypto/`: group key handling and workspace session keys
 - `src/agent-connect.js`: Agent Connect export helpers
 - `tests/`: unit and integration coverage
 - `tests/e2e/`: browser-level checks
 - `docs/tower-backend-prod.md`: backend deployment notes from the FD side
+- `docs/design/`: architecture and design docs (SSE, Alpine+Dexie target, etc.)
 
 ## Ownership by area
 
@@ -103,6 +107,22 @@ When a shared field changes:
   - `src/app.js`
   - `src/db.js`
 
+## Build process
+
+This is a Vite project. The source HTML is `index.html` at the project root. Vite builds into `dist/`.
+
+- **`index.html`** (root) is the source template. Edit this for HTML changes.
+- **`dist/index.html`** is the build output. Do not edit directly — it gets overwritten by `bun run build`.
+- **`src/styles.css`** is the source CSS. It builds into `dist/assets/index-*.css`.
+- **`src/worker/sync-worker-runner.js`** builds into `dist/assets/sync-worker-runner-*.js` as a separate chunk.
+
+After any source change, always run `bun run build` to regenerate `dist/`. The app is served from `dist/`.
+
+## Working rules
+
+- Commit changes in small, intentional steps as you go. Do not leave completed work uncommitted.
+- Never revert, overwrite, or discard changes you do not understand. Stop, inspect them, and preserve them unless the user explicitly asks for a revert.
+
 ## Things to avoid
 
 - Do not add Tower contract fields only in Flight Deck without updating Tower.
@@ -110,6 +130,7 @@ When a shared field changes:
 - Do not bypass translators by rendering transport payloads directly.
 - Do not make Flight Logs mandatory in browser flows.
 - Do not leave `dist/` stale after source edits that affect the shipped app.
+- Do not edit `dist/index.html` directly — edit `index.html` at the project root and rebuild.
 
 ## Validation
 
@@ -117,3 +138,14 @@ When a shared field changes:
 - `bun run build`
 
 If the change affects real browser flow, add a note about whether a manual or Playwright pass is still needed.
+
+## Tower deployment (dev)
+
+Tower runs locally via Docker Compose. To rebuild and redeploy after Tower changes:
+
+```bash
+cd /Users/mini/code/wingmanbefree/wingman-tower
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+Health check: `curl http://127.0.0.1:3100/health`

@@ -11,6 +11,7 @@
 import {
   openWorkspaceDb,
   getWorkspaceDb,
+  getAllGroups,
   getPendingWrites,
   removePendingWrite,
   upsertWorkspaceSettings,
@@ -24,6 +25,10 @@ import {
   upsertComment,
   upsertAudioNote,
   upsertScope,
+  upsertFlow,
+  upsertApproval,
+  upsertPerson,
+  upsertOrganisation,
   getSyncState,
   setSyncState,
   upsertSyncQuarantineEntry,
@@ -41,9 +46,13 @@ import { inboundSchedule, recordFamilyHash as scheduleFamilyHash } from '../tran
 import { inboundComment } from '../translators/comments.js';
 import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
+import { inboundFlow, recordFamilyHash as flowFamilyHash } from '../translators/flows.js';
+import { inboundApproval, recordFamilyHash as approvalFamilyHash } from '../translators/approvals.js';
+import { inboundPerson, recordFamilyHash as personFamilyHash } from '../translators/persons.js';
+import { inboundOrganisation, recordFamilyHash as organisationFamilyHash } from '../translators/organisations.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
-import { pruneInaccessibleRecords } from '../access-pruner.js';
+import { pruneInaccessibleRecords, repairStaleGroupRefs } from '../access-pruner.js';
 import { flightDeckLog } from '../logging.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
@@ -57,6 +66,10 @@ const SCHEDULE_FAMILY = scheduleFamilyHash('schedule');
 const COMMENT_FAMILY = recordFamilyHash('comment');
 const AUDIO_NOTE_FAMILY = recordFamilyHash('audio_note');
 const SCOPE_FAMILY = recordFamilyHash('scope');
+const FLOW_FAMILY = flowFamilyHash('flow');
+const APPROVAL_FAMILY = approvalFamilyHash('approval');
+const PERSON_FAMILY = personFamilyHash('person');
+const ORGANISATION_FAMILY = organisationFamilyHash('organisation');
 const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
 const WRITE_BATCH_SIZE = 25;
 
@@ -98,6 +111,18 @@ async function materializeRecordForFamily(family, record) {
   } else if (family === SCOPE_FAMILY) {
     const row = await inboundScope(record);
     await upsertScope(row);
+  } else if (family === FLOW_FAMILY) {
+    const row = await inboundFlow(record);
+    await upsertFlow(row);
+  } else if (family === APPROVAL_FAMILY) {
+    const row = await inboundApproval(record);
+    await upsertApproval(row);
+  } else if (family === PERSON_FAMILY) {
+    const row = await inboundPerson(record);
+    await upsertPerson(row);
+  } else if (family === ORGANISATION_FAMILY) {
+    const row = await inboundOrganisation(record);
+    await upsertOrganisation(row);
   }
 }
 
@@ -129,8 +154,9 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       recordIds: batch.map((pw) => pw.record_id),
       families: [...new Set(batch.map((pw) => pw.record_family_hash))],
     });
+    let result;
     try {
-      await syncRecords({
+      result = await syncRecords({
         owner_npub: ownerNpub,
         records: envelopes,
       });
@@ -152,10 +178,38 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       );
     }
 
+    // Handle Tower rejections — remove rejected pending writes so they
+    // don't block every future sync cycle. Log them for diagnosis.
+    const rejectedIds = new Set();
+    if (Array.isArray(result?.rejected) && result.rejected.length > 0) {
+      for (const rej of result.rejected) {
+        if (rej.record_id) rejectedIds.add(rej.record_id);
+      }
+      flightDeckLog('warn', 'sync', 'Tower rejected records in batch — clearing stale pending writes', {
+        ownerNpub,
+        rejectedCount: result.rejected.length,
+        acceptedCount: (result.synced ?? 0),
+        rejected: result.rejected,
+      });
+    }
+
+    // Deferred records = group key not available yet. Keep their pending
+    // writes so they retry on the next sync cycle when keys may be loaded.
+    const deferredIds = new Set(Array.isArray(result?.deferred) ? result.deferred : []);
+    if (deferredIds.size > 0) {
+      flightDeckLog('warn', 'sync', 'deferred records — group key not loaded, will retry', {
+        ownerNpub,
+        deferredCount: deferredIds.size,
+        deferredRecordIds: [...deferredIds],
+      });
+    }
+
     for (const pw of batch) {
+      // Keep deferred pending writes for retry on next cycle
+      if (deferredIds.has(pw.record_id)) continue;
       await removePendingWrite(pw.row_id);
     }
-    pushed += batch.length;
+    pushed += batch.length - rejectedIds.size - deferredIds.size;
     if (onProgress) onProgress({ phase: 'pushing', pushed, pushTotal: pending.length });
     flightDeckLog('info', 'sync', 'pending write batch flushed', {
       ownerNpub,
@@ -184,27 +238,52 @@ export async function pullRecords(ownerNpub, viewerNpub = ownerNpub, onProgress,
 export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, families = DEFAULT_FAMILIES, options = {}, onProgress) {
   openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
   const forceFull = options.forceFull === true;
-  let totalPulled = 0;
-  let completedFamilies = 0;
   const totalFamilies = families.length;
 
   if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies, currentFamily: null, pulled: 0 });
 
-  for (const family of families) {
+  // Read all cursors upfront, then fetch all families in parallel.
+  const cursorEntries = await Promise.all(
+    families.map(async (family) => {
+      const sinceKey = `sync_since:${family}`;
+      const since = forceFull ? null : await getSyncState(sinceKey);
+      return { family, sinceKey, since };
+    })
+  );
+
+  // Fetch all families from Tower concurrently.
+  const fetchResults = await Promise.all(
+    cursorEntries.map(async ({ family, since }) => {
+      const result = await fetchRecords({
+        owner_npub: ownerNpub,
+        viewer_npub: viewerNpub,
+        record_family_hash: family,
+        since: since ?? undefined,
+      });
+      return { family, records: result.records ?? result ?? [] };
+    })
+  );
+
+  // Materialize results sequentially per family (Dexie writes are ordered).
+  let totalPulled = 0;
+  let completedFamilies = 0;
+
+  for (let i = 0; i < fetchResults.length; i++) {
+    const { family, records } = fetchResults[i];
+    const { sinceKey, since } = cursorEntries[i];
     const label = familyLabel(family);
-    if (onProgress) onProgress({ phase: 'pulling', completedFamilies, totalFamilies, currentFamily: label, pulled: totalPulled });
 
-    const sinceKey = `sync_since:${family}`;
-    const since = forceFull ? null : await getSyncState(sinceKey);
+    if (onProgress) {
+      onProgress({
+        phase: 'pulling',
+        completedFamilies,
+        totalFamilies,
+        currentFamily: label,
+        currentFamilyHash: family,
+        pulled: totalPulled,
+      });
+    }
 
-    const result = await fetchRecords({
-      owner_npub: ownerNpub,
-      viewer_npub: viewerNpub,
-      record_family_hash: family,
-      since: since ?? undefined,
-    });
-
-    const records = result.records ?? result ?? [];
     let latestApplied = since ?? '';
     let appliedCount = 0;
     let skippedCount = 0;
@@ -228,7 +307,14 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
     totalPulled += records.length;
     completedFamilies++;
 
-    if (onProgress) onProgress({ phase: 'pulling', completedFamilies, totalFamilies, currentFamily: label, pulled: totalPulled });
+    if (onProgress) onProgress({
+      phase: 'pulling',
+      completedFamilies,
+      totalFamilies,
+      currentFamily: label,
+      currentFamilyHash: family,
+      pulled: totalPulled,
+    });
 
     if (appliedCount > 0 && skippedCount === 0 && latestApplied) {
       await setSyncState(sinceKey, latestApplied);
@@ -252,12 +338,10 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
 export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub, options = {}) {
   openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
 
-  const familyCursors = {};
-  for (const family of DEFAULT_FAMILIES) {
-    const sinceKey = `sync_since:${family}`;
-    const cursor = await getSyncState(sinceKey);
-    familyCursors[family] = cursor || null;
-  }
+  const cursorPairs = await Promise.all(
+    DEFAULT_FAMILIES.map(async (family) => [family, await getSyncState(`sync_since:${family}`) || null])
+  );
+  const familyCursors = Object.fromEntries(cursorPairs);
 
   try {
     const result = await fetchHeartbeat({
@@ -276,7 +360,10 @@ export async function heartbeatCheck(ownerNpub, viewerNpub = ownerNpub, options 
 }
 
 /**
- * Access pruning — runs at most once per hour, persisted in IndexedDB.
+ * Client-side access pruning — a convenience optimization, not a security boundary.
+ * Tower enforces read access authoritatively on every pull via group_payloads and
+ * epoch keys. This local prune removes records the viewer can no longer decrypt,
+ * keeping the Dexie cache lean. Runs at most once per hour, persisted in IndexedDB.
  *
  * Pruning only happens:
  *  1. On login / workspace selection (explicit call to pruneOnLogin)
@@ -320,11 +407,46 @@ async function executePrune(viewerNpub, ownerNpub) {
 }
 
 /**
+ * Build a repair map from rotating group_npub values to stable group_id UUIDs.
+ * Maps both the current and historical group_npub (rotating crypto identity)
+ * to the canonical group_id (stable product identity) for local-state migration.
+ */
+async function buildNpubToUuidMap() {
+  const groups = await getAllGroups();
+  const map = new Map();
+  for (const group of groups) {
+    if (!group.group_id) continue;
+    if (group.group_npub) map.set(group.group_npub, group.group_id);
+    if (group.current_group_npub) map.set(group.current_group_npub, group.group_id);
+  }
+  return map;
+}
+
+/**
  * Run access pruning immediately — called on login / workspace selection.
  * Bypasses the hourly cooldown so stale data is cleaned up at session start.
+ * Also repairs stale group_npub refs in local records to stable UUIDs.
  */
 export async function pruneOnLogin(viewerNpub, ownerNpub, options = {}) {
   openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
+
+  // Repair stale npub refs before pruning so access checks use canonical IDs
+  try {
+    const npubToUuid = await buildNpubToUuidMap();
+    if (npubToUuid.size > 0) {
+      const repairResult = await repairStaleGroupRefs(npubToUuid);
+      if (repairResult.repaired > 0) {
+        flightDeckLog('info', 'sync', 'repaired stale group refs in local records', {
+          repaired: repairResult.repaired,
+        });
+      }
+    }
+  } catch (error) {
+    flightDeckLog('warn', 'sync', 'stale group ref repair failed', {
+      error: error?.message || String(error),
+    });
+  }
+
   return executePrune(viewerNpub, ownerNpub);
 }
 
@@ -354,6 +476,20 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, opt
   if (onProgress) onProgress({ phase: 'checking' });
 
   const pushResult = await flushPendingWrites(ownerNpub, onProgress, options);
+
+  if (options.forceFull === true) {
+    if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: DEFAULT_FAMILIES.length, currentFamily: null, currentFamilyHash: null, pulled: 0, heartbeat: false });
+    const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress, options);
+
+    if (onProgress) onProgress({ phase: 'applying' });
+    const pruneResult = pullResult.pulled > 0
+      ? await maybePruneAfterSync(viewerNpub, ownerNpub)
+      : { pruned: 0 };
+    if (pullResult.pulled > 0 || pruneResult.pruned > 0) {
+      await updateUnreadSummaries(viewerNpub);
+    }
+    return { ...pushResult, ...pullResult, ...pruneResult, heartbeatUsed: false, forcedFull: true };
+  }
 
   // Heartbeat: ask server which families have updates
   const heartbeat = await heartbeatCheck(ownerNpub, viewerNpub, options);

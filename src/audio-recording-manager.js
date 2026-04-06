@@ -289,7 +289,7 @@ export const audioRecordingManagerMixin = {
       const envelope = await outboundAudioNote({
         ...localRow,
         target_group_ids,
-        signature_npub: this.session?.npub,
+        signature_npub: this.signingNpub,
         write_group_npub,
       });
       await addPendingWrite({

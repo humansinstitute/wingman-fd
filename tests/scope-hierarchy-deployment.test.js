@@ -10,7 +10,6 @@ import {
 import {
   deriveScopeHierarchy,
   buildScopeTags,
-  buildScopeLineage,
 } from '../src/scope-delivery.js';
 import {
   matchesTaskBoardScope,
@@ -220,23 +219,7 @@ describe('breadcrumbs at depth 4-5', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. Lineage traversal at depth 5
-// ---------------------------------------------------------------------------
-
-describe('lineage traversal at full depth', () => {
-  it('builds lineage from l1 to l5', () => {
-    const lineage = buildScopeLineage(l5, fullMap);
-    expect(lineage.map(s => s.record_id)).toEqual(['s1', 's2', 's3', 's4', 's5']);
-  });
-
-  it('builds lineage from l1 to l4', () => {
-    const lineage = buildScopeLineage(l4, fullMap);
-    expect(lineage.map(s => s.record_id)).toEqual(['s1', 's2', 's3', 's4']);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 7. searchScopes groups all 5 levels
+// 6. searchScopes groups all 5 levels
 // ---------------------------------------------------------------------------
 
 describe('searchScopes groups all 5 levels', () => {

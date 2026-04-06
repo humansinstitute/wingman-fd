@@ -89,36 +89,3 @@ export function buildScopeTags(scope) {
   if (depth >= 1 && depth <= 5) result[`scope_l${depth}_id`] = scope.record_id;
   return result;
 }
-
-export function buildScopeLineage(scope, scopesMap = new Map()) {
-  const lineage = [];
-  let current = scope;
-  const seen = new Set();
-
-  while (current?.record_id && !seen.has(current.record_id)) {
-    lineage.unshift(current);
-    seen.add(current.record_id);
-    current = current.parent_id ? scopesMap.get(current.parent_id) || null : null;
-  }
-
-  return lineage;
-}
-
-export function findActiveDirectoryByScopeId(directories = [], scopeId) {
-  const needle = String(scopeId || '').trim();
-  if (!needle) return null;
-  return (directories || []).find((directory) =>
-    directory?.record_state !== 'deleted'
-    && String(directory.scope_id || '').trim() === needle
-  ) || null;
-}
-
-export function findActiveRootDirectoryByTitle(directories = [], title) {
-  const needle = String(title || '').trim().toLowerCase();
-  if (!needle) return null;
-  return (directories || []).find((directory) =>
-    directory?.record_state !== 'deleted'
-    && !directory?.parent_directory_id
-    && String(directory.title || '').trim().toLowerCase() === needle
-  ) || null;
-}

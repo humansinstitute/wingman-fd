@@ -73,8 +73,9 @@ export async function inboundChatMessage(record) {
 /**
  * Build a V4 record envelope for a new chat message.
  *
- * The channel's group_ids are copied into group_payloads so the backend
- * can fan the message out to all group members.
+ * The channel's group_ids are used to build group_payloads — per-group
+ * encrypted delivery blobs. Tower stores these and grants read access to
+ * members who hold a valid epoch key, but never decrypts the content.
  */
 export async function outboundChatMessage({
   record_id,
@@ -84,7 +85,7 @@ export async function outboundChatMessage({
   body,
   attachments = [],
   channel_group_ids,
-  write_group_npub = null,
+  write_group_ref = null,
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
@@ -111,7 +112,7 @@ export async function outboundChatMessage({
     version,
     previous_version,
     signature_npub: signature_npub,
-    ...buildWriteGroupFields(write_group_npub),
+    ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(channel_group_ids || [], innerPayload),
   };
@@ -135,7 +136,7 @@ export async function outboundChannel({
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
-  write_group_npub = null,
+  write_group_ref = null,
   record_state = 'active',
 }) {
   const innerPayload = {
@@ -163,7 +164,7 @@ export async function outboundChannel({
     version,
     previous_version,
     signature_npub,
-    ...buildWriteGroupFields(write_group_npub),
+    ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(group_ids || [], innerPayload),
   };

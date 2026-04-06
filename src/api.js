@@ -3,8 +3,9 @@
  * The UI never calls these directly; the worker or explicit user actions do.
  */
 
-import { createNip98AuthHeader } from './auth/nostr.js';
-import { createGroupWriteAuthHeader } from './crypto/group-keys.js';
+import { createNip98AuthHeader, createNip98AuthHeaderForSecret } from './auth/nostr.js';
+import { createGroupWriteAuthHeader, getActiveSessionNpub } from './crypto/group-keys.js';
+import { getActiveWorkspaceKeyNpub, getActiveWorkspaceKeySecretForAuth } from './crypto/workspace-keys.js';
 
 let _baseUrl = '';
 
@@ -27,6 +28,23 @@ export function getBaseUrl() {
 
 function url(path) {
   return `${_baseUrl}${path}`;
+}
+
+function getEffectiveSigningNpub(signingNpub = null) {
+  return String(
+    signingNpub
+    || getActiveWorkspaceKeyNpub()
+    || getActiveSessionNpub()
+    || ''
+  ).trim();
+}
+
+async function createApiAuthHeader(requestUrl, method, body = null) {
+  const workspaceSecret = getActiveWorkspaceKeySecretForAuth();
+  if (workspaceSecret) {
+    return createNip98AuthHeaderForSecret(requestUrl, method, body ?? null, workspaceSecret);
+  }
+  return createNip98AuthHeader(requestUrl, method, body ?? null);
 }
 
 async function buildApiError(resp, { requestUrl = '', method = 'GET', prefix = 'API' } = {}) {
@@ -52,7 +70,7 @@ async function json(resp, requestMeta = {}) {
 async function signedFetch(path, { method = 'GET', body } = {}) {
   const requestUrl = url(path);
   const headers = {
-    Authorization: await createNip98AuthHeader(requestUrl, method, body ?? null),
+    Authorization: await createApiAuthHeader(requestUrl, method, body ?? null),
   };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -68,7 +86,7 @@ async function signedFetch(path, { method = 'GET', body } = {}) {
 
 async function signedFetchAbsolute(requestUrl, { method = 'GET', body } = {}) {
   const headers = {
-    Authorization: await createNip98AuthHeader(requestUrl, method, body ?? null),
+    Authorization: await createApiAuthHeader(requestUrl, method, body ?? null),
   };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -378,21 +396,50 @@ export async function fetchRecordsSummary(ownerNpub) {
 
 // --- Records sync ---
 
-export async function syncRecords({ owner_npub, records }) {
+export async function syncRecords({ owner_npub, records, signing_npub }) {
   const proofPayload = { owner_npub, records };
   const groupWriteTokens = {};
+  const effectiveSigningNpub = getEffectiveSigningNpub(signing_npub);
+
+  // owner_npub is the workspace service identity — not any person's npub.
+  // No user's real npub will ever match it, so all writes are non-owner
+  // writes from Tower's perspective and require a group write proof.
+  // We still check in case the identity model changes, but in practice
+  // isOwnerUser is always false.
+  const realUserNpub = String(getActiveSessionNpub() || '').trim();
+  const owner = String(owner_npub || '').trim();
+  const isOwnerUser = realUserNpub === owner;
+
+  const deferredRecordIds = new Set();
 
   for (const record of records) {
-    const isOwnerSignedRecord = String(record?.signature_npub || '').trim() === String(owner_npub || '').trim();
-    if (isOwnerSignedRecord) continue;
+    if (isOwnerUser) continue;
     const groupRef = String(record?.write_group_id || record?.write_group_npub || '').trim();
     if (!groupRef || groupWriteTokens[groupRef]) continue;
-    groupWriteTokens[groupRef] = await createGroupWriteAuthHeader(
-      groupRef,
-      url('/api/v4/records/sync'),
-      'POST',
-      proofPayload,
-    );
+    try {
+      groupWriteTokens[groupRef] = await createGroupWriteAuthHeader(
+        groupRef,
+        url('/api/v4/records/sync'),
+        'POST',
+        proofPayload,
+      );
+    } catch (error) {
+      // Group key not loaded — defer these records for a later sync cycle
+      // rather than crashing the entire batch.
+      console.warn(`[sync] Cannot create group write proof for ${groupRef}, deferring records:`, error?.message);
+      for (const r of records) {
+        const ref = String(r?.write_group_id || r?.write_group_npub || '').trim();
+        if (ref === groupRef) deferredRecordIds.add(r.record_id);
+      }
+    }
+  }
+
+  const sendableRecords = deferredRecordIds.size > 0
+    ? records.filter((r) => !deferredRecordIds.has(r.record_id))
+    : records;
+
+  if (sendableRecords.length === 0) {
+    return { synced: 0, created: 0, updated: 0, rejected: [], deferred: [...deferredRecordIds] };
   }
 
   const requestUrl = url('/api/v4/records/sync');
@@ -400,11 +447,13 @@ export async function syncRecords({ owner_npub, records }) {
     method: 'POST',
     body: {
       owner_npub,
-      records,
+      records: sendableRecords,
       group_write_tokens: groupWriteTokens,
     },
   });
-  return json(resp, { requestUrl, method: 'POST' });
+  const result = await json(resp, { requestUrl, method: 'POST' });
+  result.deferred = [...deferredRecordIds];
+  return result;
 }
 
 export async function fetchRecordHistory({ record_id, owner_npub, viewer_npub }) {
@@ -412,6 +461,13 @@ export async function fetchRecordHistory({ record_id, owner_npub, viewer_npub })
   if (viewer_npub) params.set('viewer_npub', viewer_npub);
   const requestPath = `/api/v4/records/${encodeURIComponent(record_id)}/history?${params}`;
   const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath);
+  return json(resp, { requestUrl, method: 'GET' });
+}
+
+export async function fetchWorkspaceKeyMappings(ownerNpub) {
+  const requestPath = `/api/v4/user/workspace-key-mappings?workspace_owner_npub=${encodeURIComponent(ownerNpub)}`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetch(requestPath);
   return json(resp, { requestUrl, method: 'GET' });
 }
 

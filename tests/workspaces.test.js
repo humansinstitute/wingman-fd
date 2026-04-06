@@ -45,6 +45,8 @@ describe('workspace entry normalization', () => {
       workspace_name: 'Other Stuff',
       workspace_description: 'Workspace profile',
       workspace_avatar_url: 'storage://avatar-1',
+      admin_group_id: 'admin-group-1',
+      admin_group_npub: 'npub1admin',
     });
 
     expect(workspace).toMatchObject({
@@ -52,6 +54,8 @@ describe('workspace entry normalization', () => {
       name: 'Other Stuff',
       description: 'Workspace profile',
       avatarUrl: 'storage://avatar-1',
+      adminGroupId: 'admin-group-1',
+      adminGroupNpub: 'npub1admin',
     });
   });
 

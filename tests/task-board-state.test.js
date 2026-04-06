@@ -10,6 +10,7 @@ import {
   normalizeTaskRowScopeRefs,
   normalizeScheduleRowGroupRefs,
   normalizeScopeRowGroupRefs,
+  dedupeTasksByRecordId,
   computeBoardColumns,
   computeBoardScopedTasks,
   computeFilteredTasks,
@@ -488,6 +489,29 @@ describe('computeBoardColumns', () => {
     const done = [{ record_id: 'd1', state: 'done' }];
     const cols = computeBoardColumns([], done, []);
     expect(cols.find((c) => c.state === 'done').tasks).toBe(done);
+  });
+
+  it('deduplicates duplicate task ids before rendering columns', () => {
+    const active = [
+      { record_id: 'a1', state: 'new', version: 1, updated_at: '2026-04-01T00:00:00.000Z' },
+      { record_id: 'a1', state: 'new', version: 2, updated_at: '2026-04-01T00:01:00.000Z' },
+    ];
+    const cols = computeBoardColumns(active, [], []);
+    expect(cols.find((c) => c.state === 'new').tasks).toHaveLength(1);
+    expect(cols.find((c) => c.state === 'new').tasks[0].version).toBe(2);
+  });
+});
+
+describe('dedupeTasksByRecordId', () => {
+  it('keeps the newest version for duplicate record ids', () => {
+    const deduped = dedupeTasksByRecordId([
+      { record_id: 'task-1', version: 1, updated_at: '2026-04-01T00:00:00.000Z' },
+      { record_id: 'task-1', version: 3, updated_at: '2026-04-01T00:00:05.000Z' },
+      { record_id: 'task-2', version: 1, updated_at: '2026-04-01T00:00:00.000Z' },
+    ]);
+
+    expect(deduped).toHaveLength(2);
+    expect(deduped.find((task) => task.record_id === 'task-1')?.version).toBe(3);
   });
 });
 

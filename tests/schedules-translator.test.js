@@ -94,7 +94,7 @@ describe('schedule translator — outbound', () => {
       owner_npub: 'npub_owner',
       title: 'Legacy group schedule',
       group_ids: ['npub1grouprefexample'],
-      write_group_npub: 'npub1grouprefexample',
+      write_group_ref: 'npub1grouprefexample',
       signature_npub: 'npub_owner',
     });
 

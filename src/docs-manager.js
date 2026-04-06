@@ -475,7 +475,7 @@ export const docsManagerMixin = {
       target_record_id: recordId,
       target_record_family_hash: recordFamilyHash('comment'),
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      write_group_npub: doc?.group_ids?.[0] || null,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     const localRow = {
       record_id: recordId,
@@ -506,8 +506,8 @@ export const docsManagerMixin = {
     const envelope = await outboundComment({
       ...localRow,
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      signature_npub: this.session.npub,
-      write_group_npub: doc?.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: recordId,
@@ -515,7 +515,7 @@ export const docsManagerMixin = {
       envelope,
     });
     this._fireMentionTriggers(body, `doc comment on "${doc.title}"`);
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
   },
 
   async addDocCommentReply() {
@@ -536,7 +536,7 @@ export const docsManagerMixin = {
       target_record_id: recordId,
       target_record_family_hash: recordFamilyHash('comment'),
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      write_group_npub: doc?.group_ids?.[0] || null,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     const localRow = {
       record_id: recordId,
@@ -566,8 +566,8 @@ export const docsManagerMixin = {
     const envelope = await outboundComment({
       ...localRow,
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      signature_npub: this.session.npub,
-      write_group_npub: doc?.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: recordId,
@@ -575,7 +575,7 @@ export const docsManagerMixin = {
       envelope,
     });
     this._fireMentionTriggers(body, `doc comment reply on "${doc.title}"`);
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
   },
 
   async setDocCommentStatus(commentId, nextStatus) {
@@ -608,15 +608,15 @@ export const docsManagerMixin = {
       ...updated,
       previous_version: comment.version ?? 1,
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      signature_npub: this.session.npub,
-      write_group_npub: doc?.group_ids?.[0] || null,
+      signature_npub: this.signingNpub,
+      write_group_ref: doc?.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: updated.record_id,
       record_family_hash: envelope.record_family_hash,
       envelope,
     });
-    await this.performSync({ silent: true });
+    await this.flushAndBackgroundSync();
     if (status === 'resolved') {
       this.selectedDocCommentId = null;
       this.newDocCommentReplyBody = '';
@@ -1066,6 +1066,7 @@ export const docsManagerMixin = {
       scope_l3_id: null,
       scope_l4_id: null,
       scope_l5_id: null,
+      scope_policy_group_ids: null,
       shares: this.getInheritedDirectoryShares(parentDirectoryId),
       group_ids: [],
       sync_status: 'pending',
@@ -1092,15 +1093,16 @@ export const docsManagerMixin = {
         scope_l3_id: row.scope_l3_id ?? null,
         scope_l4_id: row.scope_l4_id ?? null,
         scope_l5_id: row.scope_l5_id ?? null,
+        scope_policy_group_ids: row.scope_policy_group_ids ?? null,
         shares: row.shares,
-        signature_npub: this.session?.npub,
-        write_group_npub: row.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: row.group_ids?.[0] || null,
       }),
     });
 
     await this.refreshDirectories();
     this.navigateToFolder(recordId);
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
   },
 
   async createDocument(title = 'Untitled document') {
@@ -1129,6 +1131,9 @@ export const docsManagerMixin = {
       content: '',
       parent_directory_id: parentDirectoryId,
       ...defaultScopeAssignment,
+      scope_policy_group_ids: defaultScopeAssignment.scope_id
+        ? this.getResolvedScopePolicyGroupIds(defaultScopeAssignment.scope_id)
+        : null,
       shares,
       group_ids: [],
       sync_status: 'pending',
@@ -1156,15 +1161,16 @@ export const docsManagerMixin = {
         scope_l3_id: row.scope_l3_id ?? null,
         scope_l4_id: row.scope_l4_id ?? null,
         scope_l5_id: row.scope_l5_id ?? null,
+        scope_policy_group_ids: row.scope_policy_group_ids ?? null,
         shares: row.shares,
-        signature_npub: this.session?.npub,
-        write_group_npub: row.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: row.group_ids?.[0] || null,
       }),
     });
 
     await this.refreshDocuments();
     this.openDoc(recordId);
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
   },
 
   async saveSelectedDirectoryItem() {
@@ -1188,10 +1194,19 @@ export const docsManagerMixin = {
       : this.getStoredDocShares(item);
     const now = new Date().toISOString();
     const nextVersion = (item.version ?? 1) + 1;
-    const updated = {
+    const draft = {
       ...item,
       shares,
       group_ids: this.getShareGroupIds(shares),
+    };
+    const scopePolicyPatch = item.scope_id
+      ? (this.shouldRefreshScopedPolicy(draft, item.scope_id)
+        ? this.buildScopedPolicyRepairPatch(draft, { scopeId: item.scope_id })
+        : { scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(item.scope_id) })
+      : { scope_policy_group_ids: null };
+    const updated = {
+      ...draft,
+      ...scopePolicyPatch,
       sync_status: 'pending',
       version: nextVersion,
       updated_at: now,
@@ -1213,15 +1228,16 @@ export const docsManagerMixin = {
         scope_l3_id: updated.scope_l3_id ?? null,
         scope_l4_id: updated.scope_l4_id ?? null,
         scope_l5_id: updated.scope_l5_id ?? null,
+        scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
         shares,
         version: nextVersion,
         previous_version: item.version ?? 1,
-        signature_npub: this.session?.npub,
-        write_group_npub: updated.group_ids?.[0] || null,
+        signature_npub: this.signingNpub,
+        write_group_ref: updated.group_ids?.[0] || null,
       }),
     });
 
-    await this.performSync({ silent: false });
+    await this.flushAndBackgroundSync();
     await this.refreshDirectories();
     await this.refreshDocuments();
     this.docEditorSharesDirty = false;
@@ -1256,12 +1272,21 @@ export const docsManagerMixin = {
     const nextVersion = (item.version ?? 1) + 1;
     this.docAutosaveState = autosave ? 'saving' : this.docAutosaveState;
     try {
-      const updated = {
+      const draft = {
         ...item,
         title: nextTitle,
         content: this.docEditorContent,
         shares,
         group_ids: this.getShareGroupIds(shares),
+      };
+      const scopePolicyPatch = item.scope_id
+        ? (this.shouldRefreshScopedPolicy(draft, item.scope_id)
+          ? this.buildScopedPolicyRepairPatch(draft, { scopeId: item.scope_id })
+          : { scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(item.scope_id) })
+        : { scope_policy_group_ids: null };
+      const updated = {
+        ...draft,
+        ...scopePolicyPatch,
         sync_status: 'pending',
         version: nextVersion,
         updated_at: now,
@@ -1283,11 +1308,12 @@ export const docsManagerMixin = {
           scope_l3_id: updated.scope_l3_id ?? null,
           scope_l4_id: updated.scope_l4_id ?? null,
           scope_l5_id: updated.scope_l5_id ?? null,
+          scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares,
           version: nextVersion,
           previous_version: item.version ?? 1,
-          signature_npub: this.session?.npub,
-          write_group_npub: updated.group_ids?.[0] || null,
+          signature_npub: this.signingNpub,
+          write_group_ref: updated.group_ids?.[0] || null,
         }),
       });
 
@@ -1303,7 +1329,7 @@ export const docsManagerMixin = {
         }
       }
 
-      await this.performSync({ silent: autosave, showBusy: !autosave });
+      await this.flushAndBackgroundSync();
       await this.refreshDirectories();
       await this.refreshDocuments();
       this.docEditorSharesDirty = false;

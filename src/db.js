@@ -20,6 +20,14 @@ sharedDb.version(1).stores({
   address_book:        'npub, last_used_at',
 });
 
+sharedDb.version(2).stores({
+  app_settings:        '++id',
+  storage_image_cache: '&object_id, cached_at',
+  profiles:            'pubkey',
+  address_book:        'npub, last_used_at',
+  workspace_keys:      '&workspace_owner_npub, user_npub, ws_key_npub',
+});
+
 // ---------------------------------------------------------------------------
 // Workspace DB — one per workspace identity key.
 // Contains ALL record / sync tables.
@@ -36,11 +44,15 @@ const WORKSPACE_STORES = {
   documents:          'record_id, owner_npub, parent_directory_id, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
   directories:        'record_id, owner_npub, parent_directory_id, sync_status, updated_at',
   reports:            'record_id, owner_npub, declaration_type, surface, generated_at, updated_at, *group_ids, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
-  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
+  tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, *predecessor_task_ids, flow_id, flow_run_id, flow_step',
   schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
   comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
   audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
   scopes:             'record_id, owner_npub, level, parent_id, l1_id, l2_id, l3_id, l4_id, l5_id, updated_at',
+  flows:              'record_id, owner_npub, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, sync_status, updated_at, *group_ids',
+  approvals:          'record_id, owner_npub, flow_id, flow_run_id, flow_step, status, approval_mode, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, sync_status, updated_at, *group_ids, *task_ids',
+  persons:            'record_id, owner_npub, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
+  organisations:      'record_id, owner_npub, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
   sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
   pending_writes:     '++row_id, record_id, record_family_hash, created_at',
   sync_state:         'key',
@@ -91,7 +103,20 @@ function createWorkspaceDb(workspaceDbKey) {
     reports: 'record_id, owner_npub, declaration_type, surface, generated_at, updated_at, *group_ids, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
   });
   // v4: canonical scope indexes (l1–l5 replacing product/project/deliverable)
-  db.version(4).stores(WORKSPACE_STORES);
+  const WORKSPACE_STORES_V4 = {
+    ...WORKSPACE_STORES,
+    tasks: 'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id',
+  };
+  delete WORKSPACE_STORES_V4.flows;
+  delete WORKSPACE_STORES_V4.approvals;
+  db.version(4).stores(WORKSPACE_STORES_V4);
+  // v5: add flows, approvals tables + task flow extension indexes
+  const WORKSPACE_STORES_V5 = { ...WORKSPACE_STORES };
+  delete WORKSPACE_STORES_V5.persons;
+  delete WORKSPACE_STORES_V5.organisations;
+  db.version(5).stores(WORKSPACE_STORES_V5);
+  // v6: add persons, organisations tables
+  db.version(6).stores(WORKSPACE_STORES);
   return db;
 }
 
@@ -246,10 +271,19 @@ export async function getWorkspaceSettings(workspaceOwnerNpub) {
 
 export async function getWorkspaceSettingsSnapshot(workspaceDbKey, workspaceOwnerNpub) {
   if (!workspaceDbKey || !workspaceOwnerNpub) return null;
+  // Reuse the already-open workspace DB when the key matches to avoid
+  // creating (and schema-parsing) a throwaway Dexie instance on every call.
+  if (_currentWorkspaceDbKey === workspaceDbKey && _currentWorkspaceDb) {
+    try {
+      return await _currentWorkspaceDb.workspace_settings.get(workspaceOwnerNpub);
+    } catch {
+      return null;
+    }
+  }
   const tempDb = createWorkspaceDb(workspaceDbKey);
   try {
     await tempDb.open();
-    return tempDb.workspace_settings.get(workspaceOwnerNpub);
+    return await tempDb.workspace_settings.get(workspaceOwnerNpub);
   } catch {
     return null;
   } finally {
@@ -316,6 +350,27 @@ export async function upsertChannel(channel) {
 
 export async function getChannelById(recordId) {
   return wsDb().channels.get(recordId);
+}
+
+export async function deleteChannelRuntimeState(channelId) {
+  if (!channelId) {
+    return { deletedChannels: 0, deletedMessages: 0, deletedPendingWrites: 0 };
+  }
+
+  const db = wsDb();
+  return db.transaction('rw', db.channels, db.chat_messages, db.pending_writes, async () => {
+    const messageIds = (await db.chat_messages.where('channel_id').equals(channelId).primaryKeys())
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const pendingWriteRecordIds = [...new Set([channelId, ...messageIds])];
+    const deletedMessages = await db.chat_messages.where('channel_id').equals(channelId).delete();
+    const deletedPendingWrites = pendingWriteRecordIds.length > 0
+      ? await db.pending_writes.where('record_id').anyOf(pendingWriteRecordIds).delete()
+      : 0;
+    const deletedChannels = await db.channels.where('record_id').equals(channelId).delete();
+
+    return { deletedChannels, deletedMessages, deletedPendingWrites };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -695,6 +750,89 @@ export async function getScopeById(recordId) {
 }
 
 // ---------------------------------------------------------------------------
+// flows — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertFlow(flow) {
+  return wsDb().flows.put(sanitizeForStorage(flow));
+}
+
+export async function getFlowById(recordId) {
+  return wsDb().flows.get(recordId);
+}
+
+export async function getFlowsByScope(scopeId) {
+  const rows = await wsDb().flows.where('scope_id').equals(scopeId).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function getFlowsByOwner(ownerNpub) {
+  const rows = await wsDb().flows.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
+// approvals — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertApproval(approval) {
+  return wsDb().approvals.put(sanitizeForStorage(approval));
+}
+
+export async function getApprovalById(recordId) {
+  return wsDb().approvals.get(recordId);
+}
+
+export async function getApprovalsByScope(scopeId) {
+  const rows = await wsDb().approvals.where('scope_id').equals(scopeId).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function getApprovalsByStatus(status) {
+  const rows = await wsDb().approvals.where('status').equals(status).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function getAllApprovals() {
+  const rows = await wsDb().approvals.toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
+// persons — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertPerson(person) {
+  return wsDb().persons.put(sanitizeForStorage(person));
+}
+
+export async function getPersonById(recordId) {
+  return wsDb().persons.get(recordId);
+}
+
+export async function getPersonsByOwner(ownerNpub) {
+  const rows = await wsDb().persons.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
+// organisations — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertOrganisation(organisation) {
+  return wsDb().organisations.put(sanitizeForStorage(organisation));
+}
+
+export async function getOrganisationById(recordId) {
+  return wsDb().organisations.get(recordId);
+}
+
+export async function getOrganisationsByOwner(ownerNpub) {
+  const rows = await wsDb().organisations.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
 // Bulk clear helpers — workspace DB
 // ---------------------------------------------------------------------------
 
@@ -711,6 +849,10 @@ export async function clearRuntimeData() {
     db.comments.clear(),
     db.audio_notes.clear(),
     db.scopes.clear(),
+    db.flows.clear(),
+    db.approvals.clear(),
+    db.persons.clear(),
+    db.organisations.clear(),
     db.sync_quarantine.clear(),
     db.groups.clear(),
     db.pending_writes.clear(),

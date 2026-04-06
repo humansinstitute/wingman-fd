@@ -130,7 +130,8 @@ describe('task translator — inbound', () => {
     expect(row.group_ids).toEqual(['group-uuid-1']);
     expect(row.shares).toEqual([
       expect.objectContaining({
-        group_npub: 'group-uuid-1',
+        group_id: 'group-uuid-1',
+        group_npub: 'npub_old_epoch_1',
       }),
     ]);
   });
@@ -205,7 +206,7 @@ describe('task translator — outbound', () => {
       owner_npub: 'npub_owner',
       title: 'Legacy group task',
       group_ids: ['group-uuid-1'],
-      write_group_npub: 'npub1grouprefexample',
+      write_group_ref: 'npub1grouprefexample',
     });
 
     expect(envelope.write_group_id).toBeUndefined();

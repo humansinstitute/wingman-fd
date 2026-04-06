@@ -1,52 +1,9 @@
 import { APP_NPUB, recordFamilyNamespace } from '../app-identity.js';
 import { buildGroupPayloads, decryptRecordPayload, encryptOwnerPayload } from './record-crypto.js';
-import { buildWriteGroupFields } from './group-refs.js';
+import { buildWriteGroupFields, buildGroupRefMap, normalizeGroupRef, extractGroupIds, normalizeShareGroupRefs } from './group-refs.js';
 
 export function recordFamilyHash(collectionSpace) {
   return `${recordFamilyNamespace()}:${collectionSpace}`;
-}
-
-function buildGroupRefMap(groupPayloads = []) {
-  const map = new Map();
-  for (const payload of groupPayloads || []) {
-    const stableId = payload?.group_id || payload?.group_npub || null;
-    if (!stableId) continue;
-    if (payload?.group_npub) map.set(payload.group_npub, stableId);
-    if (payload?.group_id) map.set(payload.group_id, payload.group_id);
-  }
-  return map;
-}
-
-function normalizeGroupRef(groupRef, groupRefMap) {
-  const value = String(groupRef || '').trim();
-  if (!value) return null;
-  return groupRefMap.get(value) || value;
-}
-
-function normalizeShares(dataShares = [], groupPayloads = []) {
-  const groupRefMap = buildGroupRefMap(groupPayloads);
-
-  if (!Array.isArray(dataShares) || dataShares.length === 0) return [];
-
-  return dataShares.map((share) => {
-    const type = share?.type === 'person' ? 'person' : 'group';
-    const groupRef = normalizeGroupRef(share?.group_id || share?.group_npub, groupRefMap);
-    const viaGroupRef = normalizeGroupRef(share?.via_group_id || share?.via_group_npub, groupRefMap);
-    const key = share?.key
-      ?? (type === 'person' ? share?.person_npub : groupRef);
-
-    return {
-      type,
-      key,
-      access: share?.access === 'write' ? 'write' : 'read',
-      label: share?.label ?? '',
-      person_npub: share?.person_npub ?? null,
-      group_npub: groupRef,
-      via_group_npub: viaGroupRef,
-      inherited: share?.inherited === true,
-      inherited_from_directory_id: share?.inherited_from_directory_id ?? null,
-    };
-  });
 }
 
 // --- inbound ---
@@ -54,8 +11,8 @@ function normalizeShares(dataShares = [], groupPayloads = []) {
 export async function inboundTask(record) {
   const payload = await decryptRecordPayload(record);
   const data = payload.data ?? payload;
-  const groupRefMap = buildGroupRefMap(record.group_payloads || []);
-  const groupIds = (record.group_payloads || []).map((gp) => gp.group_id || gp.group_npub);
+  const gp = record.group_payloads || [];
+  const groupRefMap = buildGroupRefMap(gp);
 
   return {
     record_id:      record.record_id,
@@ -75,9 +32,14 @@ export async function inboundTask(record) {
     scope_l3_id: data.scope_l3_id ?? null,
     scope_l4_id: data.scope_l4_id ?? null,
     scope_l5_id: data.scope_l5_id ?? null,
+    scope_policy_group_ids: Array.isArray(data.scope_policy_group_ids) ? data.scope_policy_group_ids : null,
+    predecessor_task_ids: Array.isArray(data.predecessor_task_ids) ? data.predecessor_task_ids : (data.predecessor_task_ids === undefined ? null : data.predecessor_task_ids),
+    flow_id:        data.flow_id ?? null,
+    flow_run_id:    data.flow_run_id ?? null,
+    flow_step:      data.flow_step ?? null,
     references:     Array.isArray(data.references) ? data.references : [],
-    shares:         normalizeShares(data.shares, record.group_payloads || []),
-    group_ids:      groupIds,
+    shares:         normalizeShareGroupRefs(data.shares, gp),
+    group_ids:      extractGroupIds(gp),
     sync_status:    'synced',
     record_state:   data.record_state ?? 'active',
     version:        record.version ?? 1,
@@ -100,19 +62,24 @@ export async function outboundTask({
   assigned_to_npub = null,
   scheduled_for = null,
   tags = '',
+  predecessor_task_ids = null,
+  flow_id = null,
+  flow_run_id = null,
+  flow_step = null,
   scope_id = null,
   scope_l1_id = null,
   scope_l2_id = null,
   scope_l3_id = null,
   scope_l4_id = null,
   scope_l5_id = null,
+  scope_policy_group_ids = null,
   references = [],
   shares = [],
   group_ids = [],
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
-  write_group_npub = null,
+  write_group_ref = null,
   record_state = 'active',
 }) {
   const innerPayload = {
@@ -130,12 +97,17 @@ export async function outboundTask({
       assigned_to_npub,
       scheduled_for,
       tags,
+      predecessor_task_ids,
+      flow_id,
+      flow_run_id,
+      flow_step,
       scope_id,
       scope_l1_id,
       scope_l2_id,
       scope_l3_id,
       scope_l4_id,
       scope_l5_id,
+      scope_policy_group_ids,
       references,
       shares,
       record_state,
@@ -149,7 +121,7 @@ export async function outboundTask({
     version,
     previous_version,
     signature_npub,
-    ...buildWriteGroupFields(write_group_npub),
+    ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
     group_payloads: await buildGroupPayloads(group_ids || [], innerPayload),
   };
@@ -214,4 +186,59 @@ export function parseReferencesFromDescription(description) {
     refs.push({ type, id });
   }
   return refs;
+}
+
+// --- flow reference linkage ---
+
+const RUN_FLOW_RE = /^run\s+flow:\s*(.+)/i;
+
+export function parseFlowReferenceFromText(text) {
+  if (!text) return null;
+  const firstLine = text.split('\n')[0];
+  const match = RUN_FLOW_RE.exec(firstLine.trim());
+  if (!match) return null;
+  const flowTitle = match[1].trim();
+  if (!flowTitle) return null;
+  return { flowTitle };
+}
+
+export function resolveFlowLinkage({ title, description, references, flows }) {
+  const refs = [...(references || [])];
+  const titleParsed = parseFlowReferenceFromText(title);
+  const isRunIntent = !!titleParsed;
+
+  // Try to resolve flow_id from title "Run Flow: X" pattern
+  let resolvedFlowId = null;
+  if (titleParsed && Array.isArray(flows)) {
+    const match = flows.find(
+      (f) => f.title && f.title.toLowerCase() === titleParsed.flowTitle.toLowerCase()
+    );
+    if (match) {
+      resolvedFlowId = match.record_id;
+      // Add reference if not already present
+      const alreadyReferenced = refs.some(
+        (r) => r.type === 'flow' && r.id === match.record_id
+      );
+      if (!alreadyReferenced) {
+        refs.push({ type: 'flow', id: match.record_id });
+      }
+    }
+  }
+
+  // Fall back: resolve flow_id from existing references of type=flow
+  if (!resolvedFlowId) {
+    const flowRef = refs.find((r) => r.type === 'flow');
+    if (flowRef && Array.isArray(flows)) {
+      const match = flows.find((f) => f.record_id === flowRef.id);
+      if (match) resolvedFlowId = match.record_id;
+    }
+  }
+
+  return {
+    flow_id: resolvedFlowId,
+    // Only generate run context when the task title explicitly initiates a flow run
+    flow_run_id: resolvedFlowId && isRunIntent ? crypto.randomUUID() : null,
+    flow_step: resolvedFlowId && isRunIntent ? 1 : null,
+    references: resolvedFlowId ? refs : references || [],
+  };
 }

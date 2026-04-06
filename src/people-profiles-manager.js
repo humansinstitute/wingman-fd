@@ -10,6 +10,7 @@ import {
   upsertAddressBookPerson,
 } from './db.js';
 import { fetchProfileByNpub } from './profiles.js';
+import { fetchWorkspaceKeyMappings } from './api.js';
 
 const EMPTY_ARRAY = Object.freeze([]);
 const addressBookPeopleMapCache = new WeakMap();
@@ -31,9 +32,44 @@ function getAddressBookPeopleMap(store) {
 
 export const peopleProfilesManagerMixin = {
 
+  // --- workspace key → user npub resolution ---
+
+  // Map of ws_key_npub → real user_npub for display resolution
+  _wsKeyDisplayMap: {},
+
+  /**
+   * Fetch workspace key mappings from Tower and populate the display map.
+   * Called during workspace bootstrap.
+   */
+  async refreshWorkspaceKeyMappings() {
+    if (!this.workspaceOwnerNpub) return;
+    try {
+      const result = await fetchWorkspaceKeyMappings(this.workspaceOwnerNpub);
+      const map = {};
+      for (const entry of (result.mappings || [])) {
+        map[entry.ws_key_npub] = entry.user_npub;
+      }
+      this._wsKeyDisplayMap = map;
+    } catch {
+      // Non-critical — display will fall back to ws_key npub
+    }
+  },
+
+  /**
+   * Resolve an npub for display purposes.
+   * If the npub is a workspace session key, returns the real user npub.
+   * Otherwise returns the input unchanged.
+   */
+  resolveDisplayNpub(npub) {
+    if (!npub) return npub;
+    return this._wsKeyDisplayMap[npub] || npub;
+  },
+
   // --- profile resolution ---
 
-  resolveChatProfile(npub) {
+  resolveChatProfile(rawNpub) {
+    // Resolve ws_key_npub → real user npub for profile lookup
+    const npub = this.resolveDisplayNpub(rawNpub);
     if (!npub || this.chatProfiles[npub]?.loading) return;
     if (this.chatProfiles[npub]?.name || this.chatProfiles[npub]?.picture) return;
 
@@ -95,22 +131,25 @@ export const peopleProfilesManagerMixin = {
     return getAddressBookPeopleMap(this).get(npub) ?? null;
   },
 
-  getSenderName(npub) {
-    if (!npub) return 'Unknown';
+  getSenderName(rawNpub) {
+    if (!rawNpub) return 'Unknown';
+    const npub = this.resolveDisplayNpub(rawNpub);
     const cached = this.getCachedPerson(npub);
     return this.chatProfiles[npub]?.name || cached?.label || this.getShortNpub(npub);
   },
 
-  getSenderIdentity(npub) {
-    if (!npub) return '';
+  getSenderIdentity(rawNpub) {
+    if (!rawNpub) return '';
+    const npub = this.resolveDisplayNpub(rawNpub);
     const cached = this.getCachedPerson(npub);
     if (this.chatProfiles[npub]?.nip05) return this.chatProfiles[npub].nip05;
     if (this.chatProfiles[npub]?.name || cached?.label) return this.getShortNpub(npub);
     return '';
   },
 
-  getSenderAvatar(npub) {
-    if (!npub) return null;
+  getSenderAvatar(rawNpub) {
+    if (!rawNpub) return null;
+    const npub = this.resolveDisplayNpub(rawNpub);
     const cached = this.getCachedPerson(npub);
     return this.chatProfiles[npub]?.picture || cached?.avatar_url || null;
   },
@@ -118,7 +157,9 @@ export const peopleProfilesManagerMixin = {
   // --- address book ---
 
   async rememberPeople(npubs = [], source = 'unknown') {
-    const uniqueNpubs = [...new Set(npubs.filter(Boolean))];
+    // Filter out workspace key npubs — only real identities go in the address book
+    const wsKeyNpubs = this._wsKeyDisplayMap || {};
+    const uniqueNpubs = [...new Set(npubs.filter((n) => n && !wsKeyNpubs[n]))];
     if (uniqueNpubs.length === 0) return;
 
     const existingPeople = getAddressBookPeopleMap(this);
@@ -162,11 +203,15 @@ export const peopleProfilesManagerMixin = {
     const needle = String(query || '').trim().toLowerCase();
     if (!needle) return [];
 
+    // Build set of ws_key_npubs so we can exclude them from results
+    const wsKeyNpubs = new Set(Object.keys(this._wsKeyDisplayMap || {}));
+
     const existing = new Set((excludeNpubs || []).map((value) => String(value || '').trim()).filter(Boolean));
     const allowed = candidateNpubs?.length
       ? new Set(candidateNpubs.map((value) => String(value || '').trim()).filter(Boolean))
       : null;
     return this.addressBookPeople
+      .filter((person) => !wsKeyNpubs.has(person.npub))
       .filter((person) => !allowed || allowed.has(person.npub))
       .filter((person) => !existing.has(person.npub))
       .filter((person) =>
@@ -187,8 +232,10 @@ export const peopleProfilesManagerMixin = {
     const needle = String(query || '').trim().toLowerCase();
     if (!needle) return [];
 
+    const wsKeyNpubs = new Set(Object.keys(this._wsKeyDisplayMap || {}));
     const existing = new Set((selectedMembers || []).map((member) => member.npub));
     return this.addressBookPeople
+      .filter((person) => !wsKeyNpubs.has(person.npub))
       .filter((person) => !existing.has(person.npub))
       .filter((person) =>
         String(person.npub || '').toLowerCase().includes(needle)

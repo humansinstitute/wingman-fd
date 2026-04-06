@@ -14,7 +14,6 @@ import {
   deriveScopeHierarchy,
   buildScopeTags,
   defaultScopeGroupIds,
-  buildScopeLineage,
 } from '../src/scope-delivery.js';
 import {
   matchesTaskBoardScope,
@@ -555,11 +554,6 @@ describe('backward compatibility: existing legacy data still works', () => {
     expect(matchesTaskBoardScope(deliverableTask, deliverable, scopesMap)).toBe(true);
     expect(matchesTaskBoardScope(deliverableTask, project, scopesMap)).toBe(false);
     expect(matchesTaskBoardScope(deliverableTask, project, scopesMap, { includeDescendants: true })).toBe(true);
-  });
-
-  it('buildScopeLineage traverses legacy data correctly', () => {
-    const lineage = buildScopeLineage(deliverable, scopesMap);
-    expect(lineage.map(s => s.record_id)).toEqual(['scope-product', 'scope-project', 'scope-deliverable']);
   });
 
   it('scopeBreadcrumb works for legacy data', () => {

@@ -17,23 +17,39 @@ import {
   clearSyncQuarantineForFamilies,
   deleteRuntimeRecordByFamily,
   upsertTask,
+  upsertFlow,
   upsertDocument,
   upsertDirectory,
+  upsertChannel,
+  upsertMessage,
+  upsertPerson,
+  upsertOrganisation,
   getCommentsByTarget,
   upsertComment,
 } from './db.js';
 import { fetchRecordHistory, syncRecords } from './api.js';
 import {
   runSync,
+  flushOnly,
   pullRecordsForFamilies,
   pruneOnLogin,
   startWorkerFlushTimer,
   stopWorkerFlushTimer,
+  connectSSE,
+  disconnectSSE,
+  setSSEStatusCallback,
 } from './sync-worker-client.js';
+import { createNip98AuthHeader, createNip98AuthHeaderForSecret } from './auth/nostr.js';
+import { getActiveWorkspaceKeySecretForAuth } from './crypto/workspace-keys.js';
 import { flightDeckLog } from './logging.js';
 import { SYNC_FAMILY_OPTIONS, getSyncFamily, getSyncFamilyHashes } from './sync-families.js';
 import { outboundTask } from './translators/tasks.js';
 import { outboundDocument, outboundDirectory } from './translators/docs.js';
+import { outboundChannel, outboundChatMessage } from './translators/chat.js';
+import { outboundFlow } from './translators/flows.js';
+import { outboundPerson } from './translators/persons.js';
+import { outboundOrganisation } from './translators/organisations.js';
+import { decryptRecordPayload } from './translators/record-crypto.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import { outboundComment } from './translators/comments.js';
 
@@ -143,6 +159,8 @@ export const syncManagerMixin = {
     switch (familyId) {
       case 'task':
         return this.tasks || [];
+      case 'flow':
+        return this.flows || [];
       case 'document':
         return this.documents || [];
       case 'directory':
@@ -157,6 +175,10 @@ export const syncManagerMixin = {
         return this.scopes || [];
       case 'report':
         return this.reports || [];
+      case 'person':
+        return this.persons || [];
+      case 'organisation':
+        return this.organisations || [];
       default:
         return [];
     }
@@ -164,6 +186,13 @@ export const syncManagerMixin = {
 
   getLocalStatusRecord(familyId, recordId) {
     return this.getLocalRecordsForStatusFamily(familyId).find((record) => record?.record_id === recordId) ?? null;
+  },
+
+  getRecordStatusChannelForRecord(localRecord, familyId) {
+    if (!localRecord) return null;
+    if (familyId === 'channel') return localRecord;
+    if (familyId !== 'chat_message') return null;
+    return this.channels.find((channel) => channel?.record_id === localRecord.channel_id) ?? null;
   },
 
   async getRecordStatusPendingWrites() {
@@ -187,6 +216,10 @@ export const syncManagerMixin = {
     if (!localRecord) return '';
     if (familyId === 'task') {
       return String(localRecord.board_group_id || localRecord.group_ids?.[0] || '').trim();
+    }
+    if (familyId === 'chat_message') {
+      const channel = this.getRecordStatusChannelForRecord(localRecord, familyId);
+      return String(channel?.group_ids?.[0] || '').trim();
     }
     return String(localRecord.group_ids?.[0] || '').trim();
   },
@@ -242,6 +275,25 @@ export const syncManagerMixin = {
     };
   },
 
+  getRecordStatusLocalVersion(localRecord) {
+    const version = Number(localRecord?.version ?? 0);
+    return Number.isFinite(version) && version > 0 ? version : 0;
+  },
+
+  getRecordStatusSubmitVersion(localRecord, options = {}) {
+    const bootstrap = options.bootstrap === true;
+    if (bootstrap) {
+      return { version: 1, previousVersion: 0 };
+    }
+    const latestTowerVersion = Math.max(0, Number(this.recordStatusTowerLatestVersion ?? 0) || 0);
+    const fallbackLocalVersion = Math.max(1, this.getRecordStatusLocalVersion(localRecord) || 1);
+    const version = latestTowerVersion > 0 ? latestTowerVersion + 1 : fallbackLocalVersion;
+    return {
+      version,
+      previousVersion: Math.max(0, version - 1),
+    };
+  },
+
   describeRecordStatusGroup(groupRef) {
     const resolvedGroupRef = typeof this.resolveGroupId === 'function' ? this.resolveGroupId(groupRef) : String(groupRef || '').trim();
     if (!resolvedGroupRef) return { ref: '', label: '', keyLoaded: false };
@@ -263,6 +315,8 @@ export const syncManagerMixin = {
     const familyHash = getSyncFamily(familyId)?.hash;
 
     this.recordStatusLocalPresent = Boolean(rawLocalRecord);
+    this.recordStatusLocalVersion = this.getRecordStatusLocalVersion(rawLocalRecord);
+    this.recordStatusLocalSyncStatus = String(rawLocalRecord?.sync_status || '').trim() || 'unknown';
     this.recordStatusWriteGroupRef = groupInfo.ref;
     this.recordStatusWriteGroupLabel = groupInfo.label;
     this.recordStatusWriteGroupKeyLoaded = groupInfo.keyLoaded;
@@ -275,7 +329,16 @@ export const syncManagerMixin = {
       this.recordStatusTargetId
       && this.recordStatusFamilyId
       && this.recordStatusLocalPresent
-      && this.recordStatusTowerVersionCount === 0
+      && (
+        this.recordStatusTowerVersionCount === 0
+        || this.recordStatusPendingWriteCount > 0
+        || this.recordStatusLocalSyncStatus === 'pending'
+        || this.recordStatusLocalSyncStatus === 'failed'
+        || (
+          Number(this.recordStatusLocalVersion || 0) > 0
+          && Number(this.recordStatusLocalVersion || 0) !== Number(this.recordStatusTowerLatestVersion || 0)
+        )
+      )
     );
   },
 
@@ -284,10 +347,14 @@ export const syncManagerMixin = {
 
     const bootstrap = options.bootstrap === true;
     const effectiveLocalRecord = this.buildRecordStatusLocalRecord(localRecord, familyId, { bootstrap });
-    const ownerNpub = localRecord.owner_npub || this.workspaceOwnerNpub;
-    const isOwnerWrite = String(this.session?.npub || '').trim() === String(ownerNpub || '').trim();
-    const version = bootstrap ? 1 : (localRecord.version ?? 1);
-    const previousVersion = bootstrap ? 0 : Math.max(0, version - 1);
+    const channelRecord = this.getRecordStatusChannelForRecord(effectiveLocalRecord, familyId);
+    const ownerNpub = effectiveLocalRecord.owner_npub || channelRecord?.owner_npub || this.workspaceOwnerNpub;
+    const { version, previousVersion } = this.getRecordStatusSubmitVersion(effectiveLocalRecord, { bootstrap });
+    const signatureNpub = this.signingNpub || this.session?.npub || ownerNpub;
+    // owner_npub is a workspace service identity, not a person's npub.
+    // All writes are non-owner and need write_group_ref for Tower auth.
+    const realUserNpub = String(this.session?.npub || '').trim();
+    const isOwnerWrite = realUserNpub === String(ownerNpub || '').trim();
 
     if (familyId === 'task') {
       const candidateGroupIds = Array.isArray(effectiveLocalRecord.group_ids) ? effectiveLocalRecord.group_ids : [];
@@ -306,8 +373,8 @@ export const syncManagerMixin = {
         shares: nextShares,
         version,
         previous_version: previousVersion,
-        signature_npub: this.session?.npub,
-        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
       });
     }
 
@@ -323,8 +390,8 @@ export const syncManagerMixin = {
         shares,
         version,
         previous_version: previousVersion,
-        signature_npub: this.session?.npub,
-        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
       });
     }
 
@@ -340,8 +407,80 @@ export const syncManagerMixin = {
         shares,
         version,
         previous_version: previousVersion,
-        signature_npub: this.session?.npub,
-        write_group_npub: isOwnerWrite ? null : writeGroupNpub,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
+      });
+    }
+
+    if (familyId === 'channel') {
+      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      if (!writeGroupRef) throw new Error('Channel is missing a writable group.');
+      return outboundChannel({
+        ...effectiveLocalRecord,
+        owner_npub: ownerNpub,
+        group_ids: effectiveLocalRecord.group_ids ?? [],
+        participant_npubs: effectiveLocalRecord.participant_npubs ?? [],
+        version,
+        previous_version: previousVersion,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
+      });
+    }
+
+    if (familyId === 'chat_message') {
+      if (!channelRecord) throw new Error('Chat message channel is missing locally.');
+      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      if (!writeGroupRef) throw new Error('Chat message channel is missing a writable group.');
+      return outboundChatMessage({
+        record_id: effectiveLocalRecord.record_id,
+        owner_npub: ownerNpub,
+        channel_id: effectiveLocalRecord.channel_id,
+        parent_message_id: effectiveLocalRecord.parent_message_id ?? null,
+        body: effectiveLocalRecord.body ?? '',
+        attachments: Array.isArray(effectiveLocalRecord.attachments) ? effectiveLocalRecord.attachments : [],
+        channel_group_ids: channelRecord.group_ids ?? [],
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
+        version,
+        previous_version: previousVersion,
+        signature_npub: signatureNpub,
+        record_state: effectiveLocalRecord.record_state ?? 'active',
+      });
+    }
+
+    if (familyId === 'flow') {
+      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      return outboundFlow({
+        ...effectiveLocalRecord,
+        owner_npub: ownerNpub,
+        group_ids: effectiveLocalRecord.group_ids ?? [],
+        version,
+        previous_version: previousVersion,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
+      });
+    }
+
+    if (familyId === 'person' || familyId === 'organisation') {
+      let writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      let groupIds = effectiveLocalRecord.group_ids ?? [];
+      // Fall back to workspace default group if the record has none
+      if (!writeGroupRef && typeof this.getWorkspaceSettingsGroupRef === 'function') {
+        writeGroupRef = this.getWorkspaceSettingsGroupRef();
+        if (writeGroupRef) groupIds = [writeGroupRef];
+      }
+      const shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
+        ? this.buildScopeDefaultShares(groupIds)
+        : (effectiveLocalRecord.shares || []);
+      const outbound = familyId === 'person' ? outboundPerson : outboundOrganisation;
+      return outbound({
+        ...effectiveLocalRecord,
+        owner_npub: ownerNpub,
+        group_ids: groupIds,
+        shares,
+        version,
+        previous_version: previousVersion,
+        signature_npub: signatureNpub,
+        write_group_ref: isOwnerWrite ? null : (writeGroupRef || null),
       });
     }
 
@@ -366,6 +505,12 @@ export const syncManagerMixin = {
       return;
     }
 
+    if (familyId === 'flow') {
+      await upsertFlow(nextRecord);
+      this.flows = this.flows.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
+    }
+
     if (familyId === 'document') {
       await upsertDocument(nextRecord);
       if (typeof this.patchDocumentLocal === 'function') this.patchDocumentLocal(nextRecord);
@@ -375,6 +520,32 @@ export const syncManagerMixin = {
     if (familyId === 'directory') {
       await upsertDirectory(nextRecord);
       if (typeof this.patchDirectoryLocal === 'function') this.patchDirectoryLocal(nextRecord);
+      return;
+    }
+
+    if (familyId === 'channel') {
+      await upsertChannel(nextRecord);
+      this.channels = this.channels.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
+    }
+
+    if (familyId === 'chat_message') {
+      await upsertMessage(nextRecord);
+      if (typeof this.patchMessageLocal === 'function') this.patchMessageLocal(nextRecord);
+      else this.messages = this.messages.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
+    }
+
+    if (familyId === 'person') {
+      await upsertPerson(nextRecord);
+      this.persons = this.persons.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
+    }
+
+    if (familyId === 'organisation') {
+      await upsertOrganisation(nextRecord);
+      this.organisations = this.organisations.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      return;
     }
   },
 
@@ -403,7 +574,7 @@ export const syncManagerMixin = {
       previous_version: 0,
       target_group_ids: targetGroupIds,
       signature_npub: this.session?.npub,
-      write_group_npub: null,
+      write_group_ref: null,
     });
   },
 
@@ -419,6 +590,7 @@ export const syncManagerMixin = {
     this.recordStatusError = null;
     this.recordStatusNotice = '';
     this.recordStatusTowerVersionCount = 0;
+    this.recordStatusTowerLatestVersion = 0;
     this.recordStatusTowerUpdatedAt = '';
     await this.refreshRecordStatusLocalContext();
 
@@ -435,8 +607,11 @@ export const syncManagerMixin = {
     this.recordStatusError = null;
     this.recordStatusNotice = '';
     this.recordStatusTowerVersionCount = 0;
+    this.recordStatusTowerLatestVersion = 0;
     this.recordStatusTowerUpdatedAt = '';
     this.recordStatusLocalPresent = false;
+    this.recordStatusLocalVersion = 0;
+    this.recordStatusLocalSyncStatus = '';
     this.recordStatusPendingWriteCount = 0;
     this.recordStatusWriteGroupRef = '';
     this.recordStatusWriteGroupLabel = '';
@@ -468,6 +643,10 @@ export const syncManagerMixin = {
         viewer_npub: this.session.npub,
       });
       const versions = Array.isArray(result?.versions) ? result.versions : [];
+      const latestVersionNumber = versions.reduce((latest, current) => {
+        const version = Number(current?.version ?? 0) || 0;
+        return version > latest ? version : latest;
+      }, 0);
       const latestVersion = versions.reduce((latest, current) => {
         if (!latest) return current;
         const currentTime = Date.parse(current?.updated_at || '') || 0;
@@ -476,12 +655,13 @@ export const syncManagerMixin = {
       }, null);
 
       this.recordStatusTowerVersionCount = versions.length;
+      this.recordStatusTowerLatestVersion = latestVersionNumber;
       this.recordStatusTowerUpdatedAt = latestVersion?.updated_at || '';
       await this.refreshRecordStatusLocalContext();
 
       if (versions.length === 0) {
         if (this.recordStatusLocalPresent) {
-          this.recordStatusNotice = `${targetLabel} is missing on Tower. You can force push this local record.`;
+          this.recordStatusNotice = `${targetLabel} is missing on Tower. You can force submit this local snapshot as version 1.`;
         } else {
           this.recordStatusError = `${targetLabel} is not on Tower for the current workspace/user view.`;
         }
@@ -511,27 +691,25 @@ export const syncManagerMixin = {
       this.recordStatusError = 'No local record is available to push.';
       return;
     }
-    if (this.recordStatusTowerVersionCount > 0) {
-      this.recordStatusError = 'Tower already has this record. A force push is only for records missing on Tower.';
-      return;
-    }
     if (!this.workspaceOwnerNpub || !this.session?.npub) {
       this.recordStatusError = 'Configure workspace sync first.';
       return;
     }
 
     const familyLabel = this.getRecordStatusFamilyLabel(familyId);
+    const bootstrap = this.recordStatusTowerVersionCount === 0;
+    const { version: submittedVersion } = this.getRecordStatusSubmitVersion(localRecord, { bootstrap });
     this.recordStatusSyncBusy = true;
     this.recordStatusError = null;
     try {
       const targetFamilyHash = getSyncFamily(familyId)?.hash || null;
-      const relatedComments = targetFamilyHash
+      const relatedComments = bootstrap && targetFamilyHash
         ? await this.getRecordStatusRelatedComments(recordId, targetFamilyHash)
         : [];
       const relevantRecordIds = new Set([recordId, ...relatedComments.map((comment) => comment.record_id)]);
       const pendingWrites = (await this.getRecordStatusPendingWrites())
         .filter((row) => relevantRecordIds.has(row.record_id));
-      const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, { bootstrap: true });
+      const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, { bootstrap });
       const commentEnvelopes = [];
       const targetGroupIds = Array.isArray(localRecord.group_ids) ? [...localRecord.group_ids] : [];
 
@@ -553,7 +731,7 @@ export const syncManagerMixin = {
         if (row?.row_id != null) await this.removeRecordStatusPendingWrite(row.row_id);
       }
 
-      await this.markRecordStatusLocalRecordSynced(familyId, localRecord, { version: 1 });
+      await this.markRecordStatusLocalRecordSynced(familyId, localRecord, { version: submittedVersion });
       await this.markRecordStatusCommentsSynced(relatedComments);
       await this.checkRecordStatusOnTower();
       if (!this.recordStatusError) {
@@ -561,8 +739,8 @@ export const syncManagerMixin = {
           ? ` Recreated ${relatedComments.length} local ${relatedComments.length === 1 ? 'comment' : 'comments'} too.`
           : '';
         this.recordStatusNotice = pendingWrites.length > 0
-          ? `Force-pushed the current local snapshot as a new ${familyLabel} version 1 and cleared ${pendingWrites.length} stale pending ${pendingWrites.length === 1 ? 'write' : 'writes'}.${commentSuffix}`
-          : `Force-pushed the current local snapshot as a new ${familyLabel} version 1.${commentSuffix}`;
+          ? `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion} and cleared ${pendingWrites.length} stale pending ${pendingWrites.length === 1 ? 'write' : 'writes'}.${commentSuffix}`
+          : `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion}.${commentSuffix}`;
       }
     } catch (error) {
       this.recordStatusError = error?.message || 'Failed to force push this record to Tower.';
@@ -570,6 +748,99 @@ export const syncManagerMixin = {
       await this.refreshRecordStatusLocalContext();
       this.recordStatusSyncBusy = false;
     }
+  },
+
+  // --- generic record version history ---
+
+  async openRecordVersionHistory({ familyId, recordId, label }) {
+    this.recordVersionModalOpen = true;
+    this.recordVersionFamilyId = String(familyId || '').trim();
+    this.recordVersionRecordId = String(recordId || '').trim();
+    this.recordVersionLabel = String(label || '').trim();
+    this.recordVersionHistory = [];
+    this.recordVersionLoading = true;
+    this.recordVersionError = null;
+    this.recordVersionSelectedIndex = -1;
+
+    try {
+      const ownerNpub = this.workspaceOwnerNpub || this.session?.npub;
+      if (!ownerNpub) {
+        this.recordVersionError = 'No workspace owner configured.';
+        return;
+      }
+      const result = await fetchRecordHistory({
+        record_id: this.recordVersionRecordId,
+        owner_npub: ownerNpub,
+        viewer_npub: this.session?.npub,
+      });
+      const versions = Array.isArray(result?.versions) ? result.versions : [];
+      const decoded = [];
+      for (const ver of versions) {
+        try {
+          const payload = await decryptRecordPayload(ver);
+          const data = payload.data ?? payload;
+          decoded.push({
+            version: ver.version ?? 0,
+            updated_at: ver.updated_at || '',
+            data,
+          });
+        } catch {
+          decoded.push({
+            version: ver.version ?? 0,
+            updated_at: ver.updated_at || '',
+            data: null,
+            decryptError: true,
+          });
+        }
+      }
+      decoded.sort((a, b) => b.version - a.version);
+      this.recordVersionHistory = decoded;
+      if (decoded.length > 0) this.recordVersionSelectedIndex = 0;
+    } catch (error) {
+      this.recordVersionError = error?.status === 404
+        ? 'Version history not available — Tower may need redeployment.'
+        : `Failed to load version history: ${error?.message || error}`;
+    } finally {
+      this.recordVersionLoading = false;
+    }
+  },
+
+  closeRecordVersionHistory() {
+    this.recordVersionModalOpen = false;
+    this.recordVersionFamilyId = '';
+    this.recordVersionRecordId = '';
+    this.recordVersionLabel = '';
+    this.recordVersionHistory = [];
+    this.recordVersionLoading = false;
+    this.recordVersionError = null;
+    this.recordVersionSelectedIndex = -1;
+  },
+
+  selectRecordVersion(index) {
+    if (index < 0 || index >= this.recordVersionHistory.length) return;
+    this.recordVersionSelectedIndex = index;
+  },
+
+  get selectedRecordVersion() {
+    if (this.recordVersionSelectedIndex < 0) return null;
+    return this.recordVersionHistory[this.recordVersionSelectedIndex] ?? null;
+  },
+
+  formatRecordVersionField(key, value) {
+    if (value === null || value === undefined) return '—';
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '(empty)';
+      return JSON.stringify(value, null, 2);
+    }
+    if (typeof value === 'object') return JSON.stringify(value, null, 2);
+    return String(value);
+  },
+
+  copyRecordVersionJson() {
+    const ver = this.selectedRecordVersion;
+    if (!ver?.data) return;
+    navigator.clipboard.writeText(JSON.stringify(ver.data, null, 2)).catch(() => {});
   },
 
   // --- sync quarantine ---
@@ -600,11 +871,87 @@ export const syncManagerMixin = {
     return this.syncQuarantine;
   },
 
+  // --- SSE lifecycle ---
+
+  get isSSEConnected() {
+    return this.sseStatus === 'connected';
+  },
+
+  async connectSSEStream() {
+    if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) return;
+
+    // Mint a NIP-98 auth token for the stream URL (Tower verifies NIP-98, not the bootstrap connection token)
+    const streamUrl = `${this.backendUrl}/api/v4/workspaces/${this.workspaceOwnerNpub}/stream`;
+    let authHeader;
+    try {
+      const workspaceSecret = getActiveWorkspaceKeySecretForAuth();
+      authHeader = workspaceSecret
+        ? await createNip98AuthHeaderForSecret(streamUrl, 'GET', null, workspaceSecret)
+        : await createNip98AuthHeader(streamUrl, 'GET', null);
+    } catch (err) {
+      flightDeckLog('SSE auth failed — cannot mint NIP-98 token', err);
+      return;
+    }
+    // Extract the base64 token from "Nostr <base64>"
+    const nip98Token = authHeader.replace(/^Nostr\s+/i, '');
+
+    setSSEStatusCallback((message) => this.handleSSEStatus(message));
+    connectSSE(
+      this.workspaceOwnerNpub,
+      this.session.npub,
+      this.backendUrl,
+      nip98Token,
+      this.workspaceDbKey,
+    );
+  },
+
+  disconnectSSEStream() {
+    disconnectSSE();
+    this.sseStatus = 'disconnected';
+  },
+
+  handleSSEStatus(message) {
+    const status = message?.status;
+    if (!status) return;
+
+    this.sseStatus = status;
+
+    if (status === 'catch-up-required') {
+      this.catchUpSyncActive = true;
+      this.scheduleBackgroundSync(50);
+      return;
+    }
+
+    if (status === 'group-changed') {
+      this.refreshGroups({ minIntervalMs: 0 });
+      return;
+    }
+
+    if (status === 'token-needed') {
+      this.connectSSEStream();
+      return;
+    }
+
+    if (status === 'connected') {
+      // Widen heartbeat polling now that SSE is live
+      this.scheduleBackgroundSync();
+      return;
+    }
+
+    if (status === 'fallback-polling') {
+      // SSE gave up reconnecting — tighten polling back to normal cadence
+      this.scheduleBackgroundSync();
+      return;
+    }
+  },
+
   // --- sync lifecycle ---
 
   getSyncCadenceMs() {
     if (!this.session?.npub || !this.backendUrl) return null;
     if (typeof document !== 'undefined' && document.hidden) return null;
+    // When SSE is connected, widen heartbeat polling — SSE handles live refresh
+    if (this.isSSEConnected) return this.SSE_HEARTBEAT_CADENCE_MS;
     if (this.navSection === 'chat' && this.selectedChannelId) return this.FAST_SYNC_MS;
     if (this.navSection === 'docs') return this.FAST_SYNC_MS;
     if (this.navSection === 'tasks') return this.FAST_SYNC_MS;
@@ -623,6 +970,7 @@ export const syncManagerMixin = {
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.visibilityHandler = null;
     }
+    this.disconnectSSEStream();
     stopWorkerFlushTimer();
   },
 
@@ -647,6 +995,23 @@ export const syncManagerMixin = {
     // Start the independent worker flush timer for low-latency outbox delivery
     if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
       startWorkerFlushTimer(this.workspaceOwnerNpub, this.backendUrl, this.workspaceDbKey);
+    }
+    // Connect SSE for live refresh — the primary freshness path
+    if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
+      this.connectSSEStream();
+    }
+    // Show catch-up overlay when data is stale:
+    // - first sync ever (no lastSuccessAt)
+    // - returning after a long break (10+ hours)
+    // - SSE catch-up-required (handled separately via catchUpSyncActive = true)
+    // Skip if catch-up is already active or a sync is in flight — avoid
+    // re-triggering the overlay on every section navigation.
+    if (runSoon && this.session?.npub && this.backendUrl && !this.catchUpSyncActive && !this.backgroundSyncInFlight) {
+      const STALE_THRESHOLD_MS = 10 * 60 * 60 * 1000; // 10 hours
+      const lastSync = this.syncSession.lastSuccessAt;
+      if (!lastSync || (Date.now() - lastSync) > STALE_THRESHOLD_MS) {
+        this.catchUpSyncActive = true;
+      }
     }
     this.scheduleBackgroundSync(runSoon ? 50 : null);
   },
@@ -675,6 +1040,7 @@ export const syncManagerMixin = {
       });
     } finally {
       this.backgroundSyncInFlight = false;
+      this.catchUpSyncActive = false;
       this.scheduleBackgroundSync(this.syncBackoffMs || null);
     }
   },
@@ -685,10 +1051,78 @@ export const syncManagerMixin = {
     Object.assign(this.syncSession, updates);
   },
 
+  buildSyncFamilyProgressRows(families = SYNC_FAMILY_OPTIONS) {
+    return (families || []).map((family) => ({
+      id: family.id,
+      hash: family.hash,
+      label: family.label,
+      status: 'pending',
+    }));
+  },
+
+  initializeSyncFamilyProgress(families = SYNC_FAMILY_OPTIONS) {
+    this.syncFamilyProgress = this.buildSyncFamilyProgressRows(families);
+  },
+
+  markSyncFamilyProgress(familyHash, status) {
+    const targetHash = String(familyHash || '').trim();
+    if (!targetHash || !Array.isArray(this.syncFamilyProgress) || this.syncFamilyProgress.length === 0) return;
+    this.syncFamilyProgress = this.syncFamilyProgress.map((family) => {
+      if (family.hash !== targetHash) return family;
+      return { ...family, status };
+    });
+  },
+
+  syncProgressActiveFamilyLabel() {
+    return this.syncFamilyProgress.find((family) => family.status === 'active')?.label || '';
+  },
+
+  handleSyncProgressUpdate(update = {}) {
+    this.updateSyncSession(update);
+    if (!this.syncSession.manual || !Array.isArray(this.syncFamilyProgress) || this.syncFamilyProgress.length === 0) return;
+
+    const phase = String(update.phase || '').trim();
+    const familyHash = String(update.currentFamilyHash || '').trim();
+
+    if (phase === 'pulling' && familyHash) {
+      const isCompleted = Number.isFinite(update.completedFamilies)
+        && Number.isFinite(update.totalFamilies)
+        && update.completedFamilies > 0
+        && update.completedFamilies <= update.totalFamilies
+        && update.currentFamily;
+      this.markSyncFamilyProgress(familyHash, isCompleted ? 'done' : 'active');
+      if (!isCompleted) return;
+    }
+
+    if (phase === 'applying' || phase === 'done') {
+      this.syncFamilyProgress = this.syncFamilyProgress.map((family) => (
+        family.status === 'active' ? { ...family, status: 'done' } : family
+      ));
+    }
+
+    if (phase === 'error') {
+      this.syncFamilyProgress = this.syncFamilyProgress.map((family) => (
+        family.status === 'active' ? { ...family, status: 'error' } : family
+      ));
+    }
+  },
+
+  openSyncProgressModal() {
+    this.showSyncProgressModal = true;
+  },
+
+  closeSyncProgressModal() {
+    if (this.syncSession.phase === 'checking' || this.syncSession.phase === 'pushing' || this.syncSession.phase === 'pulling' || this.syncSession.phase === 'applying') {
+      return;
+    }
+    this.showSyncProgressModal = false;
+  },
+
   syncProgressLabel() {
     const s = this.syncSession;
-    if (s.phase === 'idle' || s.phase === 'done') return '';
-    if (s.phase === 'checking') return 'Checking...';
+    if (s.phase === 'idle') return '';
+    if (s.phase === 'done') return s.manual ? 'Full sync complete.' : '';
+    if (s.phase === 'checking') return s.manual ? 'Starting full sync...' : 'Checking...';
     if (s.phase === 'pushing') return `Pushing ${s.pushed} / ${s.pushTotal}`;
     if (s.phase === 'pulling') {
       if (s.heartbeat && s.totalFamilies === 0) return 'Up to date';
@@ -721,25 +1155,46 @@ export const syncManagerMixin = {
 
   // --- sync execution ---
 
-  async performSync({ silent = false, showBusy = !silent } = {}) {
+  async performSync({ silent = false, showBusy = !silent, forceFull = false, manual = false } = {}) {
     if (!this.session?.npub || !this.backendUrl) {
       if (!silent) this.error = 'Configure settings first';
       return { pushed: 0, pulled: 0 };
     }
 
     if (!silent) this.error = null;
+    if (manual) {
+      this.initializeSyncFamilyProgress();
+      this.openSyncProgressModal();
+    }
     if (showBusy) this.syncing = true;
-    this.updateSyncSession({ state: 'syncing', phase: 'checking', startedAt: Date.now(), error: null, pushed: 0, pushTotal: 0, pulled: 0, completedFamilies: 0, totalFamilies: 0, currentFamily: null });
+    this.updateSyncSession({
+      state: 'syncing',
+      phase: 'checking',
+      startedAt: Date.now(),
+      finishedAt: null,
+      error: null,
+      manual,
+      heartbeat: false,
+      pushed: 0,
+      pushTotal: 0,
+      pulled: 0,
+      completedFamilies: 0,
+      totalFamilies: 0,
+      currentFamily: null,
+      currentFamilyHash: null,
+    });
     flightDeckLog('info', 'sync', 'sync started', {
       silent,
       showBusy,
+      forceFull,
+      manual,
       backendUrl: this.backendUrl,
       ownerNpub: this.workspaceOwnerNpub || null,
       viewerNpub: this.session?.npub || null,
     });
 
     const onProgress = (update) => {
-      this.updateSyncSession(update);
+      this.handleSyncProgressUpdate(update);
     };
 
     let result = null;
@@ -768,11 +1223,12 @@ export const syncManagerMixin = {
         authMethod: this.session?.method || '',
         backendUrl: this.backendUrl,
         workspaceDbKey: this.workspaceDbKey,
+        forceFull,
       });
       const hasRemoteDataChanges = (result?.pulled ?? 0) > 0 || (result?.pruned ?? 0) > 0;
       refreshUnread = refreshUnread || hasRemoteDataChanges;
       refreshRecentChanges = refreshRecentChanges || (hasRemoteDataChanges && this.navSection === 'status');
-      this.updateSyncSession({ phase: 'applying' });
+      this.handleSyncProgressUpdate({ phase: 'applying' });
       if (!silent || hasRemoteDataChanges) {
         await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
         await this.ensureTaskFamilyBackfill();
@@ -781,11 +1237,11 @@ export const syncManagerMixin = {
           await this.loadDocComments(this.selectedDocId);
         }
       }
-      this.updateSyncSession({ phase: 'done', finishedAt: Date.now(), lastSuccessAt: Date.now(), state: 'synced' });
+      this.handleSyncProgressUpdate({ phase: 'done', finishedAt: Date.now(), lastSuccessAt: Date.now(), state: 'synced' });
     } catch (error) {
       syncError = error;
       if (!silent) this.error = error.message;
-      this.updateSyncSession({ phase: 'error', state: 'error', error: error.message, finishedAt: Date.now() });
+      this.handleSyncProgressUpdate({ phase: 'error', state: 'error', error: error.message, finishedAt: Date.now() });
       flightDeckLog('error', 'sync', 'sync failed', {
         backendUrl: this.backendUrl,
         ownerNpub: this.workspaceOwnerNpub || null,
@@ -812,12 +1268,43 @@ export const syncManagerMixin = {
   },
 
   async syncNow() {
+    this.showAvatarMenu = false;
     try {
-      await this.performSync({ silent: false });
+      await this.performSync({ silent: false, forceFull: true, manual: true });
     } catch (e) {
       // performSync already surfaced the error state
     }
     this.ensureBackgroundSync();
+  },
+
+  /**
+   * Flush pending writes to Tower and schedule a background sync.
+   * Much faster than performSync — does NOT heartbeat or pull, so the
+   * caller returns almost immediately after the write reaches the server.
+   * SSE + the next background tick handle inbound updates.
+   */
+  async flushAndBackgroundSync() {
+    if (!this.session?.npub || !this.backendUrl) return { pushed: 0 };
+    try {
+      const result = await flushOnly(this.workspaceOwnerNpub, null, {
+        backendUrl: this.backendUrl,
+        workspaceDbKey: this.workspaceDbKey,
+      });
+      // A successful flush proves connectivity — update lastSuccessAt so
+      // ensureBackgroundSync doesn't show the "Catching up" overlay.
+      this.updateSyncSession({ lastSuccessAt: Date.now() });
+      if ((result?.pushed ?? 0) > 0) {
+        await this.refreshSyncStatus({ refreshUnread: false });
+      }
+      return result;
+    } catch (error) {
+      flightDeckLog('error', 'sync', 'flush-only failed, falling back to background sync', {
+        error: error?.message || String(error),
+      });
+      return { pushed: 0 };
+    } finally {
+      this.ensureBackgroundSync(true);
+    }
   },
 
   async refreshSyncStatus(options = {}) {

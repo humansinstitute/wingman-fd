@@ -133,3 +133,55 @@ export async function pruneInaccessibleRecords(viewerNpub, workspaceOwnerNpub) {
 
   return { pruned: totalPruned };
 }
+
+/**
+ * Repair stale group_npub refs in local records, replacing them with stable UUIDs.
+ *
+ * @param {Map<string, string>} npubToUuid — maps any known npub to its stable group UUID
+ * @returns {{ repaired: number }} count of records whose group_ids were updated
+ */
+export async function repairStaleGroupRefs(npubToUuid) {
+  if (!npubToUuid || npubToUuid.size === 0) return { repaired: 0 };
+
+  const db = getWorkspaceDb();
+  let totalRepaired = 0;
+
+  for (const tableName of GROUP_BEARING_TABLES) {
+    const table = db[tableName];
+    if (!table) continue;
+
+    const rows = await table.toArray();
+    const toUpdate = [];
+
+    for (const row of rows) {
+      const groupIds = row.group_ids;
+      if (!Array.isArray(groupIds) || groupIds.length === 0) continue;
+
+      let changed = false;
+      const repaired = [];
+      const seen = new Set();
+
+      for (const gid of groupIds) {
+        const resolved = npubToUuid.get(gid) || gid;
+        if (resolved !== gid) changed = true;
+        if (!seen.has(resolved)) {
+          seen.add(resolved);
+          repaired.push(resolved);
+        } else {
+          changed = true; // deduplication counts as a change
+        }
+      }
+
+      if (changed) {
+        toUpdate.push({ ...row, group_ids: repaired });
+      }
+    }
+
+    if (toUpdate.length > 0) {
+      await table.bulkPut(toUpdate);
+      totalRepaired += toUpdate.length;
+    }
+  }
+
+  return { repaired: totalRepaired };
+}
