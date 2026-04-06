@@ -72,7 +72,7 @@ describe('approval detail modal is globally accessible', () => {
   });
 
   it('modal is NOT inside any other navSection template', () => {
-    const sections = ['chat', 'tasks', 'docs', 'reports', 'calendar', 'schedules', 'jobs', 'scopes', 'people', 'settings'];
+    const sections = ['chat', 'tasks', 'docs', 'reports', 'calendar', 'schedules', 'scopes', 'people', 'settings'];
     for (const sec of sections) {
       expect(isInsideSection('approval-detail-overlay', sec)).toBe(false);
     }
