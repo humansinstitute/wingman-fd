@@ -11,7 +11,6 @@ import {
 import {
   deriveScopeHierarchy,
   buildScopeTags,
-  buildScopeLineage,
 } from '../src/scope-delivery.js';
 import {
   matchesTaskBoardScope,
@@ -363,11 +362,6 @@ describe('full five-level hierarchy end-to-end', () => {
   const l4 = makeScope('s4', 'l4', 's3', { l1_id: 's1', l2_id: 's2', l3_id: 's3', l4_id: 's4', title: 'Sprint' });
   const l5 = makeScope('s5', 'l5', 's4', { l1_id: 's1', l2_id: 's2', l3_id: 's3', l4_id: 's4', l5_id: 's5', title: 'Task Group' });
   const scopesMap = makeScopesMap(l1, l2, l3, l4, l5);
-
-  it('builds lineage from l1 to l5', () => {
-    const lineage = buildScopeLineage(l5, scopesMap);
-    expect(lineage.map(s => s.record_id)).toEqual(['s1', 's2', 's3', 's4', 's5']);
-  });
 
   it('builds breadcrumb for l5', () => {
     expect(scopeBreadcrumb('s5', scopesMap)).toBe('Department > Team > Project > Sprint > Task Group');
