@@ -136,15 +136,23 @@ this repo is:
 state — is presumed intentional and load-bearing. If it is here, it is
 meant to be here.**
 
+**The only exception is when Pete clearly states in the current
+conversation that he is removing code** — e.g. "delete the old X",
+"remove the Y helper", "rip out the Z module", "get rid of the unused
+W". When Pete explicitly asks for a removal, do exactly what he asked,
+nothing more. Absent an explicit removal instruction from Pete in this
+conversation, the preservation stance below applies without exception.
+
 This assumption is stronger than "investigate before tidying". It means:
 
 - **Do not delete, revert, refactor, consolidate, reorganize, rename, or
   "clean up" anything unless Pete has explicitly asked you to make that
   specific change in the current conversation.**
 - **Do not remove "dead code", "unused imports", "orphaned helpers",
-  "duplicate logic", or anything that looks like scaffolding.** You cannot
-  tell the difference between dead code and another session's in-progress
-  wiring. Assume it is in-progress wiring.
+  "duplicate logic", or anything that looks like scaffolding** on your own
+  initiative. You cannot tell the difference between dead code and another
+  session's in-progress wiring. Assume it is in-progress wiring. (If Pete
+  asks you to remove it, that is a different situation — do what he asked.)
 - **Do not "fix" files that are not directly part of the task you were
   given.** Drive-by fixes, style cleanups, lint corrections, and
   "while I was here" edits are all forbidden on this repo. If you notice a
@@ -157,7 +165,9 @@ This assumption is stronger than "investigate before tidying". It means:
 
 The operating rule is simple: **if Pete would have to tell you "put that
 back", you should not have touched it in the first place**. When Pete stops
-complaining about lost code, the rule is working.
+complaining about lost code, the rule is working. The flip side is equally
+simple: **when Pete clearly says "remove X", remove X** — don't refuse, don't
+second-guess, don't over-interpret preservation as blocking an explicit ask.
 
 ### Git safety — never without explicit, in-conversation user approval
 
