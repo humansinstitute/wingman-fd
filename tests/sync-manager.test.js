@@ -4,9 +4,12 @@ import {
   pullRecordsForFamilies,
   pruneOnLogin,
   runSync,
+  connectSSE,
 } from '../src/sync-worker-client.js';
 import { syncManagerMixin } from '../src/sync-manager.js';
 import { getSyncFamilyHash } from '../src/sync-families.js';
+import { createNip98AuthHeader, createNip98AuthHeaderForSecret } from '../src/auth/nostr.js';
+import { getActiveWorkspaceKeySecretForAuth } from '../src/crypto/workspace-keys.js';
 
 vi.mock('../src/api.js', () => ({
   fetchRecordHistory: vi.fn(),
@@ -46,7 +49,8 @@ vi.mock('../src/sync-worker-client.js', () => ({
 }));
 
 vi.mock('../src/auth/nostr.js', () => ({
-  createNip98AuthHeaderForSecret: vi.fn(),
+  createNip98AuthHeader: vi.fn(async () => 'Nostr eyJraW5kIjoyNzIzNX0='),
+  createNip98AuthHeaderForSecret: vi.fn(async () => 'Nostr eyJzZWNyZXQiOnRydWV9'),
 }));
 
 vi.mock('../src/crypto/workspace-keys.js', () => ({
@@ -82,19 +86,25 @@ function createStore(overrides = {}) {
     lastGroupsRefreshAt: 0,
     syncing: false,
     syncStatus: 'synced',
+    showAvatarMenu: false,
+    showSyncProgressModal: false,
+    syncFamilyProgress: [],
     syncSession: {
       state: 'idle',
       phase: 'idle',
       startedAt: null,
       finishedAt: null,
       lastSuccessAt: null,
+      manual: false,
       error: null,
+      heartbeat: false,
       pushed: 0,
       pushTotal: 0,
       pulled: 0,
       completedFamilies: 0,
       totalFamilies: 0,
       currentFamily: null,
+      currentFamilyHash: null,
     },
     syncQuarantine: [],
     repairSelectedFamilyIds: [],
@@ -411,6 +421,47 @@ describe('updateSyncSession', () => {
   });
 });
 
+describe('sync family progress helpers', () => {
+  it('initializeSyncFamilyProgress seeds pending families', () => {
+    const { fn, store } = bindMethod('initializeSyncFamilyProgress');
+    fn();
+    expect(store.syncFamilyProgress.length).toBeGreaterThan(0);
+    expect(store.syncFamilyProgress.every((family) => family.status === 'pending')).toBe(true);
+  });
+
+  it('handleSyncProgressUpdate marks manual sync families active and done', () => {
+    const { fn, store } = bindMethod('handleSyncProgressUpdate', {
+      syncSession: {
+        state: 'syncing',
+        phase: 'checking',
+        startedAt: null,
+        finishedAt: null,
+        lastSuccessAt: null,
+        manual: true,
+        error: null,
+        heartbeat: false,
+        pushed: 0,
+        pushTotal: 0,
+        pulled: 0,
+        completedFamilies: 0,
+        totalFamilies: 0,
+        currentFamily: null,
+        currentFamilyHash: null,
+      },
+      syncFamilyProgress: [
+        { id: 'channel', hash: 'family:channel', label: 'Channels', status: 'pending' },
+        { id: 'task', hash: 'family:task', label: 'Tasks', status: 'pending' },
+      ],
+    });
+
+    fn({ phase: 'pulling', currentFamily: 'Channels', currentFamilyHash: 'family:channel', completedFamilies: 0, totalFamilies: 2, pulled: 0 });
+    expect(store.syncFamilyProgress[0].status).toBe('active');
+
+    fn({ phase: 'pulling', currentFamily: 'Channels', currentFamilyHash: 'family:channel', completedFamilies: 1, totalFamilies: 2, pulled: 5 });
+    expect(store.syncFamilyProgress[0].status).toBe('done');
+  });
+});
+
 describe('syncProgressLabel', () => {
   it('returns empty for idle', () => {
     const { fn, store } = bindMethod('syncProgressLabel');
@@ -422,6 +473,13 @@ describe('syncProgressLabel', () => {
     const { fn, store } = bindMethod('syncProgressLabel');
     store.syncSession.phase = 'checking';
     expect(fn()).toBe('Checking...');
+  });
+
+  it('returns manual checking label for full sync', () => {
+    const { fn, store } = bindMethod('syncProgressLabel');
+    store.syncSession.phase = 'checking';
+    store.syncSession.manual = true;
+    expect(fn()).toBe('Starting full sync...');
   });
 
   it('returns pushing label', () => {
@@ -587,6 +645,58 @@ describe('performSync', () => {
     });
     await fn({ silent: false });
     expect(store.error).toBe('Configure settings first');
+  });
+
+  it('opens sync progress modal and forces full sync for manual runs', async () => {
+    runSync.mockResolvedValueOnce({ pushed: 2, pulled: 10, pruned: 0 });
+    const refreshSyncStatus = vi.fn().mockResolvedValue(undefined);
+    const refreshWorkspaceSettings = vi.fn().mockResolvedValue(undefined);
+    const ensureTaskFamilyBackfill = vi.fn().mockResolvedValue(undefined);
+    const ensureTaskBoardScopeSetup = vi.fn().mockResolvedValue(undefined);
+    const refreshGroups = vi.fn().mockResolvedValue(undefined);
+    const { fn, store } = bindMethod('performSync', {
+      session: { npub: 'npub1me', method: 'extension' },
+      backendUrl: 'https://backend.example.com',
+      refreshGroups,
+      refreshSyncStatus,
+      refreshWorkspaceSettings,
+      ensureTaskFamilyBackfill,
+      ensureTaskBoardScopeSetup,
+      hasForcedInitialBackfill: true,
+      groups: [{ group_id: 'g1' }],
+    });
+
+    await fn({ silent: false, forceFull: true, manual: true });
+
+    expect(store.showSyncProgressModal).toBe(true);
+    expect(store.syncSession.manual).toBe(true);
+    expect(store.syncFamilyProgress.length).toBeGreaterThan(0);
+    expect(runSync).toHaveBeenCalledWith(
+      'npub1owner',
+      'npub1me',
+      expect.any(Function),
+      expect.objectContaining({
+        forceFull: true,
+      }),
+    );
+  });
+});
+
+describe('syncNow', () => {
+  it('closes the avatar menu and requests a manual full sync', async () => {
+    const performSync = vi.fn().mockResolvedValue(undefined);
+    const ensureBackgroundSync = vi.fn();
+    const { fn, store } = bindMethod('syncNow', {
+      showAvatarMenu: true,
+      performSync,
+      ensureBackgroundSync,
+    });
+
+    await fn();
+
+    expect(store.showAvatarMenu).toBe(false);
+    expect(performSync).toHaveBeenCalledWith({ silent: false, forceFull: true, manual: true });
+    expect(ensureBackgroundSync).toHaveBeenCalled();
   });
 });
 
@@ -1028,7 +1138,7 @@ describe('syncNow', () => {
       ensureBackgroundSync,
     });
     await fn();
-    expect(performSync).toHaveBeenCalledWith({ silent: false });
+    expect(performSync).toHaveBeenCalledWith({ silent: false, forceFull: true, manual: true });
     expect(ensureBackgroundSync).toHaveBeenCalled();
   });
 
@@ -1041,5 +1151,101 @@ describe('syncNow', () => {
     });
     await fn();
     expect(ensureBackgroundSync).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SSE token regression — must use NIP-98, never bootstrap connection token
+// ---------------------------------------------------------------------------
+describe('connectSSEStream — NIP-98 auth token', () => {
+  it('passes a NIP-98 token to the worker, not the connection token', async () => {
+    const { fn, store } = bindMethod('connectSSEStream', {
+      session: { npub: 'npub1viewer' },
+      backendUrl: 'https://tower.example',
+      workspaceOwnerNpub: 'npub1owner',
+      superbasedTokenInput: 'CONNECTION_BOOTSTRAP_TOKEN_SHOULD_NOT_APPEAR',
+    });
+
+    await fn();
+
+    expect(connectSSE).toHaveBeenCalledTimes(1);
+    const [ownerNpub, viewerNpub, backendUrl, token] = connectSSE.mock.calls[0];
+
+    // The token must be the base64 NIP-98 event, NOT the bootstrap token
+    expect(token).not.toBe('CONNECTION_BOOTSTRAP_TOKEN_SHOULD_NOT_APPEAR');
+    expect(token).not.toContain('superbased_connection');
+    // It should be a base64 string extracted from "Nostr <base64>"
+    expect(token).toMatch(/^[A-Za-z0-9+/=]+$/);
+  });
+
+  it('uses workspace key auth when available', async () => {
+    getActiveWorkspaceKeySecretForAuth.mockReturnValue('deadbeef');
+
+    const { fn } = bindMethod('connectSSEStream', {
+      session: { npub: 'npub1viewer' },
+      backendUrl: 'https://tower.example',
+      workspaceOwnerNpub: 'npub1owner',
+    });
+
+    await fn();
+
+    expect(createNip98AuthHeaderForSecret).toHaveBeenCalledWith(
+      'https://tower.example/api/v4/workspaces/npub1owner/stream',
+      'GET',
+      null,
+      'deadbeef',
+    );
+    expect(createNip98AuthHeader).not.toHaveBeenCalled();
+  });
+
+  it('falls back to session auth when no workspace key', async () => {
+    getActiveWorkspaceKeySecretForAuth.mockReturnValue(null);
+
+    const { fn } = bindMethod('connectSSEStream', {
+      session: { npub: 'npub1viewer' },
+      backendUrl: 'https://tower.example',
+      workspaceOwnerNpub: 'npub1owner',
+    });
+
+    await fn();
+
+    expect(createNip98AuthHeader).toHaveBeenCalledWith(
+      'https://tower.example/api/v4/workspaces/npub1owner/stream',
+      'GET',
+      null,
+    );
+  });
+
+  it('does not call connectSSE when NIP-98 signing fails', async () => {
+    createNip98AuthHeader.mockRejectedValueOnce(new Error('no signer'));
+    getActiveWorkspaceKeySecretForAuth.mockReturnValue(null);
+
+    const { fn } = bindMethod('connectSSEStream', {
+      session: { npub: 'npub1viewer' },
+      backendUrl: 'https://tower.example',
+      workspaceOwnerNpub: 'npub1owner',
+    });
+
+    await fn();
+
+    expect(connectSSE).not.toHaveBeenCalled();
+  });
+
+  it('does not call connectSSE when missing session or backendUrl', async () => {
+    const { fn: noSession } = bindMethod('connectSSEStream', {
+      session: null,
+      backendUrl: 'https://tower.example',
+      workspaceOwnerNpub: 'npub1owner',
+    });
+    await noSession();
+    expect(connectSSE).not.toHaveBeenCalled();
+
+    const { fn: noBackend } = bindMethod('connectSSEStream', {
+      session: { npub: 'npub1viewer' },
+      backendUrl: '',
+      workspaceOwnerNpub: 'npub1owner',
+    });
+    await noBackend();
+    expect(connectSSE).not.toHaveBeenCalled();
   });
 });

@@ -182,6 +182,43 @@ describe('workspace computed getters', () => {
     expect(store.currentWorkspaceGroups.map((g) => g.name)).toEqual(['A', 'C']);
   });
 
+  it('canAdminWorkspace is true for the creator', () => {
+    const ws = { workspaceOwnerNpub: 'npub1ws', creatorNpub: 'npub1creator', workspaceKey: 'workspace:npub1ws' };
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      knownWorkspaces: [ws],
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      selectedWorkspaceKey: 'workspace:npub1ws',
+      session: { npub: 'npub1creator' },
+      groups: [],
+    });
+    expect(store.canAdminWorkspace).toBe(true);
+  });
+
+  it('canAdminWorkspace is true for a member of the workspace admin group', () => {
+    const ws = { workspaceOwnerNpub: 'npub1ws', creatorNpub: 'npub1creator', workspaceKey: 'workspace:npub1ws' };
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      knownWorkspaces: [ws],
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      selectedWorkspaceKey: 'workspace:npub1ws',
+      session: { npub: 'npub1admin' },
+      groups: [
+        { owner_npub: 'npub1ws', group_kind: 'workspace_admin', member_npubs: ['npub1admin'] },
+      ],
+    });
+    expect(store.canAdminWorkspace).toBe(true);
+  });
+
+  it('currentWorkspaceContentGroups excludes the workspace admin group', () => {
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      groups: [
+        { owner_npub: 'npub1ws', group_kind: 'workspace_admin', name: 'Admins' },
+        { owner_npub: 'npub1ws', group_kind: 'shared', name: 'Team' },
+      ],
+    });
+    expect(store.currentWorkspaceContentGroups.map((group) => group.name)).toEqual(['Team']);
+  });
+
   it('memberPrivateGroup finds private group for session member', () => {
     const { store } = bindMethod('getWorkspaceByOwner', {
       currentWorkspaceOwnerNpub: 'npub1ws',

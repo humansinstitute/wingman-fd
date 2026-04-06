@@ -11,6 +11,8 @@ describe('workspace group refs', () => {
   const currentWorkspace = {
     defaultGroupId: '67f9a29d-60ba-458e-adea-d27555e53be1',
     defaultGroupNpub: 'npub1workspace_shared',
+    adminGroupId: '99f9a29d-60ba-458e-adea-d27555e53be1',
+    adminGroupNpub: 'npub1workspace_admin',
     privateGroupId: 'f2d2f1d9-9b27-4694-b6ef-5ab4d66fa9d7',
     privateGroupNpub: 'npub1workspace_private',
   };
@@ -22,12 +24,12 @@ describe('workspace group refs', () => {
 
   it('prefers npubs for storage and current-epoch write helpers', () => {
     expect(getPrivateGroupNpub({ memberPrivateGroup, currentWorkspace })).toBe('npub1workspace_private');
-    expect(getWorkspaceSettingsGroupNpub({ memberPrivateGroup, currentWorkspace })).toBe('npub1workspace_shared');
+    expect(getWorkspaceSettingsGroupNpub({ memberPrivateGroup, currentWorkspace })).toBe('npub1workspace_admin');
   });
 
   it('preserves stable refs for board and assignment helpers', () => {
     expect(getPrivateGroupRef({ memberPrivateGroup, currentWorkspace })).toBe('f2d2f1d9-9b27-4694-b6ef-5ab4d66fa9d7');
-    expect(getWorkspaceSettingsGroupRef({ memberPrivateGroup, currentWorkspace })).toBe('67f9a29d-60ba-458e-adea-d27555e53be1');
+    expect(getWorkspaceSettingsGroupRef({ memberPrivateGroup, currentWorkspace })).toBe('99f9a29d-60ba-458e-adea-d27555e53be1');
   });
 
   it('falls back to ids when only ids are available', () => {
@@ -36,6 +38,9 @@ describe('workspace group refs', () => {
     })).toBeNull();
     expect(getWorkspaceSettingsGroupNpub({
       currentWorkspace: { defaultGroupId: currentWorkspace.defaultGroupId },
+    })).toBeNull();
+    expect(getWorkspaceSettingsGroupNpub({
+      currentWorkspace: { adminGroupId: currentWorkspace.adminGroupId },
     })).toBeNull();
   });
 
@@ -46,5 +51,8 @@ describe('workspace group refs', () => {
     expect(getWorkspaceSettingsGroupRef({
       currentWorkspace: { defaultGroupId: currentWorkspace.defaultGroupId },
     })).toBe(currentWorkspace.defaultGroupId);
+    expect(getWorkspaceSettingsGroupRef({
+      currentWorkspace: { adminGroupId: currentWorkspace.adminGroupId },
+    })).toBe(currentWorkspace.adminGroupId);
   });
 });

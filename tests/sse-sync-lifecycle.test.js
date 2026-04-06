@@ -47,7 +47,8 @@ vi.mock('../src/sync-worker-client.js', () => ({
 }));
 
 vi.mock('../src/auth/nostr.js', () => ({
-  createNip98AuthHeaderForSecret: vi.fn(),
+  createNip98AuthHeader: vi.fn(async () => 'Nostr eyJraW5kIjoyNzIzNX0='),
+  createNip98AuthHeaderForSecret: vi.fn(async () => 'Nostr eyJzZWNyZXQiOnRydWV9'),
 }));
 
 vi.mock('../src/crypto/workspace-keys.js', () => ({
@@ -84,19 +85,24 @@ function createStore(overrides = {}) {
     lastGroupsRefreshAt: 0,
     syncing: false,
     syncStatus: 'synced',
+    showSyncProgressModal: false,
+    syncFamilyProgress: [],
     syncSession: {
       state: 'idle',
       phase: 'idle',
       startedAt: null,
       finishedAt: null,
       lastSuccessAt: null,
+      manual: false,
       error: null,
+      heartbeat: false,
       pushed: 0,
       pushTotal: 0,
       pulled: 0,
       completedFamilies: 0,
       totalFamilies: 0,
       currentFamily: null,
+      currentFamilyHash: null,
     },
     syncQuarantine: [],
     sseStatus: 'disconnected',
@@ -198,60 +204,61 @@ function bindMethod(methodName, overrides = {}) {
 // SSE lifecycle — connectSSEStream
 // ---------------------------------------------------------------------------
 describe('connectSSEStream', () => {
-  it('calls connectSSE with workspace params and token', () => {
+  it('calls connectSSE with NIP-98 auth token, not bootstrap token', async () => {
     const { fn } = bindMethod('connectSSEStream', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
       workspaceOwnerNpub: 'npub1owner',
       superbasedTokenInput: 'my-token',
     });
-    fn();
-    expect(connectSSE).toHaveBeenCalledWith(
-      'npub1owner',
-      'npub1viewer',
-      'https://tower.example.com',
-      'my-token',
-      'npub1owner', // workspaceDbKey
-    );
+    await fn();
+    expect(connectSSE).toHaveBeenCalledTimes(1);
+    const [ownerNpub, viewerNpub, backendUrl, token] = connectSSE.mock.calls[0];
+    expect(ownerNpub).toBe('npub1owner');
+    expect(viewerNpub).toBe('npub1viewer');
+    expect(backendUrl).toBe('https://tower.example.com');
+    // Token must be the base64 NIP-98 event, NOT the bootstrap connection token
+    expect(token).not.toBe('my-token');
+    expect(token).toMatch(/^[A-Za-z0-9+/=]+$/);
   });
 
-  it('registers the SSE status callback', () => {
+  it('registers the SSE status callback', async () => {
     const { fn } = bindMethod('connectSSEStream', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
-      superbasedTokenInput: 'my-token',
+      workspaceOwnerNpub: 'npub1owner',
     });
-    fn();
+    await fn();
     expect(setSSEStatusCallback).toHaveBeenCalledWith(expect.any(Function));
   });
 
-  it('does not connect when session is missing', () => {
+  it('does not connect when session is missing', async () => {
     const { fn } = bindMethod('connectSSEStream', {
       session: null,
       backendUrl: 'https://tower.example.com',
-      superbasedTokenInput: 'my-token',
+      workspaceOwnerNpub: 'npub1owner',
     });
-    fn();
+    await fn();
     expect(connectSSE).not.toHaveBeenCalled();
   });
 
-  it('does not connect when backendUrl is missing', () => {
+  it('does not connect when backendUrl is missing', async () => {
     const { fn } = bindMethod('connectSSEStream', {
       session: { npub: 'npub1viewer' },
       backendUrl: '',
-      superbasedTokenInput: 'my-token',
+      workspaceOwnerNpub: 'npub1owner',
     });
-    fn();
+    await fn();
     expect(connectSSE).not.toHaveBeenCalled();
   });
 
-  it('does not connect when token is missing', () => {
+  it('does not connect when workspaceOwnerNpub is missing', async () => {
     const { fn } = bindMethod('connectSSEStream', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
-      superbasedTokenInput: '',
+      workspaceOwnerNpub: '',
     });
-    fn();
+    await fn();
     expect(connectSSE).not.toHaveBeenCalled();
   });
 });
@@ -309,22 +316,21 @@ describe('handleSSEStatus', () => {
     expect(store.sseStatus).toBe('connected');
   });
 
-  it('requests reconnect with fresh token on token-needed', () => {
+  it('requests reconnect with fresh NIP-98 token on token-needed', async () => {
     const { fn, store } = bindMethod('handleSSEStatus', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
-      superbasedTokenInput: 'fresh-token',
+      workspaceOwnerNpub: 'npub1owner',
       sseStatus: 'reconnecting',
     });
     fn({ status: 'token-needed' });
-    // Should call connectSSE with the current token to reconnect
-    expect(connectSSE).toHaveBeenCalledWith(
-      'npub1owner',
-      'npub1viewer',
-      'https://tower.example.com',
-      'fresh-token',
-      'npub1owner',
-    );
+    // connectSSEStream is async — wait for it to complete
+    await vi.waitFor(() => {
+      expect(connectSSE).toHaveBeenCalledTimes(1);
+    });
+    const [, , , token] = connectSSE.mock.calls[0];
+    // Should use NIP-98 token, not bootstrap token
+    expect(token).toMatch(/^[A-Za-z0-9+/=]+$/);
   });
 
   it('falls back to polling-only on fallback-polling status', () => {
@@ -377,29 +383,30 @@ describe('getSyncCadenceMs with SSE', () => {
 // ensureBackgroundSync wires SSE
 // ---------------------------------------------------------------------------
 describe('ensureBackgroundSync wires SSE', () => {
-  it('connects SSE when session and backend are available', () => {
+  it('connects SSE when session and backend are available', async () => {
     const { fn } = bindMethod('ensureBackgroundSync', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
       workspaceOwnerNpub: 'npub1owner',
-      superbasedTokenInput: 'my-token',
     });
     fn(false);
-    expect(connectSSE).toHaveBeenCalledWith(
-      'npub1owner',
-      'npub1viewer',
-      'https://tower.example.com',
-      'my-token',
-      'npub1owner',
-    );
+    // connectSSEStream is async — wait for it to complete
+    await vi.waitFor(() => {
+      expect(connectSSE).toHaveBeenCalledTimes(1);
+    });
+    const [ownerNpub, viewerNpub, backendUrl, token] = connectSSE.mock.calls[0];
+    expect(ownerNpub).toBe('npub1owner');
+    expect(viewerNpub).toBe('npub1viewer');
+    expect(backendUrl).toBe('https://tower.example.com');
+    // Token must be NIP-98, not bootstrap
+    expect(token).toMatch(/^[A-Za-z0-9+/=]+$/);
   });
 
-  it('does not connect SSE when token is missing', () => {
+  it('does not connect SSE when workspaceOwnerNpub is missing', () => {
     const { fn } = bindMethod('ensureBackgroundSync', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
-      workspaceOwnerNpub: 'npub1owner',
-      superbasedTokenInput: '',
+      workspaceOwnerNpub: '',
     });
     fn(false);
     expect(connectSSE).not.toHaveBeenCalled();
@@ -410,7 +417,6 @@ describe('ensureBackgroundSync wires SSE', () => {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
       workspaceOwnerNpub: 'npub1owner',
-      superbasedTokenInput: 'my-token',
     });
     fn(false);
     expect(startWorkerFlushTimer).toHaveBeenCalledWith(

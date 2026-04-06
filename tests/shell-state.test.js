@@ -188,12 +188,15 @@ describe('shell state default values', () => {
       startedAt: null,
       finishedAt: null,
       lastSuccessAt: null,
+      manual: false,
       currentFamily: null,
+      currentFamilyHash: null,
       completedFamilies: 0,
       totalFamilies: 0,
       pushed: 0,
       pushTotal: 0,
       pulled: 0,
+      heartbeat: false,
       error: null,
     });
   });

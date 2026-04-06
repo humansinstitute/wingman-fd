@@ -79,6 +79,26 @@ function createStore(overrides = {}) {
     getScopeShareGroupIds(scope) {
       return (scope?.group_ids || []).filter(Boolean);
     },
+    getResolvedScopePolicyGroupIds(scopeId) {
+      return (this.scopesMap?.get(scopeId)?.group_ids || []).filter(Boolean);
+    },
+    shouldRefreshScopedPolicy(record, scopeId, options = {}) {
+      const nextGroupIds = this.getResolvedScopePolicyGroupIds(scopeId);
+      const storedGroupIds = Array.isArray(record?.scope_policy_group_ids) ? record.scope_policy_group_ids : [];
+      if (storedGroupIds.length > 0) {
+        return JSON.stringify(storedGroupIds) !== JSON.stringify(nextGroupIds);
+      }
+      if (options.allowLegacyGroupFallback !== true) return false;
+      return nextGroupIds.some((groupId) => !(record?.group_ids || []).includes(groupId));
+    },
+    buildScopedPolicyRepairPatch(record, { scopeId } = {}) {
+      const nextGroupIds = this.getResolvedScopePolicyGroupIds(scopeId);
+      return {
+        group_ids: nextGroupIds,
+        shares: this.buildScopeDefaultShares(nextGroupIds),
+        scope_policy_group_ids: nextGroupIds,
+      };
+    },
     buildScopeDefaultShares(groupIds = []) {
       return groupIds.map((gid) => ({ group_id: gid, permission: 'write' }));
     },
@@ -128,6 +148,7 @@ describe('createFlow — group inheritance from scope', () => {
     // The local row saved to Dexie must have non-empty group_ids
     const savedRow = mockUpsertFlow.mock.calls[0][0];
     expect(savedRow.group_ids).toEqual(['group-abc', 'group-def']);
+    expect(savedRow.scope_policy_group_ids).toEqual(['group-abc', 'group-def']);
     expect(savedRow.group_ids.length).toBeGreaterThan(0);
   });
 
@@ -165,6 +186,7 @@ describe('createFlow — group inheritance from scope', () => {
     const savedRow = mockUpsertFlow.mock.calls[0][0];
     expect(savedRow.shares.length).toBeGreaterThan(0);
     expect(savedRow.shares[0].group_id).toBe('group-abc');
+    expect(savedRow.scope_policy_group_ids).toEqual(['group-abc']);
   });
 
   it('falls back to empty group_ids when no scope is set', async () => {
@@ -219,6 +241,7 @@ describe('updateFlow — group_ids preserved', () => {
     const updated = await store.updateFlow('flow-1', { title: 'New Title' });
 
     expect(updated.group_ids).toEqual(['group-abc']);
+    expect(updated.scope_policy_group_ids).toBeNull();
     const outboundArg = mockOutboundFlow.mock.calls[0][0];
     expect(outboundArg.write_group_ref).toBe('group-abc');
   });
