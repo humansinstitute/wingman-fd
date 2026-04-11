@@ -350,6 +350,29 @@ Use the existing upstream session APIs:
 - `fetchNightWatchSessionState(sessionId)`
 - `fetchNightWatchReports()`
 
+Important contract details confirmed upstream:
+
+- `PATCH /api/sessions/:id/metadata` accepts either a flat object or `{ metadata: ... }`
+- metadata updates merge into the existing metadata object on both live and stored sessions rather than replacing the whole object
+- normalization trims string fields and drops empty-string values back to `undefined`
+- clearing a field is therefore done by patching it to an empty string, which normalizes back to unset
+- `nextAction` is an enum upstream, not free text. Allowed values are `none`, `reflect`, `stop`, and `restart`
+- `nextActionPayload` remains the free-text companion field
+- `nextActionTemplate` is a separate stored field used by the Night Watch enable flow
+- `bindingType` is also constrained upstream to `thread`, `task`, or `flow_run`
+
+Current upstream UX nuance:
+
+- the drawer metadata form in [../../wingmen/src/ui/live/session-drawer.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.js) currently edits `goal` and `nextActionPayload`
+- the Night Watch enable path in [../../wingmen/src/ui/nightwatch/session-toggle.js](/Users/mini/code/wingmen/src/ui/nightwatch/session-toggle.js) patches `goal`, `nextAction`, and `nextActionTemplate` before enabling
+- that means "current next action" is currently split across two concepts upstream:
+  - enum action intent in `nextAction`
+  - free-text operator detail in `nextActionPayload`
+
+Implication:
+
+- any follow-up UX change should decide explicitly whether the drawer should keep editing only `nextActionPayload`, or should also expose `nextAction` and `nextActionTemplate` directly
+
 ### 3. Related record display
 
 The first implementation should stay narrow and data-driven:
@@ -372,6 +395,17 @@ First-slice plan:
 - filter client-side by `sessionId`
 - show a bounded preview in the drawer
 - open a modal or detail sheet from a report row
+
+Current backend limitation confirmed upstream:
+
+- `GET /api/nightwatch/reports` is global only
+- the store currently returns the most recent 50 reports across all sessions, sorted newest-first
+- there is no `sessionId` filter parameter and no dedicated `/api/nightwatch/sessions/:id/reports` route yet
+
+Implication:
+
+- the current drawer preview works for recent session activity
+- it can silently miss older reports for a session if other sessions have produced enough newer reports to push them out of the global top-50 window
 
 Preferred follow-up contract if the history experience needs to scale:
 
@@ -442,6 +476,8 @@ If any Flight Deck deep-link follow-up is later added:
 - Filtering global Night Watch reports client-side is acceptable for the first slice but may become noisy if the report volume grows.
 - Moving `Cmd` actions into a drawer can regress focus and keyboard handling if it does not preserve the current menu accessibility behavior.
 - Broadening the first drawer slice beyond metadata and Night Watch controls creates avoidable merge risk with the existing `Cmd` menu and with the dirty-tree FD-first experiment in this repo.
+- The phrase "current next action" is ambiguous upstream because `nextAction`, `nextActionPayload`, and `nextActionTemplate` already have different roles and are not all edited from the same surface today.
+- The current global Night Watch reports endpoint only returns the newest 50 reports overall, which can truncate session-specific history visibility without any explicit UI warning.
 
 ## Fallback Plans
 
@@ -461,4 +497,5 @@ If any Flight Deck deep-link follow-up is later added:
 ## Remaining Questions
 
 1. Should the first history slice use filtered global reports, or should `../../wingmen` add a dedicated per-session reports endpoint immediately?
-2. For Flight Deck deep links, should Wingmen rely only on `taskIds`, `flowId`, and `flowRunId`, or should it add explicit Flight Deck record link fields later?
+2. Should the drawer continue editing only `nextActionPayload`, or should it also expose the enum `nextAction` and stored `nextActionTemplate` directly outside the Night Watch enable flow?
+3. For Flight Deck deep links, should Wingmen rely only on `taskIds`, `flowId`, and `flowRunId`, or should it add explicit Flight Deck record link fields later?
