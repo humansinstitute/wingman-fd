@@ -32,3 +32,13 @@ Why:
 - Do not extend `workspace_settings` or `agent_chat_triggers` to carry session goal, next action, or Night Watch history.
 - Target the real UI work to `../../wingmen/src/ui/views/live-view.js` and related session/nightwatch modules.
 - Keep any later Flight Deck work narrow and integration-focused.
+
+## Current Working Tree Note
+
+This repo's current dirty tree already contains a partial Flight Deck-first `live` slice:
+
+- `index.html` has a `Live` nav entry and stub drawer markup
+- `src/live-manager.js` exists as an untracked local module
+- `tests/live-manager.test.js` and `tests/live-rendering.test.js` exist as untracked local tests
+
+Treat that as in-progress conflicting work, not as an ownership override. The next implementation pass should reconcile it explicitly rather than extending it by accident.

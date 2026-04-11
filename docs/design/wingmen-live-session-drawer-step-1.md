@@ -111,6 +111,29 @@ Cases:
   - the approval history modal in [index.html](/Users/mini/code/wingmanbefree/wingman-fd/index.html) and [src/styles.css](/Users/mini/code/wingmanbefree/wingman-fd/src/styles.css)
   - workspace automation settings in [src/workspace-manager.js](/Users/mini/code/wingmanbefree/wingman-fd/src/workspace-manager.js)
 
+## Dirty Tree Divergence
+
+The current dirty tree already contains an in-flight Flight Deck implementation that conflicts with the confirmed ownership boundary above.
+
+Observed local files:
+
+- modified [index.html](/Users/mini/code/wingmanbefree/wingman-fd/index.html) now contains:
+  - a `Live` sidebar entry
+  - `navSection === 'live'`
+  - a stub `live-session-drawer`
+  - a stub Night Watch report modal
+- untracked [src/live-manager.js](/Users/mini/code/wingmanbefree/wingman-fd/src/live-manager.js)
+- untracked [tests/live-manager.test.js](/Users/mini/code/wingmanbefree/wingman-fd/tests/live-manager.test.js)
+- untracked [tests/live-rendering.test.js](/Users/mini/code/wingmanbefree/wingman-fd/tests/live-rendering.test.js)
+
+Those local changes appear to assume a Flight Deck-owned `/live` surface. They should be treated as another session's in-progress work, not as proof that the ownership decision changed.
+
+Implication:
+
+- do not silently extend that FD-first slice without explicit confirmation
+- if that slice continues, it should be consciously re-scoped as an interoperability experiment or moved to the owning `../../wingmen` repo
+- the next implementer should reconcile the dirty-tree work against the upstream ownership evidence before landing production code
+
 ## Adjacent Repo Findings
 
 The brief did prove a second-repo inspection was required. The actual Wingmen Live implementation already exists in `../../wingmen`.
@@ -299,6 +322,7 @@ If any Flight Deck deep-link follow-up is later added:
 ## Risks
 
 - The biggest risk is implementing this in the wrong repo and ending up with two live-session control planes.
+- A second concrete risk now exists in the current working tree: there is already partial FD-first live drawer wiring in progress, so an uncoordinated follow-up could merge contradictory assumptions into one UI.
 - Reusing `workspace_settings` or `agent_chat_triggers` for session runtime data would leak per-session state into workspace-scoped records.
 - Filtering global Night Watch reports client-side is acceptable for the first slice but may become noisy if the report volume grows.
 - Moving `Cmd` actions into a drawer can regress focus and keyboard handling if it does not preserve the current menu accessibility behavior.
