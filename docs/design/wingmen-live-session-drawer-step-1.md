@@ -254,6 +254,7 @@ Flight Deck should only participate later if the owning Wingmen drawer needs exp
 Add the drawer to the existing live session surface in:
 
 - [../../wingmen/src/ui/views/live-view.js](/Users/mini/code/wingmen/src/ui/views/live-view.js)
+- [../../wingmen/src/ui/live/session-drawer.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.js)
 - [../../wingmen/src/ui/styles.css](/Users/mini/code/wingmen/src/ui/styles.css)
 
 Expected work:
@@ -264,6 +265,42 @@ Expected work:
 - add mobile takeover behavior
 - add desktop side-panel behavior
 - add a Night Watch history preview section and click-through modal
+
+### 1a. First drawer migration boundary
+
+The current upstream live view in [../../wingmen/src/ui/views/live-view.js](/Users/mini/code/wingmen/src/ui/views/live-view.js) already contains a broad `Cmd` menu surface. The first drawer slice should stay narrow and only absorb the session-oriented controls that match this task's acceptance targets.
+
+Move into the drawer in the first delivery:
+
+- session metadata display
+- goal editing
+- current next-action editing
+- Night Watch enabled or disabled state
+- Night Watch toggle
+- related-record display from `project`, `bindingType`, `bindingId`, `flowId`, `flowRunId`, and `taskIds`
+- Night Watch history preview plus report modal path
+
+Keep in `Cmd` for the first delivery:
+
+- `Git` submenu
+- `Gitea` submenu
+- `App` submenu actions such as `App card`, `Go to site`, `Restart`, and `Stop`
+- `Open Web View` or `Close Web View`
+- `Open Artifact` or `Close Artifact`
+- transcript utilities such as `Scroll to end`, `Last question`, and `Copy chat`
+- `Rename session`
+- `Attach image`
+- `Upload file`
+- `Record voice note`
+- `Terminal` submenu
+- destructive `Stop Session`
+
+Rationale:
+
+- those menu items are broader live-runtime controls rather than session metadata controls
+- moving them in the first slice would broaden the drawer from a metadata surface into a full control plane rewrite
+- the confirmed acceptance targets do not require migrating them yet
+- requirement 6 says the drawer will absorb more of `Cmd` over time, which implies an incremental migration rather than an all-at-once move
 
 ### 2. Use existing metadata and Night Watch write paths
 
@@ -328,6 +365,7 @@ It should not create a duplicate live-session store in Flight Deck.
 Owning implementation files in `../../wingmen`:
 
 - [../../wingmen/src/ui/views/live-view.js](/Users/mini/code/wingmen/src/ui/views/live-view.js)
+- [../../wingmen/src/ui/live/session-drawer.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.js)
 - [../../wingmen/src/ui/styles.css](/Users/mini/code/wingmen/src/ui/styles.css)
 - [../../wingmen/src/ui/services/sessions.js](/Users/mini/code/wingmen/src/ui/services/sessions.js)
 - [../../wingmen/src/ui/nightwatch/api.js](/Users/mini/code/wingmen/src/ui/nightwatch/api.js)
@@ -364,6 +402,7 @@ If any Flight Deck deep-link follow-up is later added:
 - Reusing `workspace_settings` or `agent_chat_triggers` for session runtime data would leak per-session state into workspace-scoped records.
 - Filtering global Night Watch reports client-side is acceptable for the first slice but may become noisy if the report volume grows.
 - Moving `Cmd` actions into a drawer can regress focus and keyboard handling if it does not preserve the current menu accessibility behavior.
+- Broadening the first drawer slice beyond metadata and Night Watch controls creates avoidable merge risk with the existing `Cmd` menu and with the dirty-tree FD-first experiment in this repo.
 
 ## Fallback Plans
 
@@ -383,5 +422,4 @@ If any Flight Deck deep-link follow-up is later added:
 ## Remaining Questions
 
 1. Should the first history slice use filtered global reports, or should `../../wingmen` add a dedicated per-session reports endpoint immediately?
-2. Which current `Cmd` actions should move into the drawer in the first delivery versus remain in the menu temporarily?
-3. For Flight Deck deep links, should Wingmen rely only on `taskIds`, `flowId`, and `flowRunId`, or should it add explicit Flight Deck record link fields later?
+2. For Flight Deck deep links, should Wingmen rely only on `taskIds`, `flowId`, and `flowRunId`, or should it add explicit Flight Deck record link fields later?
