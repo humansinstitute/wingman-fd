@@ -233,6 +233,42 @@ Status after follow-up:
 - the rendered drawer showed the expected flow-run evidence in UI: binding `27fd8894-fa2d-4445-b0e8-0b85ebe0984e`, flow `3efa0719-b4df-48d1-92b4-4e92be40cdad`, Night Watch enabled state, and session-specific history entries from the reflection check-ins
 - remaining manual gap: mobile takeover behavior was not browser-verified in this pass
 
+### Current Upstream Acceptance Coverage
+
+The upstream implementation is no longer hypothetical. The following owning tests now exist in `../../wingmen` and cover most of the requested acceptance surface:
+
+- [../../wingmen/src/ui/live/session-drawer.test.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.test.js)
+- [../../wingmen/src/ui/views/live-view.test.js](/Users/mini/code/wingmen/src/ui/views/live-view.test.js)
+
+Covered by automated upstream tests:
+
+- drawer mode selection for desktop versus mobile
+- desktop default-visible behavior until the user explicitly hides the drawer
+- mobile visibility gated by drawer open state
+- session metadata rendering for goal and current next action
+- related-record extraction from `project`, `bindingType`, `bindingId`, `flowId`, `flowRunId`, and `taskIds`
+- Night Watch history filtering by session id
+- newest-first Night Watch history sorting
+- bounded history preview length
+- distinct empty-history and unavailable-history states
+- Night Watch report modal rendering including summary, reasoning, input, and cycle count
+- live-view integration for desktop side-by-side layout
+- live-view integration for mobile overlay composition with backdrop and modal layering
+
+Still only manually evidenced in the current record:
+
+- authenticated browser verification against a real live session
+- exact visual polish and layout behavior on mobile hardware
+- any future deep-link handoff into Flight Deck records
+
+One additional implementation seam is now explicit upstream:
+
+- drawer state is owned in [../../wingmen/src/ui/state/index.js](/Users/mini/code/wingmen/src/ui/state/index.js) as `state.liveDrawer`
+
+Implication:
+
+- any further production work on this feature should extend the upstream drawer/state/tests rather than reviving the local `wingman-fd` experiment
+
 ## Design Decision
 
 The real production implementation for this task belongs in `../../wingmen`, not in `wingman-fd`.
@@ -366,11 +402,14 @@ Owning implementation files in `../../wingmen`:
 
 - [../../wingmen/src/ui/views/live-view.js](/Users/mini/code/wingmen/src/ui/views/live-view.js)
 - [../../wingmen/src/ui/live/session-drawer.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.js)
+- [../../wingmen/src/ui/live/session-drawer.test.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.test.js)
 - [../../wingmen/src/ui/styles.css](/Users/mini/code/wingmen/src/ui/styles.css)
+- [../../wingmen/src/ui/state/index.js](/Users/mini/code/wingmen/src/ui/state/index.js)
 - [../../wingmen/src/ui/services/sessions.js](/Users/mini/code/wingmen/src/ui/services/sessions.js)
 - [../../wingmen/src/ui/nightwatch/api.js](/Users/mini/code/wingmen/src/ui/nightwatch/api.js)
 - [../../wingmen/src/ui/nightwatch/cmd-toggle.js](/Users/mini/code/wingmen/src/ui/nightwatch/cmd-toggle.js)
 - [../../wingmen/src/ui/nightwatch/enable-modal.js](/Users/mini/code/wingmen/src/ui/nightwatch/enable-modal.js)
+- [../../wingmen/src/ui/views/live-view.test.js](/Users/mini/code/wingmen/src/ui/views/live-view.test.js)
 - [../../wingmen/src/server/session-api-routes.ts](/Users/mini/code/wingmen/src/server/session-api-routes.ts)
 - [../../wingmen/src/nightwatch/nightwatch-api.ts](/Users/mini/code/wingmen/src/nightwatch/nightwatch-api.ts)
 
