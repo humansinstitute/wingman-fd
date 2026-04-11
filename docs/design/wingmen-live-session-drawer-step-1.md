@@ -15,6 +15,12 @@ The brief asked for a left-side session metadata drawer on the Wingmen Live sess
 
 This step does not land production code or production tests. It defines the correct implementation boundary, the test plan, the exact upstream files that own the work, and the limited Flight Deck interoperability follow-up that may be needed later.
 
+Latest board correction from Pete on 2026-04-11:
+
+- "THIS IS ALL WRONG YOU BUILT THIS IN FLIGHT DECK not in ~/code/wingmen"
+
+That correction is now treated as authoritative. Any follow-up implementation task for this drawer should target `~/code/wingmen` first and treat the local Flight Deck slice only as prior investigation or optional deep-link follow-up.
+
 ## Tests That Must Pass
 
 The real implementation belongs primarily in `../../wingmen`, so the test plan is split into owning tests there and optional later FD integration tests here.
@@ -134,6 +140,17 @@ Implication:
 - if that slice continues, it should be consciously re-scoped as an interoperability experiment or moved to the owning `../../wingmen` repo
 - the next implementer should reconcile the dirty-tree work against the upstream ownership evidence before landing production code
 
+### Follow-up Validation For Pete's "No Visible Drawer" Review Comment
+
+The current local Flight Deck slice does explain why no drawer became visibly available from this repo, even after a PM2 restart and Cloudflare cache clear:
+
+- the local drawer is only a stub in [index.html](/Users/mini/code/wingmanbefree/wingman-fd/index.html) and it is gated by `liveDrawerOpen`
+- `liveDrawerOpen` still initializes to `false` in [src/app.js](/Users/mini/code/wingmanbefree/wingman-fd/src/app.js), so the drawer is hidden by default instead of rendering as a visible desktop side panel
+- [src/styles.css](/Users/mini/code/wingmanbefree/wingman-fd/src/styles.css) still has no `.live-session-*` or `.live-nightwatch-*` CSS contract, so there is no completed FD drawer layout to ship
+- [src/app.js](/Users/mini/code/wingmanbefree/wingman-fd/src/app.js) still omits a `live` case in `getRoutePath()`, so `navigateTo('live')` syncs browser history back to `/flight-deck` instead of a stable `/live` route
+
+That combination means the dirty-tree FD slice was not a real shipped implementation of the requested drawer. A restart or cache clear could not make it appear because the visible drawer behavior was never completed here.
+
 ## Adjacent Repo Findings
 
 The brief did prove a second-repo inspection was required. The actual Wingmen Live implementation already exists in `../../wingmen`.
@@ -194,6 +211,27 @@ Confirmed Night Watch report-card fields upstream:
 - `inputRaw`
 - `cycleCount`
 - `createdAt`
+
+Validated follow-up against the owning live screen:
+
+- the current upstream live session surface in [../../wingmen/src/ui/views/live-view.js](/Users/mini/code/wingmen/src/ui/views/live-view.js) still wires Night Watch through `addNightWatchToggle(...)` in the existing command menu flow
+- no left-side session metadata drawer shell, drawer layout, or drawer modal wiring is present there yet
+
+Implication:
+
+- Pete's "no visible drawer" report matches the current owning code state
+- the missing drawer is not explained by stale deployment or cache behavior in Flight Deck
+- the real implementation work remains upstream in `../../wingmen`
+
+Status after follow-up:
+
+- the owning live-session drawer implementation has now been landed upstream in `../../wingmen`
+- upstream commit: `56f6955` (`Add live session drawer`)
+- the Flight Deck action for this follow-up is evidence only; no additional `wingman-fd` production wiring was required for the drawer itself
+- authenticated desktop verification was completed on April 11, 2026 against a local upstream `wingmen` instance on `http://127.0.0.1:3022/live/188931f3-a3fb-4d27-b2af-6e258decd277`
+- that run rendered a visible `Session Drawer` with `Session metadata`, `Night Watch`, `Related records`, and `Night Watch history` sections for the exact flow-run-bound session Pete was reviewing
+- the rendered drawer showed the expected flow-run evidence in UI: binding `27fd8894-fa2d-4445-b0e8-0b85ebe0984e`, flow `3efa0719-b4df-48d1-92b4-4e92be40cdad`, Night Watch enabled state, and session-specific history entries from the reflection check-ins
+- remaining manual gap: mobile takeover behavior was not browser-verified in this pass
 
 ## Design Decision
 
