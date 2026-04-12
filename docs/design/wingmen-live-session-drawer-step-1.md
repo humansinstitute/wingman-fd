@@ -462,6 +462,28 @@ That follow-up should stay limited to:
 
 It should not create a duplicate live-session store in Flight Deck.
 
+Current FD deep-link feasibility confirmed locally:
+
+- task links are already first-class:
+  - [src/route-helpers.js](/Users/mini/code/wingmanbefree/wingman-fd/src/route-helpers.js) supports `taskid`
+  - [src/app.js](/Users/mini/code/wingmanbefree/wingman-fd/src/app.js) restores task detail from route state
+  - [src/app.js](/Users/mini/code/wingmanbefree/wingman-fd/src/app.js) already builds canonical task URLs with scope preservation
+- document links are also first-class, but only if a doc id exists:
+  - [src/route-helpers.js](/Users/mini/code/wingmanbefree/wingman-fd/src/route-helpers.js) supports `docid`
+  - [src/docs-manager.js](/Users/mini/code/wingmanbefree/wingman-fd/src/docs-manager.js) opens document detail from that id
+- flow links are weaker:
+  - Flight Deck already stores and resolves `flow_id` and `flow_run_id` on tasks
+  - [src/task-flow-helpers.js](/Users/mini/code/wingmanbefree/wingman-fd/src/task-flow-helpers.js) can resolve flow-run step tasks from existing task data
+  - but the current route layer has no dedicated `flowid` or `flowrunid` URL parameter
+
+Recommendation:
+
+- for task follow-up, `taskIds` are already sufficient for deep links
+- for flow follow-up, `flowId` and `flowRunId` are sufficient for in-app lookup and contextual navigation, but not yet for canonical route URLs
+- do not add new Wingmen metadata fields just to support task or flow entry in the first interoperability slice
+- if product later wants stable shareable Flow URLs in Flight Deck, add explicit route support there rather than inventing duplicate metadata on the Wingmen session
+- if product later wants drawer links to specific docs, that will require explicit doc identifiers because the current upstream session metadata does not carry them
+
 ## Exact Files And Subsystems Expected To Change
 
 Owning implementation files in `../../wingmen`:
@@ -510,6 +532,7 @@ If any Flight Deck deep-link follow-up is later added:
 - Broadening the first drawer slice beyond metadata and Night Watch controls creates avoidable merge risk with the existing `Cmd` menu and with the dirty-tree FD-first experiment in this repo.
 - The phrase "current next action" is ambiguous upstream because `nextAction`, `nextActionPayload`, and `nextActionTemplate` already have different roles and are not all edited from the same surface today.
 - The current global Night Watch reports endpoint only returns the newest 50 reports overall, which can truncate session-specific history visibility without any explicit UI warning.
+- Treating every related-record type as if it needed a brand-new metadata field would add unnecessary contract churn; tasks and flows already have enough local identifiers for a first interoperability pass.
 
 ## Fallback Plans
 
@@ -531,4 +554,4 @@ If any Flight Deck deep-link follow-up is later added:
 
 1. Should the first history slice use filtered global reports, or should `../../wingmen` add a dedicated per-session reports endpoint immediately?
 2. Should the drawer continue editing only `nextActionPayload`, or should it also expose the enum `nextAction` and stored `nextActionTemplate` directly outside the Night Watch enable flow?
-3. For Flight Deck deep links, should Wingmen rely only on `taskIds`, `flowId`, and `flowRunId`, or should it add explicit Flight Deck record link fields later?
+3. If product wants direct doc links from the drawer later, what is the canonical upstream metadata field for doc identifiers, given that current session metadata carries tasks and flows but not docs?
