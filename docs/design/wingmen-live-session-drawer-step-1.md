@@ -507,6 +507,31 @@ Possible later supporting files in `wingman-fd` only if cross-links are added:
 - [src/route-helpers.js](/Users/mini/code/wingmanbefree/wingman-fd/src/route-helpers.js)
 - [src/workspace-manager.js](/Users/mini/code/wingmanbefree/wingman-fd/src/workspace-manager.js)
 
+## Recommended Implementation Order
+
+For the owning upstream repo in `../../wingmen`, the least-risk sequence is:
+
+1. extend or update drawer-focused tests first in:
+   - [../../wingmen/src/ui/live/session-drawer.test.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.test.js)
+   - [../../wingmen/src/ui/views/live-view.test.js](/Users/mini/code/wingmen/src/ui/views/live-view.test.js)
+2. adjust state shape only if needed in:
+   - [../../wingmen/src/ui/state/index.js](/Users/mini/code/wingmen/src/ui/state/index.js)
+3. update drawer behavior and rendering in:
+   - [../../wingmen/src/ui/live/session-drawer.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.js)
+   - [../../wingmen/src/ui/views/live-view.js](/Users/mini/code/wingmen/src/ui/styles.css)
+4. only then adjust API clients or server routes if the tests prove the current contracts are insufficient:
+   - [../../wingmen/src/ui/services/sessions.js](/Users/mini/code/wingmen/src/ui/services/sessions.js)
+   - [../../wingmen/src/ui/nightwatch/api.js](/Users/mini/code/wingmen/src/ui/nightwatch/api.js)
+   - [../../wingmen/src/server/session-api-routes.ts](/Users/mini/code/wingmen/src/server/session-api-routes.ts)
+   - [../../wingmen/src/nightwatch/nightwatch-api.ts](/Users/mini/code/wingmen/src/nightwatch/nightwatch-api.ts)
+5. keep any Flight Deck work separate and follow only after upstream behavior is stable
+
+Rationale:
+
+- the owning UI and tests already exist upstream
+- most remaining ambiguity is now product and contract detail, not repo structure
+- making Flight Deck changes before upstream behavior stabilizes would recreate the same dual-owner confusion this document is trying to prevent
+
 ## Validation Commands
 
 Design-step commands run here:
@@ -516,6 +541,12 @@ Design-step commands run here:
 Owning implementation validation for the real next step:
 
 - `cd /Users/mini/code/wingmen && bun test`
+
+Current upstream script reality confirmed on April 13, 2026:
+
+- `../../wingmen/package.json` exposes `bun test`
+- there is no upstream `build` script to require for this drawer task
+- if implementation work later adds a repo-specific verification command beyond `bun test`, that should be documented in the owning repo at that time
 
 If any Flight Deck deep-link follow-up is later added:
 
