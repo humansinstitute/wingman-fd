@@ -140,6 +140,38 @@ Implication:
 - if that slice continues, it should be consciously re-scoped as an interoperability experiment or moved to the owning `../../wingmen` repo
 - the next implementer should reconcile the dirty-tree work against the upstream ownership evidence before landing production code
 
+### Dirty Tree Reconciliation Map
+
+The local FD-first slice is not useless, but it should be treated as rough prototype material rather than as a production baseline.
+
+Local-to-upstream comparison:
+
+- [src/live-manager.js](/Users/mini/code/wingmanbefree/wingman-fd/src/live-manager.js)
+  - local value: early helper ideas for viewport mode, related-record extraction, session-scoped report filtering, and modal open or close state
+  - upstream status: those concerns now live more completely in [../../wingmen/src/ui/live/session-drawer.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.js) and [../../wingmen/src/ui/state/index.js](/Users/mini/code/wingmen/src/ui/state/index.js)
+  - reconciliation action: do not merge this module into Flight Deck; at most, compare helper behavior and port any missing edge-case tests upstream
+
+- [tests/live-manager.test.js](/Users/mini/code/wingmanbefree/wingman-fd/tests/live-manager.test.js)
+  - local value: captured the original intent for drawer mode, related-record resolution, and report-modal state
+  - upstream status: superseded by broader coverage in [../../wingmen/src/ui/live/session-drawer.test.js](/Users/mini/code/wingmen/src/ui/live/session-drawer.test.js)
+  - reconciliation action: keep only as historical evidence unless someone intentionally ports any still-missing assertion upstream
+
+- [index.html](/Users/mini/code/wingmanbefree/wingman-fd/index.html)
+  - local value: proves an FD-first `/live` navigation experiment existed
+  - upstream status: conflicts with the real live-screen owner in `../../wingmen`
+  - reconciliation action: do not treat the local `Live` nav or drawer markup as required production work for this task
+
+- [tests/live-rendering.test.js](/Users/mini/code/wingmanbefree/wingman-fd/tests/live-rendering.test.js)
+  - local value: asserts the presence of FD-local `live` hooks
+  - upstream status: no longer aligned with the confirmed ownership boundary
+  - reconciliation action: do not adopt these tests into the final task scope; if this repo's `live` experiment is later abandoned, these tests should be retired with that experiment rather than expanded
+
+Practical consequence:
+
+- future work should reconcile by idea, not by file movement
+- the correct target for continued drawer implementation is the upstream owner
+- the local FD-first files should remain untouched unless Pete explicitly asks to continue or remove that experiment
+
 ### Follow-up Validation For Pete's "No Visible Drawer" Review Comment
 
 The current local Flight Deck slice does explain why no drawer became visibly available from this repo, even after a PM2 restart and Cloudflare cache clear:
@@ -484,6 +516,7 @@ If any Flight Deck deep-link follow-up is later added:
 - If the drawer itself cannot land immediately, first move the key session metadata and Night Watch affordances into a modal or side sheet within the existing Wingmen live view.
 - If a per-session history endpoint does not land in the same pass, use the existing global report-card list filtered by `sessionId`.
 - If Flight Deck deep-link interoperability is not ready, render related record ids as passive labels first and wire navigation in a later slice.
+- If the conflicting FD-first dirty-tree experiment needs resolution before more upstream work can proceed, freeze it as-is and reconcile from this document rather than trying to keep the two implementations feature-matched.
 
 ## Explicit Non-Goals
 
