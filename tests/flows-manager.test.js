@@ -6,7 +6,13 @@ import {
   approvalStatusColor,
   confidenceLabel,
   flowsManagerMixin,
+  normalizeStoredFlowScopeId,
 } from '../src/flows-manager.js';
+import {
+  ALL_TASK_BOARD_ID,
+  RECENT_TASK_BOARD_ID,
+  UNSCOPED_TASK_BOARD_ID,
+} from '../src/task-board-state.js';
 
 vi.mock('../src/db.js', () => ({
   upsertFlow: vi.fn(async () => {}),
@@ -259,6 +265,44 @@ describe('flowsManagerMixin — computed getters', () => {
     expect(store.flowsByScope).toHaveLength(2);
   });
 
+  it('flowsByScope returns all flows for the all-work board', () => {
+    const store = createStore({
+      selectedBoardId: ALL_TASK_BOARD_ID,
+      flows: [
+        { record_id: 'f1', scope_id: 'scope-1' },
+        { record_id: 'f2', scope_id: 'scope-2' },
+      ],
+    });
+
+    expect(store.flowsByScope).toHaveLength(2);
+  });
+
+  it('flowsByScope returns all flows for the recent-work board', () => {
+    const store = createStore({
+      selectedBoardId: RECENT_TASK_BOARD_ID,
+      flows: [
+        { record_id: 'f1', scope_id: 'scope-1' },
+        { record_id: 'f2', scope_id: 'scope-2' },
+      ],
+    });
+
+    expect(store.flowsByScope).toHaveLength(2);
+  });
+
+  it('flowsByScope returns only unscoped flows for the unscoped board', () => {
+    const store = createStore({
+      selectedBoardId: UNSCOPED_TASK_BOARD_ID,
+      scopesMap: new Map(),
+      flows: [
+        { record_id: 'f1', scope_id: null, scope_l1_id: null, record_state: 'active' },
+        { record_id: 'f2', scope_id: 'scope-2', scope_l1_id: 'scope-2', record_state: 'active' },
+      ],
+    });
+
+    expect(store.flowsByScope).toHaveLength(1);
+    expect(store.flowsByScope[0].record_id).toBe('f1');
+  });
+
   it('pendingApprovalsByScope filters pending approvals by scope', () => {
     const store = createStore({
       selectedBoardId: 'scope-1',
@@ -271,5 +315,107 @@ describe('flowsManagerMixin — computed getters', () => {
 
     expect(store.pendingApprovalsByScope).toHaveLength(1);
     expect(store.pendingApprovalsByScope[0].record_id).toBe('a1');
+  });
+
+  it('pendingApprovalsByScope returns all pending approvals for the all-work board', () => {
+    const store = createStore({
+      selectedBoardId: ALL_TASK_BOARD_ID,
+      approvals: [
+        { record_id: 'a1', status: 'pending', scope_id: 'scope-1', record_state: 'active' },
+        { record_id: 'a2', status: 'pending', scope_id: 'scope-2', record_state: 'active' },
+      ],
+    });
+
+    expect(store.pendingApprovalsByScope).toHaveLength(2);
+  });
+});
+
+describe('flowsManagerMixin — flow approver helpers', () => {
+  it('addFlowStepApprover adds a person token and remembers the profile', async () => {
+    const store = createStore({
+      rememberPeople: vi.fn(async () => {}),
+      resolveChatProfile: vi.fn(),
+    });
+    const step = { whitelist_approvers: null };
+
+    const added = await store.addFlowStepApprover(step, {
+      token: 'npub1alice',
+      type: 'person',
+    });
+
+    expect(added).toBe(true);
+    expect(step.whitelist_approvers).toEqual(['npub1alice']);
+    expect(store.resolveChatProfile).toHaveBeenCalledWith('npub1alice');
+    expect(store.rememberPeople).toHaveBeenCalledWith(['npub1alice'], 'flow-approver');
+  });
+
+  it('addFlowStepApprover adds a group token without remembering people', async () => {
+    const store = createStore({
+      rememberPeople: vi.fn(async () => {}),
+      resolveChatProfile: vi.fn(),
+    });
+    const step = { whitelist_approvers: [] };
+
+    const added = await store.addFlowStepApprover(step, 'group:management');
+
+    expect(added).toBe(true);
+    expect(step.whitelist_approvers).toEqual(['group:management']);
+    expect(store.resolveChatProfile).not.toHaveBeenCalled();
+    expect(store.rememberPeople).not.toHaveBeenCalled();
+  });
+
+  it('consumeFlowStepApproverQuery accepts comma-separated raw tokens', async () => {
+    const store = createStore({
+      rememberPeople: vi.fn(async () => {}),
+      resolveChatProfile: vi.fn(),
+    });
+    const step = { whitelist_approvers: null };
+
+    const added = await store.consumeFlowStepApproverQuery(
+      step,
+      ' npub1alice, group:management, invalid-token ',
+    );
+
+    expect(added).toBe(true);
+    expect(step.whitelist_approvers).toEqual(['npub1alice', 'group:management']);
+  });
+
+  it('consumeFlowStepApproverQuery falls back to a suggestion when raw query is not a token', async () => {
+    const store = createStore({
+      rememberPeople: vi.fn(async () => {}),
+      resolveChatProfile: vi.fn(),
+    });
+    const step = { whitelist_approvers: null };
+
+    const added = await store.consumeFlowStepApproverQuery(step, 'alice', {
+      token: 'npub1alice',
+      type: 'person',
+    });
+
+    expect(added).toBe(true);
+    expect(step.whitelist_approvers).toEqual(['npub1alice']);
+  });
+
+  it('removeFlowStepApprover removes tokens and clears the list when empty', () => {
+    const store = createStore();
+    const step = { whitelist_approvers: ['npub1alice', 'group:management'] };
+
+    store.removeFlowStepApprover(step, 'npub1alice');
+    expect(step.whitelist_approvers).toEqual(['group:management']);
+
+    store.removeFlowStepApprover(step, 'group:management');
+    expect(step.whitelist_approvers).toBeNull();
+  });
+});
+
+describe('normalizeStoredFlowScopeId', () => {
+  it('returns null for system board ids', () => {
+    expect(normalizeStoredFlowScopeId(ALL_TASK_BOARD_ID)).toBeNull();
+    expect(normalizeStoredFlowScopeId(RECENT_TASK_BOARD_ID)).toBeNull();
+    expect(normalizeStoredFlowScopeId(UNSCOPED_TASK_BOARD_ID)).toBeNull();
+  });
+
+  it('returns a real scope id unchanged', () => {
+    expect(normalizeStoredFlowScopeId('scope-1')).toBe('scope-1');
   });
 });

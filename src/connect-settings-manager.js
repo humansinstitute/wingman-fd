@@ -26,9 +26,43 @@ import {
   createGroupIdentity,
 } from './crypto/group-keys.js';
 
-const DEFAULT_KNOWN_HOSTS = [
-  { url: 'https://sb4.otherstuff.ai', label: 'The Other Stuff — SuperBased', serviceNpub: '' },
-];
+function trimUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function trimText(value) {
+  return String(value || '').trim();
+}
+
+function buildDefaultKnownHosts() {
+  const defaultUrl = trimUrl(DEFAULT_SUPERBASED_URL);
+  if (!defaultUrl) return [];
+  return [{
+    url: defaultUrl,
+    label: defaultUrl,
+    serviceNpub: '',
+    towerName: '',
+    towerDescription: '',
+  }];
+}
+
+async function fetchTowerDiscovery(url, fallbackLabel = '') {
+  const cleanUrl = trimUrl(url);
+  if (!cleanUrl) throw new Error('URL is required');
+  const healthRes = await fetch(`${cleanUrl}/health`);
+  if (!healthRes.ok) throw new Error(`Server returned ${healthRes.status}`);
+  const health = await healthRes.json();
+  if (health.status !== 'ok') throw new Error('Server health check failed');
+  const towerName = trimText(health.tower_name);
+  const towerDescription = trimText(health.tower_description);
+  return {
+    url: cleanUrl,
+    serviceNpub: trimText(health.service_npub),
+    towerName,
+    towerDescription,
+    label: towerName || trimText(fallbackLabel) || cleanUrl,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Mixin — methods and getters that use `this` (the Alpine store)
@@ -86,6 +120,13 @@ export const connectSettingsManagerMixin = {
       }
       this.superbasedTokenInput = token;
       this.backendUrl = normalizeBackendUrl(config.directHttpsUrl);
+      this.addKnownHost({
+        url: config.directHttpsUrl,
+        label: config.towerName || config.directHttpsUrl,
+        serviceNpub: config.serviceNpub,
+        towerName: config.towerName,
+        towerDescription: config.towerDescription,
+      });
       const workspace = workspaceFromToken(token, { name: 'Imported workspace' });
       if (workspace) {
         this.mergeKnownWorkspaces([workspace]);
@@ -114,16 +155,18 @@ export const connectSettingsManagerMixin = {
     this.presetConnecting = true;
     this.superbasedError = null;
     try {
-      const healthRes = await fetch(`${presetUrl.replace(/\/+$/, '')}/health`);
-      if (!healthRes.ok) throw new Error(`Server returned ${healthRes.status}`);
-      const health = await healthRes.json();
-      if (health.status !== 'ok' || !health.service_npub) throw new Error('Invalid health response');
+      const discovery = await fetchTowerDiscovery(presetUrl, this.presetConnectHost?.label || '');
+      if (!discovery.serviceNpub) throw new Error('Invalid health response');
+      this.addKnownHost(discovery);
       const token = buildSuperBasedConnectionToken({
-        directHttpsUrl: presetUrl,
-        serviceNpub: health.service_npub,
+        directHttpsUrl: discovery.url,
+        serviceNpub: discovery.serviceNpub,
+        towerName: discovery.towerName,
+        towerDescription: discovery.towerDescription,
         appNpub: APP_NPUB,
       });
       this.superbasedTokenInput = token;
+      this.backendUrl = normalizeBackendUrl(discovery.url);
       await this.saveConnectionSettings();
       await this.loadRemoteWorkspaces();
       if (this.knownWorkspaces.length === 0 && this.session?.npub) {
@@ -149,11 +192,14 @@ export const connectSettingsManagerMixin = {
   // --- Connect modal (two-step) ---
 
   openConnectModal() {
+    this.showWorkspaceBootstrapModal = false;
     this.showConnectModal = true;
     this.connectStep = 1;
     this.connectHostUrl = '';
     this.connectHostLabel = '';
     this.connectHostServiceNpub = '';
+    this.connectHostTowerName = '';
+    this.connectHostTowerDescription = '';
     this.connectHostError = null;
     this.connectHostBusy = false;
     this.connectManualUrl = '';
@@ -167,6 +213,7 @@ export const connectSettingsManagerMixin = {
     this.connectShowTokenFallback = false;
     this.showWorkspaceSwitcherMenu = false;
     this.mobileNavOpen = false;
+    this.refreshKnownHostsMetadata().catch(() => {});
   },
 
   closeConnectModal() {
@@ -178,20 +225,22 @@ export const connectSettingsManagerMixin = {
     this.connectHostError = null;
     this.connectHostBusy = true;
     try {
-      const cleanUrl = String(hostUrl || '').trim().replace(/\/+$/, '');
-      if (!cleanUrl) throw new Error('URL is required');
-      const healthRes = await fetch(`${cleanUrl}/health`);
-      if (!healthRes.ok) throw new Error(`Server returned ${healthRes.status}`);
-      const health = await healthRes.json();
-      if (health.status !== 'ok') throw new Error('Server health check failed');
-      const serviceNpub = String(health.service_npub || '').trim();
-      this.connectHostUrl = cleanUrl;
-      this.connectHostLabel = hostLabel || cleanUrl;
-      this.connectHostServiceNpub = serviceNpub;
-      this.addKnownHost({ url: cleanUrl, label: hostLabel || cleanUrl, serviceNpub });
-      this.backendUrl = normalizeBackendUrl(cleanUrl);
+      const discovery = await fetchTowerDiscovery(hostUrl, hostLabel);
+      this.connectHostUrl = discovery.url;
+      this.connectHostLabel = discovery.label;
+      this.connectHostServiceNpub = discovery.serviceNpub;
+      this.connectHostTowerName = discovery.towerName;
+      this.connectHostTowerDescription = discovery.towerDescription;
+      this.addKnownHost(discovery);
+      this.backendUrl = normalizeBackendUrl(discovery.url);
       setBaseUrl(this.backendUrl);
-      const token = buildSuperBasedConnectionToken({ directHttpsUrl: cleanUrl, serviceNpub, appNpub: APP_NPUB });
+      const token = buildSuperBasedConnectionToken({
+        directHttpsUrl: discovery.url,
+        serviceNpub: discovery.serviceNpub,
+        towerName: discovery.towerName,
+        towerDescription: discovery.towerDescription,
+        appNpub: APP_NPUB,
+      });
       this.superbasedTokenInput = token;
       await this.saveSettings();
       this.connectStep = 2;
@@ -252,7 +301,10 @@ export const connectSettingsManagerMixin = {
       serviceNpub: this.connectHostServiceNpub,
       appNpub: APP_NPUB,
       connectionToken: buildSuperBasedConnectionToken({
-        directHttpsUrl: this.connectHostUrl, serviceNpub: this.connectHostServiceNpub,
+        directHttpsUrl: this.connectHostUrl,
+        serviceNpub: this.connectHostServiceNpub,
+        towerName: this.connectHostTowerName,
+        towerDescription: this.connectHostTowerDescription,
         workspaceOwnerNpub: workspaceEntry.workspace_owner_npub || workspaceEntry.workspaceOwnerNpub,
         appNpub: APP_NPUB,
       }),
@@ -294,7 +346,10 @@ export const connectSettingsManagerMixin = {
       const workspace = normalizeWorkspaceEntry({
         ...response, serviceNpub: this.connectHostServiceNpub, appNpub: APP_NPUB,
         connectionToken: buildSuperBasedConnectionToken({
-          directHttpsUrl: this.connectHostUrl, serviceNpub: this.connectHostServiceNpub,
+          directHttpsUrl: this.connectHostUrl,
+          serviceNpub: this.connectHostServiceNpub,
+          towerName: this.connectHostTowerName,
+          towerDescription: this.connectHostTowerDescription,
           workspaceOwnerNpub: response.workspace_owner_npub, appNpub: APP_NPUB,
         }),
       });
@@ -326,24 +381,88 @@ export const connectSettingsManagerMixin = {
 
   // --- known hosts ---
 
-  addKnownHost({ url, label, serviceNpub }) {
-    const cleanUrl = String(url || '').trim().replace(/\/+$/, '');
+  addKnownHost({ url, label, serviceNpub, towerName, towerDescription }) {
+    const cleanUrl = trimUrl(url);
     if (!cleanUrl) return;
     const existing = this.knownHosts.findIndex((h) => h.url === cleanUrl);
-    const entry = { url: cleanUrl, label: String(label || '').trim() || cleanUrl, serviceNpub: String(serviceNpub || '').trim() };
+    const entry = {
+      url: cleanUrl,
+      label: trimText(towerName) || trimText(label) || cleanUrl,
+      serviceNpub: trimText(serviceNpub),
+      towerName: trimText(towerName),
+      towerDescription: trimText(towerDescription),
+    };
     if (existing >= 0) { this.knownHosts[existing] = entry; } else { this.knownHosts.push(entry); }
   },
 
   get mergedHostsList() {
-    const seen = new Set();
     const merged = [];
-    for (const host of [...DEFAULT_KNOWN_HOSTS, ...this.knownHosts]) {
-      const cleanUrl = String(host.url || '').trim().replace(/\/+$/, '');
-      if (!cleanUrl || seen.has(cleanUrl)) continue;
-      seen.add(cleanUrl);
-      merged.push({ ...host, url: cleanUrl });
+    const indexByUrl = new Map();
+    for (const host of [...buildDefaultKnownHosts(), ...this.knownHosts]) {
+      const cleanUrl = trimUrl(host.url);
+      if (!cleanUrl) continue;
+      const nextHost = {
+        ...host,
+        url: cleanUrl,
+        label: trimText(host.towerName) || trimText(host.label) || cleanUrl,
+        serviceNpub: trimText(host.serviceNpub),
+        towerName: trimText(host.towerName),
+        towerDescription: trimText(host.towerDescription),
+      };
+      if (indexByUrl.has(cleanUrl)) {
+        merged[indexByUrl.get(cleanUrl)] = {
+          ...merged[indexByUrl.get(cleanUrl)],
+          ...nextHost,
+        };
+        continue;
+      }
+      indexByUrl.set(cleanUrl, merged.length);
+      merged.push(nextHost);
     }
     return merged;
+  },
+
+  get presetConnectHost() {
+    const defaultUrl = trimUrl(DEFAULT_SUPERBASED_URL);
+    if (defaultUrl) {
+      return this.mergedHostsList.find((host) => trimUrl(host.url) === defaultUrl) || null;
+    }
+    return this.mergedHostsList[0] || null;
+  },
+
+  async refreshKnownHostsMetadata() {
+    const hosts = this.mergedHostsList;
+    let changed = false;
+
+    for (const host of hosts) {
+      try {
+        const discovery = await fetchTowerDiscovery(host.url, host.label || host.url);
+        const existing = this.knownHosts.find((entry) => trimUrl(entry.url) === discovery.url) || null;
+        const nextEntry = {
+          url: discovery.url,
+          label: discovery.label,
+          serviceNpub: discovery.serviceNpub,
+          towerName: discovery.towerName,
+          towerDescription: discovery.towerDescription,
+        };
+        if (
+          !existing
+          || existing.label !== nextEntry.label
+          || existing.serviceNpub !== nextEntry.serviceNpub
+          || existing.towerName !== nextEntry.towerName
+          || existing.towerDescription !== nextEntry.towerDescription
+        ) {
+          this.addKnownHost(nextEntry);
+          changed = true;
+        }
+      } catch {
+        // Keep the last known metadata when discovery is unavailable.
+      }
+    }
+
+    if (changed) {
+      await this.persistWorkspaceSettings();
+    }
   },
 
   // --- agent connect ---
@@ -366,6 +485,8 @@ export const connectSettingsManagerMixin = {
       backendUrl: this.backendUrl || DEFAULT_SUPERBASED_URL,
       session: this.session,
       token: this.superbasedTokenInput,
+      towerName: this.currentWorkspace?.towerName || this.superbasedConnectionConfig?.towerName || '',
+      towerDescription: this.currentWorkspace?.towerDescription || this.superbasedConnectionConfig?.towerDescription || '',
     }), null, 2);
     this.showAgentConnectModal = true;
   },

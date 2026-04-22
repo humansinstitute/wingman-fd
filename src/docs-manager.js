@@ -27,6 +27,7 @@ import { toRaw } from './utils/state-helpers.js';
 import { fetchRecordHistory } from './api.js';
 import { inboundDocument } from './translators/docs.js';
 import { renderMarkdownToHtml, hydrateStorageImageMarkup } from './markdown.js';
+import { normalizeGroupIds } from './scope-delivery.js';
 import { diffLines } from 'diff';
 
 // ---------------------------------------------------------------------------
@@ -36,12 +37,14 @@ import { diffLines } from 'diff';
 export function normalizeDocShare(share, inheritedFromDirectoryId = null) {
   if (!share) return null;
   const type = share.type === 'person' ? 'person' : 'group';
-  const personNpub = share.person_npub || null;
-  const groupNpub = share.group_npub || null;
-  const viaGroupNpub = share.via_group_npub || null;
-  const key = share.key || (type === 'person'
-    ? `person:${personNpub}`
-    : `group:${groupNpub || viaGroupNpub}`);
+  const personNpub = String(share.person_npub || '').trim() || null;
+  const groupNpub = String(share.group_npub || '').trim() || null;
+  const viaGroupNpub = String(share.via_group_npub || '').trim() || null;
+  const groupId = String(share.group_id || '').trim() || groupNpub || null;
+  const viaGroupId = String(share.via_group_id || '').trim() || viaGroupNpub || null;
+  const key = type === 'person'
+    ? (personNpub ? `person:${personNpub}` : null)
+    : `group:${groupId || viaGroupId || groupNpub || viaGroupNpub}`;
   if (!key) return null;
 
   const sourceDirectoryId = inheritedFromDirectoryId || share.inherited_from_directory_id || null;
@@ -51,7 +54,9 @@ export function normalizeDocShare(share, inheritedFromDirectoryId = null) {
     key,
     access: share.access === 'write' ? 'write' : 'read',
     person_npub: personNpub,
+    group_id: groupId,
     group_npub: groupNpub,
+    via_group_id: viaGroupId,
     via_group_npub: viaGroupNpub,
     inherited: Boolean(sourceDirectoryId || share.inherited),
     inherited_from_directory_id: sourceDirectoryId,
@@ -65,7 +70,9 @@ export function serializeDocShares(shares) {
       key: share.key,
       access: share.access,
       person_npub: share.person_npub || null,
+      group_id: share.group_id || null,
       group_npub: share.group_npub || null,
+      via_group_id: share.via_group_id || null,
       via_group_npub: share.via_group_npub || null,
       inherited: share.inherited === true,
       inherited_from_directory_id: share.inherited_from_directory_id || null,
@@ -115,8 +122,86 @@ export function getExplicitDocShares(item) {
 
 export function getShareGroupIds(shares = []) {
   return [...new Set((shares || []).map((share) => share.type === 'person'
-    ? (share.via_group_npub || share.group_npub)
-    : share.group_npub).filter(Boolean))];
+    ? (share.via_group_id || share.group_id || share.via_group_npub || share.group_npub)
+    : (share.group_id || share.group_npub)).filter(Boolean))];
+}
+
+export function getWriteableShareGroupIds(shares = []) {
+  return [...new Set((shares || [])
+    .filter((share) => share?.access === 'write')
+    .map((share) => share.type === 'person'
+      ? (share.via_group_id || share.group_id || share.via_group_npub || share.group_npub)
+      : (share.group_id || share.group_npub))
+    .filter(Boolean))];
+}
+
+export function getPreferredDocWriteGroupRef(item = null) {
+  const shares = getStoredDocShares(item);
+  const groupIds = normalizeGroupIds(
+    Array.isArray(item?.group_ids) && item.group_ids.length > 0
+      ? item.group_ids
+      : getShareGroupIds(shares),
+  );
+  const explicitWriteGroupId = String(item?.write_group_id || '').trim() || null;
+  if (explicitWriteGroupId && groupIds.includes(explicitWriteGroupId)) return explicitWriteGroupId;
+
+  const scopePolicyGroupIds = normalizeGroupIds(item?.scope_policy_group_ids || []);
+  for (const groupId of scopePolicyGroupIds) {
+    if (groupIds.includes(groupId)) return groupId;
+  }
+
+  const writeableGroupIds = getWriteableShareGroupIds(shares);
+  for (const groupId of writeableGroupIds) {
+    if (groupIds.includes(groupId)) return groupId;
+  }
+
+  return groupIds[0] || explicitWriteGroupId || null;
+}
+
+export function normalizeDocAccessRow(item, resolverFn = (value) => String(value || '').trim() || null) {
+  if (!item || typeof item !== 'object') return item;
+
+  const nextShares = getStoredDocShares(item)
+    .map((share) => normalizeDocShare({
+      ...share,
+      group_id: resolverFn(share.group_id || share.group_npub),
+      via_group_id: resolverFn(share.via_group_id || share.via_group_npub),
+    }))
+    .filter(Boolean);
+  const nextGroupIds = normalizeGroupIds(
+    Array.isArray(item.group_ids) && item.group_ids.length > 0
+      ? item.group_ids.map((value) => resolverFn(value)).filter(Boolean)
+      : getShareGroupIds(nextShares).map((value) => resolverFn(value)).filter(Boolean),
+  );
+  const nextScopePolicyGroupIds = item.scope_policy_group_ids == null
+    ? null
+    : normalizeGroupIds((item.scope_policy_group_ids || []).map((value) => resolverFn(value)).filter(Boolean));
+  const nextWriteGroupId = resolverFn(
+    item.write_group_id
+    || getPreferredDocWriteGroupRef({
+      ...item,
+      shares: nextShares,
+      group_ids: nextGroupIds,
+      scope_policy_group_ids: nextScopePolicyGroupIds,
+    }),
+  );
+
+  const sharesChanged = serializeDocShares(item.shares || []) !== serializeDocShares(nextShares);
+  const groupIdsChanged = JSON.stringify(item.group_ids || []) !== JSON.stringify(nextGroupIds);
+  const scopePolicyChanged = JSON.stringify(item.scope_policy_group_ids || null) !== JSON.stringify(nextScopePolicyGroupIds);
+  const writeGroupChanged = (item.write_group_id || null) !== (nextWriteGroupId || null);
+
+  if (!sharesChanged && !groupIdsChanged && !scopePolicyChanged && !writeGroupChanged) {
+    return item;
+  }
+
+  return {
+    ...item,
+    shares: nextShares,
+    group_ids: nextGroupIds,
+    scope_policy_group_ids: nextScopePolicyGroupIds,
+    write_group_id: nextWriteGroupId,
+  };
 }
 
 export function getDocCommentSummary(comment) {
@@ -475,7 +560,7 @@ export const docsManagerMixin = {
       target_record_id: recordId,
       target_record_family_hash: recordFamilyHash('comment'),
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      write_group_ref: doc?.group_ids?.[0] || null,
+      write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
     const localRow = {
       record_id: recordId,
@@ -507,7 +592,7 @@ export const docsManagerMixin = {
       ...localRow,
       target_group_ids: toRaw(doc?.group_ids ?? []),
       signature_npub: this.signingNpub,
-      write_group_ref: doc?.group_ids?.[0] || null,
+      write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
     await addPendingWrite({
       record_id: recordId,
@@ -536,7 +621,7 @@ export const docsManagerMixin = {
       target_record_id: recordId,
       target_record_family_hash: recordFamilyHash('comment'),
       target_group_ids: toRaw(doc?.group_ids ?? []),
-      write_group_ref: doc?.group_ids?.[0] || null,
+      write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
     const localRow = {
       record_id: recordId,
@@ -567,7 +652,7 @@ export const docsManagerMixin = {
       ...localRow,
       target_group_ids: toRaw(doc?.group_ids ?? []),
       signature_npub: this.signingNpub,
-      write_group_ref: doc?.group_ids?.[0] || null,
+      write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
     await addPendingWrite({
       record_id: recordId,
@@ -609,7 +694,7 @@ export const docsManagerMixin = {
       previous_version: comment.version ?? 1,
       target_group_ids: toRaw(doc?.group_ids ?? []),
       signature_npub: this.signingNpub,
-      write_group_ref: doc?.group_ids?.[0] || null,
+      write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -787,6 +872,19 @@ export const docsManagerMixin = {
   mergeDocShareLists,
   getStoredDocShares,
   getExplicitDocShares,
+  getPreferredDocWriteGroupRef(record) {
+    return getPreferredDocWriteGroupRef(
+      normalizeDocAccessRow(record, (value) => this.resolveGroupId ? this.resolveGroupId(value) : String(value || '').trim() || null),
+    );
+  },
+
+  normalizeDocumentRowGroupRefs(record) {
+    return normalizeDocAccessRow(record, (value) => this.resolveGroupId ? this.resolveGroupId(value) : String(value || '').trim() || null);
+  },
+
+  normalizeDirectoryRowGroupRefs(record) {
+    return normalizeDocAccessRow(record, (value) => this.resolveGroupId ? this.resolveGroupId(value) : String(value || '').trim() || null);
+  },
 
   getEffectiveDirectoryShares(directoryOrId, seen = new Set()) {
     const directory = typeof directoryOrId === 'string'
@@ -843,8 +941,8 @@ export const docsManagerMixin = {
   getDocShareTitle(share) {
     if (!share) return '';
     if (share.type === 'person') return this.getSenderName(share.person_npub);
-    const groupNpub = share.group_npub || share.via_group_npub || '';
-    const knownGroup = this.groups.find((group) => group.group_id === groupNpub || group.group_npub === groupNpub);
+    const groupRef = share.group_id || share.group_npub || share.via_group_id || share.via_group_npub || '';
+    const knownGroup = this.groups.find((group) => group.group_id === groupRef || group.group_npub === groupRef);
     return share.label || knownGroup?.name || 'Group';
   },
 
@@ -937,7 +1035,9 @@ export const docsManagerMixin = {
         access: 'read',
         label: suggestion.label,
         person_npub: null,
+        group_id: suggestion.group_npub,
         group_npub: suggestion.group_npub,
+        via_group_id: null,
         via_group_npub: null,
       };
 
@@ -989,13 +1089,17 @@ export const docsManagerMixin = {
 
     for (const share of this.docEditorShares) {
       if (share.type === 'person' && share.person_npub) {
-        const viaGroup = share.via_group_npub || await this.ensureDirectShareGroup(share.person_npub);
+        const viaGroup = share.via_group_id || share.via_group_npub || await this.ensureDirectShareGroup(share.person_npub);
         shares.push({
           ...share,
+          via_group_id: viaGroup,
           via_group_npub: viaGroup,
         });
-      } else if (share.type === 'group' && share.group_npub) {
-        shares.push({ ...share });
+      } else if (share.type === 'group' && (share.group_id || share.group_npub)) {
+        shares.push({
+          ...share,
+          group_id: share.group_id || share.group_npub || null,
+        });
       }
     }
 
@@ -1028,15 +1132,17 @@ export const docsManagerMixin = {
   },
 
   getDefaultPrivateShares() {
-    const groupNpub = this.memberPrivateGroupNpub;
-    if (!groupNpub) return [];
+    const groupRef = this.memberPrivateGroupRef || this.memberPrivateGroupNpub;
+    if (!groupRef) return [];
     return [{
       type: 'group',
-      key: groupNpub,
+      key: `group:${groupRef}`,
       access: 'write',
       label: this.memberPrivateGroup?.name || 'Private',
       person_npub: null,
-      group_npub: groupNpub,
+      group_id: groupRef,
+      group_npub: this.memberPrivateGroup?.group_npub || this.memberPrivateGroupNpub || groupRef,
+      via_group_id: null,
       via_group_npub: null,
       inherited: false,
       inherited_from_directory_id: null,
@@ -1053,22 +1159,29 @@ export const docsManagerMixin = {
     }
 
     const parentDirectoryId = this.getDefaultParentDirectoryId();
+    const defaultScopeAssignment = this.getDirectoryDefaultScopeAssignment(parentDirectoryId);
     const recordId = crypto.randomUUID();
     const now = new Date().toISOString();
-    const row = {
+    let shares = this.getInheritedDirectoryShares(parentDirectoryId);
+    if (defaultScopeAssignment.scope_id) {
+      const scope = this.scopesMap?.get(defaultScopeAssignment.scope_id);
+      if (scope) {
+        const scopeShares = this.buildScopeDefaultShares(this.getScopeShareGroupIds(scope));
+        shares = this.mergeDocShareLists(shares, scopeShares);
+      }
+    }
+    let row = {
       record_id: recordId,
       owner_npub: ownerNpub,
       title,
       parent_directory_id: parentDirectoryId,
-      scope_id: null,
-      scope_l1_id: null,
-      scope_l2_id: null,
-      scope_l3_id: null,
-      scope_l4_id: null,
-      scope_l5_id: null,
-      scope_policy_group_ids: null,
-      shares: this.getInheritedDirectoryShares(parentDirectoryId),
+      ...defaultScopeAssignment,
+      scope_policy_group_ids: defaultScopeAssignment.scope_id
+        ? this.getResolvedScopePolicyGroupIds(defaultScopeAssignment.scope_id)
+        : null,
+      shares,
       group_ids: [],
+      write_group_id: null,
       sync_status: 'pending',
       record_state: 'active',
       version: 1,
@@ -1076,6 +1189,7 @@ export const docsManagerMixin = {
     };
     if (row.shares.length === 0) row.shares = this.getDefaultPrivateShares();
     row.group_ids = this.getShareGroupIds(row.shares);
+    row = this.normalizeDirectoryRowGroupRefs(row);
 
     await upsertDirectory(row);
     this.patchDirectoryLocal(row);
@@ -1095,8 +1209,9 @@ export const docsManagerMixin = {
         scope_l5_id: row.scope_l5_id ?? null,
         scope_policy_group_ids: row.scope_policy_group_ids ?? null,
         shares: row.shares,
+        group_ids: row.group_ids,
         signature_npub: this.signingNpub,
-        write_group_ref: row.group_ids?.[0] || null,
+        write_group_ref: row.write_group_id || row.group_ids?.[0] || null,
       }),
     });
 
@@ -1124,7 +1239,7 @@ export const docsManagerMixin = {
         shares = this.mergeDocShareLists(shares, scopeShares);
       }
     }
-    const row = {
+    let row = {
       record_id: recordId,
       owner_npub: ownerNpub,
       title,
@@ -1136,6 +1251,7 @@ export const docsManagerMixin = {
         : null,
       shares,
       group_ids: [],
+      write_group_id: null,
       sync_status: 'pending',
       record_state: 'active',
       version: 1,
@@ -1143,6 +1259,7 @@ export const docsManagerMixin = {
     };
     if (row.shares.length === 0) row.shares = this.getDefaultPrivateShares();
     row.group_ids = this.getShareGroupIds(row.shares);
+    row = this.normalizeDocumentRowGroupRefs(row);
 
     await upsertDocument(row);
     this.patchDocumentLocal(row);
@@ -1163,8 +1280,9 @@ export const docsManagerMixin = {
         scope_l5_id: row.scope_l5_id ?? null,
         scope_policy_group_ids: row.scope_policy_group_ids ?? null,
         shares: row.shares,
+        group_ids: row.group_ids,
         signature_npub: this.signingNpub,
-        write_group_ref: row.group_ids?.[0] || null,
+        write_group_ref: row.write_group_id || row.group_ids?.[0] || null,
       }),
     });
 
@@ -1198,19 +1316,20 @@ export const docsManagerMixin = {
       ...item,
       shares,
       group_ids: this.getShareGroupIds(shares),
+      write_group_id: item.write_group_id || null,
     };
     const scopePolicyPatch = item.scope_id
       ? (this.shouldRefreshScopedPolicy(draft, item.scope_id)
         ? this.buildScopedPolicyRepairPatch(draft, { scopeId: item.scope_id })
         : { scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(item.scope_id) })
       : { scope_policy_group_ids: null };
-    const updated = {
+    const updated = this.normalizeDirectoryRowGroupRefs({
       ...draft,
       ...scopePolicyPatch,
       sync_status: 'pending',
       version: nextVersion,
       updated_at: now,
-    };
+    });
 
     await upsertDirectory(updated);
     this.patchDirectoryLocal(updated);
@@ -1230,10 +1349,11 @@ export const docsManagerMixin = {
         scope_l5_id: updated.scope_l5_id ?? null,
         scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
         shares,
+        group_ids: updated.group_ids,
         version: nextVersion,
         previous_version: item.version ?? 1,
         signature_npub: this.signingNpub,
-        write_group_ref: updated.group_ids?.[0] || null,
+        write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
       }),
     });
 
@@ -1278,19 +1398,20 @@ export const docsManagerMixin = {
         content: this.docEditorContent,
         shares,
         group_ids: this.getShareGroupIds(shares),
+        write_group_id: item.write_group_id || null,
       };
       const scopePolicyPatch = item.scope_id
         ? (this.shouldRefreshScopedPolicy(draft, item.scope_id)
           ? this.buildScopedPolicyRepairPatch(draft, { scopeId: item.scope_id })
           : { scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(item.scope_id) })
         : { scope_policy_group_ids: null };
-      const updated = {
+      const updated = this.normalizeDocumentRowGroupRefs({
         ...draft,
         ...scopePolicyPatch,
         sync_status: 'pending',
         version: nextVersion,
         updated_at: now,
-      };
+      });
       await upsertDocument(updated);
       this.patchDocumentLocal(updated);
       await addPendingWrite({
@@ -1310,10 +1431,11 @@ export const docsManagerMixin = {
           scope_l5_id: updated.scope_l5_id ?? null,
           scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares,
+          group_ids: updated.group_ids,
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: updated.group_ids?.[0] || null,
+          write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
         }),
       });
 

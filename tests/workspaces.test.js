@@ -65,6 +65,8 @@ describe('workspace entry normalization', () => {
       version: 2,
       direct_https_url: 'https://sb4.otherstuff.studio',
       service_npub: 'npub1service',
+      tower_name: 'Family Tower',
+      tower_description: 'Private family workspace host',
       workspace_owner_npub: 'npub1workspace',
       app_npub: 'npub1app',
       relays: ['wss://relay.example'],
@@ -80,6 +82,8 @@ describe('workspace entry normalization', () => {
       workspaceOwnerNpub: 'npub1workspace',
       directHttpsUrl: 'https://sb4.otherstuff.studio',
       serviceNpub: 'npub1service',
+      towerName: 'Family Tower',
+      towerDescription: 'Private family workspace host',
       appNpub: 'npub1app',
       relayUrls: ['wss://relay.example'],
       connectionToken: token,
@@ -259,6 +263,28 @@ describe('workspace entry normalization', () => {
       workspaceOwnerNpub: 'npub1workspaceowner',
       name: 'Other Stuff',
       directHttpsUrl: 'https://sb.example',
+    });
+  });
+
+  it('preserves tower discovery metadata from tokens on workspace entries', () => {
+    const token = btoa(JSON.stringify({
+      type: 'superbased_connection',
+      version: 2,
+      direct_https_url: 'https://sb.example',
+      service_npub: 'npub1service',
+      tower_name: 'Family Tower',
+      tower_description: 'Private family workspace host',
+      workspace_owner_npub: 'npub1workspaceowner',
+      app_npub: 'npub1app',
+    }));
+
+    expect(workspaceFromToken(token)).toMatchObject({
+      workspaceOwnerNpub: 'npub1workspaceowner',
+      directHttpsUrl: 'https://sb.example',
+      serviceNpub: 'npub1service',
+      towerName: 'Family Tower',
+      towerDescription: 'Private family workspace host',
+      connectionToken: token,
     });
   });
 });

@@ -1,7 +1,7 @@
 # Wingman Flight Deck As-Built Frontend
 
-Status: as-built working note
-Reviewed against live code on 2026-04-05
+Status: as-built working note  
+Reviewed against live code on 2026-04-07
 Companion docs:
 
 - `docs/asbuilt/architecture.md`
@@ -10,390 +10,406 @@ Companion docs:
 
 ## Scope
 
-This note documents the frontend that Flight Deck actually ships today:
+This note documents the frontend Flight Deck actually ships today:
 
-- state ownership on the browser main thread
-- how Dexie subscriptions repopulate UI state
-- where the UI reads derived state instead of raw records
-- how `index.html` is composed into sections, detail panes, and modals
-- which UI patterns are reused across sections
+- the Alpine app shell and URL-backed section routing
+- which module owns shell state versus section display state
+- how Dexie `liveQuery` subscriptions repopulate UI state
+- where refresh stops at "flush writes" versus where it also pulls and rematerializes
+- the current seams between local persisted rows and user-facing managers
+- shell-adjacent integrations such as page title updates and service-worker registration
 
 It describes the live implementation, not the target architecture.
 
-Primary files reviewed for this note:
+Primary files reviewed for this refresh:
 
 - `index.html`
 - `src/main.js`
 - `src/app.js`
-- `src/section-live-queries.js`
+- `src/shell-state.js`
 - `src/task-board-state.js`
 - `src/unread-store.js`
+- `src/section-live-queries.js`
+- `src/sync-manager.js`
+- `src/sync-worker-client.js`
 - `src/workspace-manager.js`
 - `src/channels-manager.js`
-- `src/chat-message-manager.js`
 - `src/docs-manager.js`
-- `src/jobs-manager.js`
+- `src/chat-message-manager.js`
 - `src/flows-manager.js`
-- `src/scopes-manager.js`
-- `src/persons-manager.js`
-- `src/connect-settings-manager.js`
 - `src/triggers-manager.js`
-- `src/sync-manager.js`
+- `src/persons-manager.js`
+- `src/people-profiles-manager.js`
+- `src/storage-image-manager.js`
+- `src/page-title.js`
+- `src/service-worker-registration.js`
 
 ## Frontend Runtime Shape
 
-Flight Deck is still a single-page Alpine app booted from `src/main.js`. `initApp()` in `src/app.js` assembles one large store and registers it as `Alpine.store('chat', storeObj)`. The HTML is tightly coupled to that store name through `$store.chat.*`.
+Flight Deck is still a single-page Alpine app booted from `src/main.js`.
 
-The current runtime split is:
+`src/main.js` currently does four things in order:
 
-- `src/main.js`: boot sequence, hard reset guard, service-worker registration, build/version checks, image modal setup
-- `src/app.js`: root store state, lifecycle, route sync, common helpers, page-level navigation, section memory trimming
-- mixin files under `src/`: domain-specific actions, computed state, optimistic writes, and detail interactions
-- `index.html`: all view composition and most per-section local UI state through Alpine inline `x-data`
+1. run the hard-reset guard
+2. call `initApp()`
+3. register the build service worker
+4. start build-version checking and the global image modal
 
-Important as-built characteristic:
+`initApp()` in `src/app.js` still assembles one large store and registers it as `Alpine.store('chat', storeObj)`. `index.html` remains coupled to that store through `$store.chat.*`.
 
-- the app is modular in source layout, but not in runtime store layout
-- domain state, modal state, derived UI state, and sync status still live in one Alpine store object
+Important as-built nuance:
 
-## State Ownership
+- `src/app.js` still contains a large inline store definition with many shell defaults and legacy shell methods
+- `src/shell-state.js` is now the authoritative shell boundary and is mixed in first through `applyMixins(...)`
+- runtime state is therefore still one Alpine store, but the shell extraction is real even though the old inline definitions still exist in source as fallback structure
 
-### Root store
+## App Shell And Section Routing
 
-`src/app.js` owns:
+### Shell ownership
 
-- app/session state: login state, signer availability, selected workspace, backend URL, current route section
-- top-level UI state: nav collapse, mobile nav, modal toggles, sync banners, error strings
-- section arrays: `channels`, `messages`, `documents`, `directories`, `reports`, `tasks`, `schedules`, `flows`, `approvals`, `persons`, `organisations`, `scopes`
-- selection/detail state: selected channel, active thread, selected doc, active task, selected report, selected board, approval/detail modal state
-- generic reactive helpers: live subscription wrapper, route syncing, scroll anchoring hooks, markdown rendering, page title updates
+`src/shell-state.js` owns the app-level shell boundary:
 
-### Domain mixins
+- session and identity state
+- selected workspace context
+- nav section, nav collapse, mobile nav, and workspace switcher chrome
+- sync status banners and sync-progress modal state
+- connect/bootstrap modal state
+- route parsing, route application, and history synchronization
+- login/logout lifecycle
 
-The major ownership split inside the single store is:
+It also exports `SHELL_STATE_KEYS` and `SHELL_METHOD_NAMES`, which make the boundary explicit in tests instead of leaving it informal.
 
-| Area | Main owner | What it owns in practice |
-| --- | --- | --- |
-| Workspace identity and switcher | `src/workspace-manager.js` | current workspace getters, profile draft fields, workspace switching, workspace removal, workspace bootstrap prompts, workspace avatar/profile hydration |
-| Connection and Agent Connect settings | `src/connect-settings-manager.js` | connection token input, backend save flow, connect modal, known host flow, default agent selection, Agent Connect export modal |
-| Chat channels and groups | `src/channels-manager.js` | channel list refresh, group refresh/bootstrap, group CRUD modals, channel creation/settings, participant and group-derived labels |
-| Chat messages and threads | `src/chat-message-manager.js` | main feed and thread derived lists, scroll anchoring, composer autosize, send/reply/delete flows, message local patching |
-| Docs and comments | `src/docs-manager.js` | doc browser/editor state, block editing, autosave state, share modal, scope modal, move modal, comment thread state, version history |
-| Tasks, board, and calendar | `src/task-board-state.js` plus task methods in `src/app.js` | board selection, task filtering, kanban/list grouping, scheduled-task calendar projection, scope-aware task assignment helpers |
-| Scopes | `src/scopes-manager.js` | scope search, breadcrumbs, scope picker state, scope assignment flows for tasks/docs/channels, scope CRUD form state |
-| Flows and approvals | `src/flows-manager.js` | flow editor state, pending approvals, approval history/filtering, approval preview panel, flow-linked task/doc navigation |
-| People and organisations | `src/persons-manager.js` | person/org CRUD, bidirectional linking, augment flags, optimistic local writes |
-| Profiles and suggestions | `src/people-profiles-manager.js` | sender/profile lookup, avatars, cached people suggestions, default-agent suggestions, group-member suggestions |
-| Unread indicators | `src/unread-store.js` | nav dots, per-channel unread map, per-task unread map, read cursor writes |
-| Sync lifecycle | `src/sync-manager.js` | background cadence, full sync/flush calls, repair tools, record status checks, worker orchestration |
-| Triggers | `src/triggers-manager.js` | automation settings tab trigger CRUD and firing |
-| Jobs | `src/jobs-manager.js` | jobs section shell and modal toggles, but current implementation is effectively a stub that marks jobs unavailable |
+### Actual route model
 
-## Refresh And Subscription Behavior
+The shell route model is URL-backed but selective.
 
-### Initialization and workspace bootstrap
+Dedicated path segments exist for:
 
-`init()` in `src/app.js` does the current boot sequence:
+- `status` -> `/flight-deck`
+- `chat` -> `/chat`
+- `tasks` -> `/tasks`
+- `calendar` -> `/calendar`
+- `docs` -> `/docs`
+- `reports` -> `/reports`
+- `people` -> `/people`
+- `schedules` -> `/schedules`
+- `scopes` -> `/scopes`
+- `settings` -> `/settings`
 
-1. starts signer and route watchers
-2. migrates legacy IndexedDB if needed
-3. starts shared live queries before login
-4. loads persisted settings and known workspaces
-5. resolves invite token or saved connection token
-6. hydrates known workspace profile snapshots from local DBs
-7. attempts auto-login
-8. selects the saved or first known workspace
-9. bootstraps the selected workspace by refreshing groups, flows, key mappings, route state, sync status, and unread tracking
+Query params currently carry detail state for:
 
-### Dexie live queries
+- `workspacekey`
+- `scopeid`
+- `channelid`
+- `threadid`
+- `folderid`
+- `docid`
+- `commentid`
+- `versioning`
+- `reportid`
+- `taskid`
+- `view`
+- `descendants`
 
-`src/section-live-queries.js` is the main read-side refresh plan.
+Important current limitation:
 
-Shared subscriptions:
+- `flows` is a real nav section in `index.html`, but `getRoutePath()` has no `flows` case, so the URL falls back to `/flight-deck`
+- `jobs` is also missing from `getRoutePath()`, and the nav item is hard-hidden in `index.html` with `x-show="false"`
 
-- address book is always subscribed once the app starts
+### Route application and section switching
 
-Always-on workspace subscriptions:
+`applyRouteFromLocation()` in `src/shell-state.js` does more than cosmetic URL sync. It restores live section state by:
 
-- flows
-- approvals
+- switching workspaces when the slug or `workspacekey` points elsewhere
+- restoring the shared task/doc/report scope selection from `scopeid`
+- selecting the active chat channel and optional thread
+- opening a document or folder and optional comment/versioning state
+- restoring report selection
+- restoring task detail and task board/list view mode
 
-Section-gated workspace subscriptions:
+After applying the route it immediately calls `startWorkspaceLiveQueries()` and then normalizes the URL back through `syncRoute(true)`.
 
-- `status`: windowed reports, scopes
-- `chat`: channels, audio notes
-- `docs`: directories, windowed documents, scopes
-- `tasks`: tasks, scopes
-- `calendar`: tasks, schedules, scopes
-- `reports`: windowed reports, scopes
-- `schedules`: schedules
-- `scopes`: scopes
-- `flows`: scopes
-- `people`: persons, organisations
+`navigateTo(section)` is also shell-owned. It:
 
-Detail subscriptions:
+- trims stale section arrays with `clearInactiveSectionData()`
+- marks `chat` and `docs` as read on navigation
+- revalidates task-board state for `tasks`, `calendar`, and `reports`
+- restarts workspace live queries
+- ensures background sync is running
 
-- `chat`: selected channel messages
-- `tasks`: selected task row and its comments
-- `docs`: selected document row and its comments
-- `reports`: selected report row
+## Display State Ownership
 
-Important as-built behavior:
+### `src/shell-state.js`
 
-- live queries are recreated whenever `navSection`, workspace owner, workspace key, or the selected detail target changes
-- `createLiveSubscription()` in `src/app.js` coalesces Dexie notifications to one callback per animation frame
-- the store trims inactive arrays with `clearInactiveSectionData()` when navigating, so Dexie remains authoritative and Alpine only keeps the active domain warm
+Shell state owns the cross-section chrome and lifecycle, not the section data arrays themselves.
 
-### Background refresh
+In practice it owns:
 
-`src/sync-manager.js` determines polling cadence:
+- session/login/error state
+- workspace selection and bootstrap prompts
+- connect modal steps and known hosts
+- current route section and route/history wiring
+- sync session summary, SSE status, and catch-up overlay state
 
-- fast cadence for `chat`, `docs`, `tasks`, `calendar`, `schedules`, and `scopes`
-- idle cadence elsewhere
-- no background cadence when hidden, logged out, or missing workspace/backend context
+### `src/app.js`
 
-The current freshness path is:
+`src/app.js` still owns most concrete section state and many cross-domain selectors.
 
-1. main-thread timer calls `performSync({ silent: true })`
-2. sync worker flushes pending writes
-3. worker heartbeats per-family cursors
-4. stale families are pulled and materialized into Dexie
-5. Dexie updates fan back into Alpine through live queries
-6. unread summary from `sync_state` is reused by `src/unread-store.js`
+It directly owns arrays and selection state for:
 
-### Unread refresh behavior
+- channels, messages, audio notes, groups
+- documents, directories, doc comments, doc editor buffers
+- reports and selected report state
+- tasks, schedules, task comments, task detail state
+- flows, approvals, approval preview state
+- persons and organisations
+- status/dashboard derived state such as recent changes
 
-Unread indicators are not driven directly from visible arrays alone.
+It also still owns cross-domain getters such as:
+
+- `selectedDocument`, `selectedDirectory`, `selectedReport`
+- `currentFolderBreadcrumbs`
+- `currentDocumentTitle`
+
+### `src/task-board-state.js`
+
+`src/task-board-state.js` owns the derived display state for tasks and the shared board/scope picker model.
+
+Actual responsibilities now include:
+
+- task board options including `All`, `Recent`, and conditional `Unscoped`
+- selected board validation and persistence to local storage
+- selected board scope resolution
+- board-scoped task filtering, tag filtering, and assignee filtering
+- kanban columns, list groups, and scheduled-task calendar projection
+- reusable scope/board labels used outside the tasks section
+
+This module is display-state-heavy rather than transport-heavy: it works from `this.tasks`, `this.scopes`, and `this.selectedBoardId`, not from remote responses.
+
+### `src/unread-store.js`
+
+`src/unread-store.js` owns unread indicators, but not all unread derivation is local-only.
 
 Current model:
 
-- worker writes `unread_summary` into `sync_state`
-- `src/unread-store.js` prefers that summary for nav dots and channel unread state
-- per-task unread borders are still computed against `tasks` plus read cursors
-- navigation to `chat` and `docs` marks those nav cursors as read
-- tasks remain item-level until the user opens or explicitly clears them
+- nav-level chat/docs unread and per-channel unread prefer worker-computed `sync_state.unread_summary`
+- per-task unread still computes a local item map from `tasks` plus `read_cursors`
+- `tasks:nav` may be auto-seeded the first time tasks exist locally but no cursor exists yet
+- navigating to `chat` or `docs` marks the section read; tasks remain item-level until opened or cleared
 
-## Data-To-UI Boundary
+## Live Query Wiring
 
-The frontend boundary is intentionally layered even though the runtime store is monolithic.
+`src/section-live-queries.js` is the current read-side subscription plan. It manages three buckets per store instance:
 
-### 1. Transport and sync layer
+- shared subscriptions
+- workspace subscriptions
+- detail subscriptions
 
-Owned by:
+It re-syncs those buckets whenever workspace identity or section/detail state changes.
 
-- `src/api.js`
-- `src/sync-manager.js`
-- `src/sync-worker-client.js`
-- worker code described in `docs/asbuilt/middleware.md`
+### Shared subscriptions
 
-The UI does not render transport responses directly except for a few explicit foreground utilities such as workspace CRUD, storage upload/download, record history, and key-mapping lookup.
+Always on after app start:
 
-### 2. Local persisted rows
+- `address-book` -> `getAddressBookPeople()` -> `applyAddressBookPeople(...)`
 
-Dexie tables are the primary render source. Managers and live queries read from local tables such as:
+### Workspace subscriptions
 
-- `channels`, `chat_messages`, `audio_notes`
-- `documents`, `directories`, `comments`
-- `tasks`, `schedules`, `scopes`
-- `reports`, `flows`, `approvals`
-- `persons`, `organisations`
+Always on for a selected workspace:
 
-### 3. Store-level derived read models
+- `ws:flows` -> `getFlowsByOwner(ownerNpub)` -> `applyFlows(...)`
 
-The store then derives UI-focused shapes that are not themselves persisted:
+Section-gated subscriptions:
 
-- chat main-feed and thread windows
-- filtered task boards, kanban columns, list groups, calendar projections
-- scope trees and board-picker options
-- doc browser rows, breadcrumbs, block views, selected comment replies
-- flight-deck report cards and derived metric/timeseries/table render data
-- workspace display overlays from known workspace entries plus local profile snapshots
-- unread flags and per-item unread maps
+| Section | Workspace subscriptions |
+| --- | --- |
+| `status` | windowed reports, scopes, pending approvals |
+| `chat` | channels, audio notes |
+| `docs` | directories, windowed documents, scopes |
+| `tasks` | tasks, scopes |
+| `calendar` | tasks, schedules, scopes |
+| `reports` | windowed reports, scopes |
+| `schedules` | schedules |
+| `scopes` | scopes |
+| `flows` | pending approvals, scopes |
+| `people` | persons, organisations |
 
-### 4. Template rendering
+Important drift from the older frontend note:
 
-`index.html` mostly renders:
+- flows are always-on
+- approvals are not always-on; they are subscribed in `status` and `flows`
 
-- store arrays for list screens
-- store getters for detail panes and derived labels
-- inline local `x-data` only for micro-state such as menu open/close, typeahead highlight index, or expandable cards
+### Detail subscriptions
 
-Important as-built rule:
+Detail reads are section-specific:
 
-- view code usually renders normalized local rows or computed getters, not raw record envelopes and not raw API payloads
+- `chat` -> selected channel messages
+- `tasks` -> selected task row plus task comments
+- `docs` -> selected document row plus doc comments
+- `reports` -> selected report row
 
-## View Composition
+The detail handlers guard against stale callbacks by checking that the workspace and selected record are still current before mutating store state.
 
-### Shell
+### Unread bootstrap coupling
 
-The top-level view is:
+`startWorkspaceLiveQueries()` also owns unread bootstrap timing:
 
-- auth and bootstrap surfaces when logged out or missing workspace context
-- main app layout when logged in
-- left sidebar with section nav, current-scope picker, and workspace switcher
-- single main-content outlet switched by `navSection`
+- when workspace key or owner changes, it resets `hasBootstrappedUnreadTracking`
+- after the new workspace subscriptions are in place, it calls `initUnreadTracking()` once
 
-### Main sections
+## Refresh Boundaries
 
-Current first-class sections in `index.html` are:
+### Main-thread orchestration in `src/sync-manager.js`
 
-- `status`: Flight Deck landing page with scope picker, report cards, recent changes, and pending approvals side panel
-- `chat`: channel list in sidebar, main feed, thread panel, per-message actions, audio attachments
-- `tasks`: create/filter/bulk bar, kanban or list view, task detail panel
-- `calendar`: scope-aware calendar projection of scheduled tasks
-- `docs`: folder/document browser and document editor with block comments and sharing/scope overlays
-- `reports`: report list plus detail pane, with fullscreen modal for a selected report
-- `schedules`: recurring schedule list and editor modal
-- `flows`: flow cards/editor plus approval banner, approval detail modal, approval history overlay
-- `scopes`: five-level card/tree presentation plus navigator drawer and create/edit modal
-- `people`: people and organisations subtabs, list views, editor forms, link pickers
-- `jobs`: present only when a harness URL exists, but current behavior is mostly placeholder/unavailable
-- `settings`: tabbed workspace, connection, automation, data, and sharing/admin surfaces
+`src/sync-manager.js` owns when the app refreshes and how aggressive that refresh is.
 
-### Detail and overlay model
+`ensureBackgroundSync()` currently:
 
-The app uses section-local detail states rather than route-level subcomponents:
+- registers a visibility listener
+- starts the worker-side independent flush timer
+- opens the SSE stream
+- decides whether to show the catch-up overlay
+- schedules the next background tick
 
-- tasks detail replaces the task list inside the same section
-- docs editor replaces the browser inside the same section
-- chat thread opens beside the main feed
-- approvals, reports, doc comments, doc moves, group edits, workspace connect/bootstrap, audio recorder, and record status/version tools are overlays or modals on top of the section shell
+`getSyncCadenceMs()` widens polling when SSE is connected and otherwise uses the fast cadence for:
 
-### Route model
+- `chat` with a selected channel
+- `docs`
+- `tasks`
+- `calendar`
+- `schedules`
+- `scopes`
 
-Route state is lightweight and URL-backed:
+Everything else falls back to idle cadence.
 
-- workspace slug and `workspacekey`
-- `scopeid` shared across multiple sections
-- section-specific detail ids such as `channelid`, `threadid`, `docid`, `folderid`, `commentid`, `reportid`, `taskid`
+### Flush-only boundary
 
-This keeps browser history aligned with selected workspace, scope, and open detail target without introducing a router framework.
+`flushAndBackgroundSync()` is intentionally write-side only.
 
-## Reusable UI Building Blocks
+It:
 
-The current reusable building blocks are pattern-level, not component files.
+1. calls `flushOnly(...)` through `src/sync-worker-client.js`
+2. updates `lastSuccessAt` on success
+3. refreshes sync status if writes were pushed
+4. always re-arms background sync in `finally`
 
-### Scope and board pickers
+It does not:
 
-Used in:
+- run heartbeat
+- pull families
+- rematerialize rows directly
 
-- sidebar focus panel
-- Flight Deck hero
-- calendar board selector
-- task board selector
-- scope assignment popovers
+The UI depends on SSE and later background sync to pull fresh rows back into Dexie.
 
-Common behavior:
+### Full sync boundary
 
-- text input plus filtered option list
-- keyboard highlight index in local `x-data`
-- shared labels from task-board/scope helpers
+`performSync()` is the heavier refresh path.
 
-### Modal shell
+It currently:
 
-Most overlays use the same pattern:
+1. refreshes groups and group keys on the main thread
+2. may clear sync state for an initial backfill if the workspace looks empty
+3. calls `runSync(...)` in the worker
+4. refreshes workspace settings and task-board setup after worker completion
+5. refreshes sync status and optionally status recent changes
 
-- backdrop with `x-show`
-- centered card container
-- close button or click-away close
-- action row with `btn-cancel` / `btn-confirm`
+This is the boundary where a user-visible "manual sync" actually means heartbeat/pull/apply, not just push.
 
-This pattern is reused for:
+### Worker-client boundary
 
-- workspace connect/bootstrap
-- agent connect export
-- docs share/scope/move/comment/version flows
-- groups
-- report modal
-- approval detail/history
-- record status/version tools
+`src/sync-worker-client.js` is now strictly a worker RPC client.
 
-### Action menus
+Current behavior:
 
-Small `details` or inline `x-data` action menus recur across:
+- serializes requests through a queue
+- lazily creates the worker
+- retries worker recreation up to two times
+- bridges NIP-07 auth requests back to the main thread
+- posts decrypted group keys and workspace-key material into the worker
+- exposes degraded-worker failure rather than falling back to main-thread sync logic
 
-- task cards/detail
-- docs toolbar/editor
-- chat messages
-- people/organisation records
-- groups
+Important as-built detail:
 
-They generally expose secondary actions such as status checks, version history, delete, scope, share, or move.
+- if the worker cannot be created or recovered, sync is degraded and queued writes remain in Dexie for later retry
+- there is no current main-thread sync fallback path even though older comments in worker code still imply one
 
-### Identity chips and fallbacks
+## Data-To-UI Manager Seams
 
-Repeated identity UI primitives:
+The store is monolithic at runtime, but the read/write seams are now more explicit at the manager level.
 
-- avatar image or initials fallback
-- sender name plus shortened identity subtitle
-- workspace avatar/name/meta rows
-- suggestion rows for people, groups, and default agent selection
+| Area | Current owner | What the seam actually is |
+| --- | --- | --- |
+| Workspace display and switching | `src/workspace-manager.js` | Merges `knownWorkspaces` with local profile snapshots, opens/switches/deletes workspace DBs, loads remote workspace lists, saves workspace profile and harness settings, and owns the workspace switcher menu |
+| Channels and groups | `src/channels-manager.js` | Applies Dexie channel rows to the visible list, filters channels for the viewer, refreshes group metadata and wrapped group keys from explicit APIs, and owns group CRUD/bootstrap flows |
+| Chat message display | `src/chat-message-manager.js` | Derives ranked main feed and thread windows from `messages`, owns scroll anchoring and composer autosize, and applies selected-channel message updates from live queries |
+| Docs and comments | `src/docs-manager.js` | Owns document/folder selection state, editor buffer state, merged share display, comment modal state, and direct record-history reads for versioning |
+| Flows and approvals | `src/flows-manager.js` | Applies live Dexie flow rows, derives scope-filtered flow and approval lists, owns flow-editor form state, and drives approval preview/history UI |
+| Triggers | `src/triggers-manager.js` | Treats `workspaceTriggers` as workspace-settings substate, not a separate sync family; saves through `saveHarnessSettings({ triggerOnly: true })` and fires trigger events over Nostr |
+| Persons and organisations | `src/persons-manager.js` | Pure local-first CRUD for person/org rows; writes to Dexie, adds pending writes, then uses `flushAndBackgroundSync()` |
+| Profile and suggestion resolution | `src/people-profiles-manager.js` | Resolves display identities, maps workspace-key npubs back to user npubs, hydrates Nostr profile data, and maintains the address-book suggestion cache |
+| Storage-backed images | `src/storage-image-manager.js` | Resolves backend-aware cache keys, downloads blobs through `src/api.js`, writes them into shared Dexie cache, replaces `img[data-storage-object-id]` sources, and preserves scroll anchors while images hydrate |
 
-These all rely on the same profile-resolution layer rather than section-specific fetches.
+Two manager seams worth calling out explicitly:
 
-### Scope pills
+- `workspace-manager.js` is where `workspace_settings` becomes shell/UI state, including harness URL and trigger arrays
+- `people-profiles-manager.js` is the display seam that prevents workspace session-key identities from leaking raw into user-facing labels when a workspace-key mapping exists
 
-Scope pills appear in:
+## Shell Integration
 
-- docs browser rows
-- doc title/header
-- folder breadcrumb meta
-- channel settings
-- scope modals
+### Page title handling
 
-They reuse shared helpers for:
+`src/page-title.js` builds the document title and is called through the store getter `currentDocumentTitle`.
 
-- level badge styling
-- title/breadcrumb tooltip
-- unscoped fallback state
+It currently has explicit title cases for:
 
-### Status indicators
+- `status`
+- `chat`
+- `tasks`
+- `calendar`
+- `schedules`
+- `docs`
+- `people`
+- `scopes`
+- `settings`
 
-Repeated status visuals include:
+Current limitation:
 
-- unread nav dots and per-channel/task unread markers
-- sync dots for docs and chat messages
-- state/priority badges for tasks and schedules
-- approval status badges
-- count badges in columns, calendars, and side panels
+- `reports`, `flows`, and `jobs` have no explicit title case, so they currently fall through to the default chat title branch
 
-### Markdown surfaces
+That is an as-built behavior, not a guessed intent.
 
-Rendered markdown is reused in:
+### Service worker integration
 
-- chat posts
-- doc preview blocks
-- approval previews
-- report text cards
+`src/service-worker-registration.js` is separate from the sync worker and only handles app-shell update behavior.
 
-The same markdown rendering boundary is used, with image hydration layered on top for storage-backed media.
+As built today it:
 
-### Audio cards
+- registers only outside Vite dev mode
+- versions the registration URL with the current build id
+- listens for `controllerchange` and reloads once activation is requested
+- exposes `forceRefreshToLatestBuild()` for an explicit skip-waiting/reload flow
 
-Audio-note and draft cards are reused across:
-
-- chat composer
-- thread composer
-- doc comments
-- message/document attachment previews
-
-The card pattern stays consistent even though the owning state lives in different arrays.
+It does not participate in Dexie sync, records, or SSE.
 
 ## Current Frontend Constraints And Quirks
 
-- The frontend is still a single Alpine store, so section concerns are source-modular but runtime-coupled.
-- Section memory is manually trimmed when navigating away; data rehydrates from Dexie when the section becomes active again.
-- Jobs are visible behind harness gating, but the current jobs manager is a placeholder rather than a complete frontend subsystem.
-- Flows and approvals are intentionally kept subscribed even outside the flows section because task and status surfaces depend on them.
-- Some explicit foreground API calls still bypass the sync path for utilities like version history, workspace CRUD, and storage object work, but rendered domain data still comes back through local rows.
+- The runtime is still one Alpine store even though shell, task-board, unread, sync, and manager seams are now extracted in source.
+- `clearInactiveSectionData()` manually evicts inactive section arrays; Dexie live queries re-warm them on demand.
+- Flows are always kept warm because task/approval behavior depends on them outside the `flows` section.
+- Approvals are not always warm; they are section-gated to `status` and `flows`.
+- `jobs` state still exists in the store and `src/jobs-manager.js`, but the nav entry is hard-hidden and the manager only reports that jobs are unavailable.
+- The route model is incomplete for `flows` and `jobs`.
+- The document-title helper is also incomplete for `reports`, `flows`, and `jobs`.
 
 ## As-Built Summary
 
-Flight Deck’s frontend is currently a single-store Alpine SPA layered on top of Dexie and a sync worker. The important practical boundaries are:
+Flight Deck’s frontend is currently a single-store Alpine SPA with a real but partial shell extraction.
 
-- Dexie is the render source
-- `section-live-queries.js` decides which data is warm in memory
-- manager mixins own domain-specific mutations and detail behavior
-- `index.html` composes one section shell at a time with shared modal and picker patterns
+The practical boundaries are:
 
-The frontend is therefore local-first in behavior, but still centralized in runtime structure: one store, one template file, many domain mixins, and Dexie/liveQuery as the main reactive backbone.
+- `src/shell-state.js` owns navigation, routing, session, and shell sync state
+- `src/section-live-queries.js` decides which Dexie rows stay warm in memory for the current section
+- manager mixins own domain-specific read-model shaping and local-first mutations
+- `src/sync-manager.js` separates flush-only writes from heavier pull/rematerialize sync
+
+The app is therefore local-first in behavior and more modular in source than it is in runtime shape, but the runtime still centralizes into one Alpine store and one `index.html` shell.

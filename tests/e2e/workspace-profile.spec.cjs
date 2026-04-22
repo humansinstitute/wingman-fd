@@ -1,7 +1,7 @@
-import fs from 'node:fs';
-import path from 'node:path';
+const fs = require('node:fs');
+const path = require('node:path');
 
-import { test, expect } from 'playwright/test';
+const { test, expect } = require('playwright/test');
 
 function readFirstEnvValue(candidates) {
   for (const candidate of candidates) {
@@ -46,11 +46,25 @@ async function loginWithSecret(page, nsec) {
 }
 
 async function createWorkspace(page, workspaceName) {
-  const bootstrapModal = page.locator('.modal').filter({ hasText: 'Create Workspace' });
-  if (await bootstrapModal.isVisible().catch(() => false)) {
-    await bootstrapModal.locator('input[placeholder="Wingmen"]').fill(workspaceName);
-    await bootstrapModal.locator('textarea[placeholder="Optional description"]').fill('Playwright workspace bootstrap');
-    await bootstrapModal.getByRole('button', { name: 'Create workspace' }).click();
+  const connectModal = page.locator('.modal').filter({ hasText: 'Connect to SuperBased' });
+  const connectVisible = await connectModal.isVisible().catch(() => false)
+    || await connectModal.waitFor({ state: 'visible', timeout: 1500 }).then(() => true).catch(() => false);
+  if (connectVisible) {
+    await connectModal.locator('.connect-host-row').first().click();
+
+    const selectModal = page.locator('.modal').filter({ hasText: 'Select Workspace' });
+    await expect(selectModal).toBeVisible();
+    await selectModal.locator('input[placeholder="My workspace"]').fill(workspaceName);
+    await selectModal.locator('input[placeholder=""]').fill('Playwright workspace bootstrap');
+    await selectModal.getByRole('button', { name: 'Create workspace' }).click();
+    return;
+  }
+
+  const bootstrapNameInput = page.locator('.superbased-modal input[placeholder="Wingmen"]');
+  if (await bootstrapNameInput.isVisible().catch(() => false)) {
+    await bootstrapNameInput.fill(workspaceName);
+    await page.locator('.superbased-modal textarea[placeholder="Optional description"]').fill('Playwright workspace bootstrap');
+    await page.locator('.superbased-modal').getByRole('button', { name: 'Create workspace' }).click();
     return;
   }
 
@@ -59,7 +73,6 @@ async function createWorkspace(page, workspaceName) {
   await workspaceTrigger.click();
   await page.getByRole('button', { name: 'Add workspace...' }).click();
 
-  const connectModal = page.locator('.modal').filter({ hasText: 'Connect to SuperBased' });
   await expect(connectModal).toBeVisible();
   await connectModal.locator('.connect-host-row').first().click();
 
@@ -72,6 +85,7 @@ async function createWorkspace(page, workspaceName) {
 
 async function openWorkspaceSettings(page) {
   await page.locator('.sidebar-nav li').filter({ hasText: 'Settings' }).click();
+  await page.locator('.settings-tabs').getByRole('button', { name: 'Workspace', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
 }
 

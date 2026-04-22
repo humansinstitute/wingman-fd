@@ -856,6 +856,8 @@ export const flowsManagerMixin = {
 
   async startChatThreadFlowDispatch({
     flowId,
+    resolvedScopeId = undefined,
+    scopeSource = null,
     resolvedScopeAssignment = null,
     kickoffDescription = '',
   } = {}) {
@@ -867,6 +869,14 @@ export const flowsManagerMixin = {
     const now = new Date().toISOString();
     const ownerNpub = this.workspaceOwnerNpub;
     const dispatchBotNpub = resolveFlowKickoffAssignee(this.defaultAgentNpub, this.botNpub);
+    let scopeAssignment = resolvedScopeAssignment;
+    if (!scopeAssignment) {
+      if (scopeSource === 'none' || (scopeSource == null && resolvedScopeId === null)) {
+        scopeAssignment = buildStoredFlowKickoffScopeAssignment(null);
+      } else {
+        scopeAssignment = buildStoredFlowKickoffScopeAssignment(flow);
+      }
+    }
     const task = buildFlowKickoffTaskRecord({
       taskId,
       ownerNpub,
@@ -874,7 +884,7 @@ export const flowsManagerMixin = {
       description: String(kickoffDescription || '').trim(),
       createdAt: now,
       assignedToNpub: dispatchBotNpub,
-      scopeAssignment: resolvedScopeAssignment || buildStoredFlowKickoffScopeAssignment(flow),
+      scopeAssignment,
     });
 
     await upsertTask(task);

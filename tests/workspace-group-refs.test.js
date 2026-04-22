@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getWorkspaceAdminGroupNpub,
+  getWorkspaceAdminGroupRef,
   getPrivateGroupNpub,
   getPrivateGroupRef,
   getWorkspaceSettingsGroupNpub,
@@ -30,6 +32,17 @@ describe('workspace group refs', () => {
   it('preserves stable refs for board and assignment helpers', () => {
     expect(getPrivateGroupRef({ memberPrivateGroup, currentWorkspace })).toBe('f2d2f1d9-9b27-4694-b6ef-5ab4d66fa9d7');
     expect(getWorkspaceSettingsGroupRef({ memberPrivateGroup, currentWorkspace })).toBe('99f9a29d-60ba-458e-adea-d27555e53be1');
+  });
+
+  it('resolves the protected admin group without falling back to shared groups', () => {
+    expect(getWorkspaceAdminGroupNpub({ currentWorkspace })).toBe('npub1workspace_admin');
+    expect(getWorkspaceAdminGroupRef({ currentWorkspace })).toBe('99f9a29d-60ba-458e-adea-d27555e53be1');
+    expect(getWorkspaceAdminGroupNpub({
+      currentWorkspace: { defaultGroupNpub: currentWorkspace.defaultGroupNpub },
+    })).toBeNull();
+    expect(getWorkspaceAdminGroupRef({
+      currentWorkspace: { defaultGroupId: currentWorkspace.defaultGroupId },
+    })).toBeNull();
   });
 
   it('falls back to ids when only ids are available', () => {

@@ -236,6 +236,9 @@ export const channelsManagerMixin = {
       this.validateSelectedBoardId();
       this.normalizeTaskFilterTags();
       if (typeof this.normalizeSettingsTab === 'function') this.normalizeSettingsTab();
+      if (typeof this.refreshAgentChatTriggerDiagnostics === 'function') {
+        this.refreshAgentChatTriggerDiagnostics().catch(() => {});
+      }
       return this.groups;
     } catch (error) {
       flightDeckLog('error', 'groups', 'refreshGroups failed', {
@@ -402,6 +405,7 @@ export const channelsManagerMixin = {
     if (nextSelectedChannelId !== this.selectedChannelId) {
       this.selectedChannelId = nextSelectedChannelId;
       this.mainFeedVisibleCount = this.MAIN_FEED_PAGE_SIZE;
+      this.chatFeedNearTop = false;
       this.expandedChatMessageIds = [];
       this.truncatedChatMessageIds = [];
       this.closeThread({ syncRoute: false });
@@ -420,6 +424,7 @@ export const channelsManagerMixin = {
   async selectChannel(recordId, options = {}) {
     this.selectedChannelId = recordId;
     this.mainFeedVisibleCount = this.MAIN_FEED_PAGE_SIZE;
+    this.chatFeedNearTop = false;
     this.expandedChatMessageIds = [];
     this.truncatedChatMessageIds = [];
     this.closeThread({ syncRoute: false });
@@ -427,8 +432,11 @@ export const channelsManagerMixin = {
     this.startSelectedChannelLiveQuery();
     if (options.syncRoute !== false) this.syncRoute();
     this.ensureBackgroundSync(true);
+    const selectedChannelUnreadCutoff = await this.captureSelectedChannelUnreadSnapshot(recordId);
+    this.selectedChannelUnreadChannelId = recordId || null;
+    this.selectedChannelUnreadCutoff = selectedChannelUnreadCutoff || null;
     // Mark this channel (and the chat section) as read
-    this.markChannelRead(recordId);
+    await this.markChannelRead(recordId);
   },
 
   // --- group modals ---
@@ -857,6 +865,8 @@ export const channelsManagerMixin = {
       const token = workspace?.connectionToken || buildSuperBasedConnectionToken({
         directHttpsUrl: this.backendUrl,
         serviceNpub: workspace?.serviceNpub || this.connectHostServiceNpub || '',
+        towerName: workspace?.towerName || this.superbasedConnectionConfig?.towerName || '',
+        towerDescription: workspace?.towerDescription || this.superbasedConnectionConfig?.towerDescription || '',
         workspaceOwnerNpub: this.workspaceOwnerNpub,
         appNpub: workspace?.appNpub || APP_NPUB,
       });

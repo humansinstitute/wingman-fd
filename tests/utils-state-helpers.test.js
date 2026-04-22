@@ -3,6 +3,7 @@ import {
   toRaw,
   normalizeBackendUrl,
   workspaceSettingsRecordId,
+  agentChatTriggerRecordId,
   storageObjectIdFromRef,
   storageImageCacheKey,
   defaultRecordSignature,
@@ -65,6 +66,12 @@ describe('normalizeBackendUrl', () => {
 describe('workspaceSettingsRecordId', () => {
   it('builds prefixed record id', () => {
     expect(workspaceSettingsRecordId('npub1abc')).toBe('workspace-settings:npub1abc');
+  });
+});
+
+describe('agentChatTriggerRecordId', () => {
+  it('builds prefixed record id', () => {
+    expect(agentChatTriggerRecordId('npub1abc')).toBe('agent-chat-trigger:npub1abc');
   });
 });
 

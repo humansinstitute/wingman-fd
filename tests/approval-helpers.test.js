@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveArtifactRef } from '../src/approval-helpers.js';
+import { normalizeArtifactRef, resolveArtifactRef } from '../src/approval-helpers.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -24,6 +24,14 @@ const documents = [
 // ---------------------------------------------------------------------------
 
 describe('resolveArtifactRef', () => {
+  it('normalizes alternate artifact ref field names', () => {
+    const result = normalizeArtifactRef({ id: DOC_UUID, type: 'doc', label: 'API spec draft' });
+    expect(result.record_id).toBe(DOC_UUID);
+    expect(result.type).toBe('document');
+    expect(result.title).toBe('API spec draft');
+    expect(result.artifact_key).toBe(`document:${DOC_UUID}`);
+  });
+
   it('resolves a task artifact ref with title', () => {
     const ref = { record_id: TASK_UUID_1, record_family_hash: 'npub1abc:task' };
     const result = resolveArtifactRef(ref, tasks, documents);
@@ -60,6 +68,24 @@ describe('resolveArtifactRef', () => {
     const result = resolveArtifactRef(ref, tasks, documents);
     expect(result.type).toBe('unknown');
     expect(result.resolved).toBe(false);
+  });
+
+  it('resolves document refs from alternate id/type fields', () => {
+    const ref = { id: DOC_UUID, type: 'doc' };
+    const result = resolveArtifactRef(ref, tasks, documents);
+    expect(result.record_id).toBe(DOC_UUID);
+    expect(result.type).toBe('document');
+    expect(result.title).toBe('API spec');
+    expect(result.resolved).toBe(true);
+  });
+
+  it('infers task type from record lookup when family metadata is missing', () => {
+    const ref = { id: TASK_UUID_2 };
+    const result = resolveArtifactRef(ref, tasks, documents);
+    expect(result.record_id).toBe(TASK_UUID_2);
+    expect(result.type).toBe('task');
+    expect(result.title).toBe('Write tests');
+    expect(result.resolved).toBe(true);
   });
 
   it('preserves original ref fields', () => {

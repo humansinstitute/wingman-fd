@@ -60,6 +60,18 @@ export function pickEffectiveReadUntil(navReadUntil = null, itemReadUntil = null
   return navReadUntil || null;
 }
 
+export function isMessageUnreadAtCutoff(message, cutoff, options = {}) {
+  if (!message || !cutoff) return false;
+  if ((message.record_state || 'active') === 'deleted') return false;
+  const selectedChannelId = String(options.channelId || '').trim();
+  if (selectedChannelId && message.channel_id !== selectedChannelId) return false;
+  const viewerNpub = String(options.viewerNpub || '').trim();
+  if (viewerNpub && message.sender_npub === viewerNpub) return false;
+  const updatedAt = String(message.updated_at || '').trim();
+  if (!updatedAt) return false;
+  return updatedAt > cutoff;
+}
+
 // ---------------------------------------------------------------------------
 // Pure helpers (testable without Alpine/Dexie)
 // ---------------------------------------------------------------------------
@@ -142,6 +154,23 @@ export const unreadStoreMixin = {
   get unreadChat() { return this._unreadChat; },
   get unreadTasks() { return this._unreadTasks; },
   get unreadDocs() { return this._unreadDocs; },
+
+  async captureSelectedChannelUnreadSnapshot(channelId) {
+    const viewerNpub = this.session?.npub;
+    if (!viewerNpub || !channelId) return null;
+    const cursorMap = await loadUnreadCursorMap(viewerNpub);
+    return pickEffectiveReadUntil(
+      cursorMap.chat_nav || cursorMap['chat:nav'] || null,
+      cursorMap[`chat:channel:${channelId}`] || null,
+    );
+  },
+
+  isMessageUnread(message) {
+    return isMessageUnreadAtCutoff(message, this.selectedChannelUnreadCutoff, {
+      channelId: this.selectedChannelUnreadChannelId,
+      viewerNpub: this.session?.npub,
+    });
+  },
 
   isChannelUnread(channelId) {
     return this._unreadChannels[channelId] === true;

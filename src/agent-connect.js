@@ -26,6 +26,8 @@ export function buildAgentConnectPackage({
   backendUrl = '',
   session = null,
   token = '',
+  towerName = '',
+  towerDescription = '',
 } = {}) {
   const origin = trimUrl(windowOrigin);
   const currentBackendUrl = trimUrl(backendUrl || DEFAULT_SUPERBASED_URL);
@@ -35,10 +37,12 @@ export function buildAgentConnectPackage({
   const serviceNpub = parsed.serviceNpub || '';
   const relayUrls = parsed.relayUrls || [];
   const effectiveToken = token && parsed.isValid
-    ? token
-    : buildSuperBasedConnectionToken({
+      ? token
+      : buildSuperBasedConnectionToken({
         directHttpsUrl: currentBackendUrl,
         serviceNpub,
+        towerName: parsed.towerName || towerName,
+        towerDescription: parsed.towerDescription || towerDescription,
         workspaceOwnerNpub,
         appNpub,
         relayUrls,

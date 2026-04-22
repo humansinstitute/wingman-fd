@@ -12,11 +12,12 @@
  *   internal-low-risk    – safe to rename with a coordinated code change
  */
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
-const ROOT = resolve(import.meta.dir, '..');
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // ---------------------------------------------------------------------------
 // Helper: read a source file and return all lines matching a pattern

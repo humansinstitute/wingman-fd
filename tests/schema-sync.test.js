@@ -17,12 +17,14 @@ vi.mock('../src/translators/record-crypto.js', () => ({
 import { APP_NPUB } from '../src/app-identity.js';
 import { SYNC_FAMILY_OPTIONS } from '../src/sync-families.js';
 import { outboundApproval } from '../src/translators/approvals.js';
+import { outboundAgentChatTrigger } from '../src/translators/agent-chat-trigger.js';
 import { outboundAudioNote } from '../src/translators/audio-notes.js';
 import { outboundChannel, outboundChatMessage } from '../src/translators/chat.js';
 import { outboundComment } from '../src/translators/comments.js';
 import { outboundDirectory, outboundDocument } from '../src/translators/docs.js';
 import { outboundFlow } from '../src/translators/flows.js';
 import { outboundOrganisation } from '../src/translators/organisations.js';
+import { outboundOpportunity } from '../src/translators/opportunities.js';
 import { outboundPerson } from '../src/translators/persons.js';
 import { outboundReport } from '../src/translators/reports.js';
 import { outboundSchedule } from '../src/translators/schedules.js';
@@ -35,6 +37,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const schemaDir = path.resolve(__dirname, '../../sb-publisher/schemas/flightdeck');
 
 const expectedFamilies = [
+  'agent_chat_trigger',
   'approval',
   'audio_note',
   'channel',
@@ -43,6 +46,7 @@ const expectedFamilies = [
   'directory',
   'document',
   'flow',
+  'opportunity',
   'organisation',
   'person',
   'report',
@@ -79,6 +83,16 @@ describe('published Flight Deck schema manifests', () => {
 
   it('validate real outbound Flight Deck payloads', async () => {
     const payloads = {
+      agent_chat_trigger: JSON.parse((await outboundAgentChatTrigger({
+        record_id: 'agent-chat-trigger:npub_owner',
+        owner_npub: 'npub_owner',
+        workspace_owner_npub: 'npub_owner',
+        enabled: true,
+        target_group_id: 'group-1',
+        target_group_npub: 'npub1group',
+        group_ids: ['group-1'],
+        updated_at: '2026-04-08T00:00:00.000Z',
+      })).owner_payload.ciphertext),
       approval: JSON.parse((await outboundApproval({
         record_id: 'approval-1',
         owner_npub: 'npub_owner',
@@ -178,6 +192,31 @@ describe('published Flight Deck schema manifests', () => {
         positioning: 'Market leader',
         contacts: [{ type: 'email', value: 'info@acme.test' }],
         person_links: ['person-1'],
+        scope_id: 'product-1',
+        scope_l1_id: 'product-1',
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        shares: [],
+        group_ids: ['group-1'],
+      })).owner_payload.ciphertext),
+      opportunity: JSON.parse((await outboundOpportunity({
+        record_id: 'opportunity-1',
+        owner_npub: 'npub_owner',
+        title: 'Capability statement pilot',
+        description: 'Explore a pilot for compliance onboarding automation.',
+        stage: 'qualified',
+        opportunity_type: 'automation',
+        responsible_npub: 'npub1seller',
+        person_links: [{ person_id: 'person-1', primary: true }],
+        organisation_links: [{ organisation_id: 'org-1', primary: true }],
+        task_links: [{ task_id: 'task-1', primary: true }],
+        expected_value: 25000,
+        currency: 'AUD',
+        expected_close_at: '2026-06-30',
+        source: 'wealth funds',
+        origin_opportunity_id: null,
         scope_id: 'product-1',
         scope_l1_id: 'product-1',
         scope_l2_id: null,

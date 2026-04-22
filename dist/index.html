@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-MRMzaNp9.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-C6L1pGW2.css">
+  <script type="module" crossorigin src="/assets/index-C4SPKu8l.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DnRrAchU.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -287,9 +287,10 @@
             <p>Choose a host or enter a custom URL.</p>
             <div class="connect-hosts-list">
               <template x-for="host in $store.chat.mergedHostsList" :key="host.url">
-                <button type="button" class="connect-host-row" @click="$store.chat.connectToHost(host.url, host.label)" :disabled="$store.chat.connectHostBusy">
-                  <span class="connect-host-label" x-text="host.label"></span>
+                <button type="button" class="connect-host-row" @click="$store.chat.connectToHost(host.url, host.towerName || host.label || host.url)" :disabled="$store.chat.connectHostBusy">
+                  <span class="connect-host-label" x-text="host.towerName || host.label || host.url"></span>
                   <span class="connect-host-url" x-text="host.url"></span>
+                  <span class="connect-host-description" x-show="host.towerDescription" x-text="host.towerDescription"></span>
                 </button>
               </template>
             </div>
@@ -312,9 +313,10 @@
           <div>
             <h2>Select Workspace</h2>
             <p>
-              Connected to <strong x-text="$store.chat.connectHostLabel || $store.chat.connectHostUrl"></strong>
+              Connected to <strong x-text="$store.chat.connectHostTowerName || $store.chat.connectHostLabel || $store.chat.connectHostUrl"></strong>
               <button type="button" class="connect-back-link" @click="$store.chat.connectGoBack()">Change</button>
             </p>
+            <p class="connect-host-description" x-show="$store.chat.connectHostTowerDescription" x-text="$store.chat.connectHostTowerDescription"></p>
             <p class="connect-workspace-loading" x-show="$store.chat.connectWorkspacesBusy">Loading workspaces...</p>
             <div class="connect-workspace-list" x-show="$store.chat.connectWorkspaces.length > 0 && !$store.chat.connectWorkspacesBusy">
               <template x-for="ws in $store.chat.connectWorkspaces" :key="ws.workspace_owner_npub || ws.workspaceOwnerNpub">
@@ -413,6 +415,15 @@
             </span>
             <span class="sidebar-label">Flight Deck</span>
           </li>
+          <li :class="{ active: $store.chat.navSection === 'live' }" @click="$store.chat.navigateTo('live')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="12" r="7"></circle>
+                <path d="M12 8v4l3 2"></path>
+              </svg>
+            </span>
+            <span class="sidebar-label">Live</span>
+          </li>
           <li :class="{ active: $store.chat.navSection === 'chat' }" @click="$store.chat.navigateTo('chat')" class="sidebar-chat-row">
             <span class="sidebar-icon" aria-hidden="true">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -452,6 +463,16 @@
             </span>
             <span class="sidebar-label">Tasks</span>
             <span class="unread-dot" x-show="$store.chat.unreadTasks" x-cloak></span>
+          </li>
+          <li :class="{ active: $store.chat.navSection === 'opportunities' }" @click="$store.chat.navigateTo('opportunities')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="12" r="8"></circle>
+                <circle cx="12" cy="12" r="4"></circle>
+                <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle>
+              </svg>
+            </span>
+            <span class="sidebar-label">Opportunities</span>
           </li>
           <li :class="{ active: $store.chat.navSection === 'calendar' }" @click="$store.chat.navigateTo('calendar')">
             <span class="sidebar-icon" aria-hidden="true">
@@ -1490,7 +1511,15 @@
                             @click="if (!pred.missing_predecessor) $store.chat.openTaskDetail(pred.record_id)"
                             :disabled="pred.missing_predecessor"
                           >
-                            <span class="task-predecessor-title" x-text="pred.title || pred.record_id"></span>
+                            <span class="task-predecessor-heading">
+                              <span class="task-predecessor-title" x-text="pred.title || pred.record_id"></span>
+                              <span
+                                class="badge task-predecessor-state"
+                                x-show="pred.state"
+                                :class="`state-${pred.state}`"
+                                x-text="$store.chat.formatState(pred.state)"
+                              ></span>
+                            </span>
                             <span class="task-predecessor-meta" x-text="$store.chat.getPredecessorTaskScopeMeta(pred)"></span>
                           </button>
                           <button type="button" class="task-inline-clear-btn" @click.stop="$store.chat.removeEditingTaskPredecessor(pred.record_id)">Remove</button>
@@ -1532,19 +1561,61 @@
                   </div>
 
                   <!-- Flow linkage -->
-                  <div class="task-field task-field-wide" x-data="{ get flowInfo() { return $store.chat.getEditingTaskFlowInfo(); } }">
+                  <div class="task-field task-field-wide" x-data="{ flowExpanded: false, get flowInfo() { return $store.chat.getEditingTaskFlowInfo(); } }">
                     <label class="task-field-label">Flow</label>
                     <template x-if="flowInfo">
-                      <div class="task-flow-linkage">
-                        <span class="task-flow-badge" :class="flowInfo.isActiveRun ? 'task-flow-active-run' : 'task-flow-reference'">
-                          <span class="task-flow-badge-icon" x-text="flowInfo.isActiveRun ? '▶' : '🔗'"></span>
-                          <span class="task-flow-badge-label" x-text="flowInfo.flowTitle || flowInfo.flowId.slice(0, 8)"></span>
-                          <template x-if="flowInfo.isActiveRun && flowInfo.flowStep">
-                            <span class="task-flow-step-label" x-text="'Step ' + flowInfo.flowStep"></span>
+                      <div class="task-flow-linkage-wrap">
+                        <div class="task-flow-linkage">
+                          <button
+                            type="button"
+                            class="task-flow-summary-btn"
+                            :class="{ 'task-flow-summary-btn-expandable': (flowInfo.steps || []).length > 0 }"
+                            :disabled="(flowInfo.steps || []).length === 0"
+                            @click="flowExpanded = !flowExpanded"
+                            :aria-expanded="flowExpanded ? 'true' : 'false'"
+                          >
+                            <span class="task-flow-badge" :class="flowInfo.isActiveRun ? 'task-flow-active-run' : 'task-flow-reference'">
+                              <span class="task-flow-badge-icon" x-text="flowInfo.isActiveRun ? '▶' : '🔗'"></span>
+                              <span class="task-flow-badge-label" x-text="flowInfo.flowTitle || flowInfo.flowId.slice(0, 8)"></span>
+                              <template x-if="flowInfo.isActiveRun && flowInfo.flowStep">
+                                <span class="task-flow-step-label" x-text="'Step ' + flowInfo.flowStep"></span>
+                              </template>
+                              <span class="task-flow-state-label" x-text="flowInfo.isActiveRun ? 'Active run' : 'Reference'"></span>
+                            </span>
+                            <span
+                              class="task-flow-toggle-btn"
+                              x-show="(flowInfo.steps || []).length > 0"
+                              x-text="flowExpanded ? 'Hide steps' : 'Show steps'"
+                            ></span>
+                          </button>
+                          <div class="task-flow-actions">
+                            <button type="button" class="task-inline-clear-btn" @click="$store.chat.detachFlowFromEditingTask()" title="Detach flow">x</button>
+                          </div>
+                        </div>
+                        <div class="task-flow-step-list" x-show="flowExpanded && (flowInfo.steps || []).length > 0" x-cloak x-transition>
+                          <template x-for="step in flowInfo.steps" :key="step.step_number">
+                            <button
+                              type="button"
+                              class="task-flow-step-row"
+                              :class="{ 'task-flow-step-row-current': flowInfo.isActiveRun && Number(flowInfo.flowStep) === Number(step.step_number) }"
+                              :disabled="!flowInfo.isActiveRun || !$store.chat.findEditingTaskFlowRunStepTask(flowInfo.flowRunId, step.step_number)"
+                              @click="$store.chat.openEditingTaskFlowRunStepTask(flowInfo.flowRunId, step.step_number)"
+                            >
+                              <span class="flow-step-chip task-flow-step-chip" :class="'flow-step-type-' + (step.type || 'job_dispatch')">
+                                <span x-text="step.step_number"></span>
+                                <span x-text="step.title || (step.type === 'approval' ? 'Approval step' : 'Dispatch step')"></span>
+                              </span>
+                              <span class="task-flow-step-copy">
+                                <span class="task-flow-step-kind" x-text="step.type === 'approval' ? 'Approval' : 'Dispatch'"></span>
+                                <span class="task-flow-step-description" x-text="step.type === 'approval' ? (step.description || step.brief_template || 'No brief') : (step.instruction || 'No instruction')"></span>
+                              </span>
+                              <span
+                                class="task-flow-step-current"
+                                x-show="flowInfo.isActiveRun && Number(flowInfo.flowStep) === Number(step.step_number)"
+                              >Current</span>
+                            </button>
                           </template>
-                          <span class="task-flow-state-label" x-text="flowInfo.isActiveRun ? 'Active run' : 'Reference'"></span>
-                        </span>
-                        <button type="button" class="task-inline-clear-btn" @click="$store.chat.detachFlowFromEditingTask()" title="Detach flow">x</button>
+                        </div>
                       </div>
                     </template>
                     <template x-if="!flowInfo">
@@ -1716,6 +1787,67 @@
           </div>
         </template>
 
+        <template x-if="$store.chat.navSection === 'live'">
+          <div class="live-session-layout-desktop live-session-layout-mobile">
+            <section class="live-session-panel">
+              <header class="live-session-header">
+                <h2>Live</h2>
+                <button type="button" @click="$store.chat.openLiveDrawer()">Session Drawer</button>
+              </header>
+            </section>
+
+            <div
+              class="live-session-drawer-backdrop"
+              x-show="$store.chat.liveDrawerOpen"
+              x-cloak
+              @click="$store.chat.closeLiveDrawer()"
+            ></div>
+
+            <aside class="live-session-drawer" x-show="$store.chat.liveDrawerOpen" x-cloak>
+              <header class="live-session-drawer-header">
+                <h3>Session Metadata</h3>
+                <button type="button" @click="$store.chat.closeLiveDrawer()">Close</button>
+              </header>
+
+              <label class="live-session-field">
+                <span>Goal</span>
+                <input class="live-session-goal-input" type="text" x-model="$store.chat.liveSessionGoalDraft" />
+              </label>
+
+              <label class="live-session-field">
+                <span>Next action</span>
+                <input class="live-session-next-action-input" type="text" x-model="$store.chat.liveSessionNextActionDraft" />
+              </label>
+
+              <button type="button" @click="$store.chat.toggleLiveNightWatch()">Toggle Night Watch</button>
+
+              <section class="live-related-records">
+                <h4>Related Records</h4>
+                <p>Tasks, flows, and session bindings appear here.</p>
+              </section>
+
+              <section>
+                <h4>Night Watch history</h4>
+                <button
+                  type="button"
+                  class="live-nightwatch-history-row"
+                  @click="$store.chat.openLiveNightWatchReportModal($store.chat.liveSelectedNightWatchReportId || 'latest')"
+                >
+                  Open latest report
+                </button>
+              </section>
+            </aside>
+
+            <div class="live-nightwatch-report-modal" x-show="$store.chat.liveNightWatchReportModalOpen" x-cloak>
+              <div class="doc-modal-card">
+                <button type="button" class="modal-close" @click="$store.chat.closeLiveNightWatchReportModal()">&times;</button>
+                <h3>Night Watch Report</h3>
+                <p x-text="$store.chat.liveSelectedNightWatchReportId || 'No report selected'"></p>
+              </div>
+            </div>
+          </div>
+        </template>
+
         <template x-if="$store.chat.navSection === 'chat'">
           <div class="chat-section">
           <div class="chat-channel-header" x-show="$store.chat.selectedChannelId">
@@ -1738,7 +1870,7 @@
 
           <div class="chat-layout" :class="{ 'chat-layout-thread-full': $store.chat.activeThreadId && $store.chat.threadSize === 'full', 'chat-layout-thread-open': !!$store.chat.activeThreadId }">
             <div class="chat-main">
-              <div class="chat-feed" data-chat-feed>
+              <div class="chat-feed" data-chat-feed @scroll.passive="$store.chat.updateChatFeedLoadMoreVisibility($event.target)">
                 <template x-if="!$store.chat.selectedChannelId">
                   <div class="chat-empty">Select or create a channel to start chatting.</div>
                 </template>
@@ -1750,13 +1882,13 @@
                 <button
                   type="button"
                   class="thread-load-more-btn"
-                  x-show="$store.chat.hasMoreMainFeedMessages"
+                  x-show="$store.chat.showMainFeedLoadMoreControl"
                   @click="$store.chat.showMoreMainFeedMessages()"
                   x-text="`Show ${Math.min($store.chat.hiddenMainFeedCount, $store.chat.MAIN_FEED_PAGE_SIZE)} older message${Math.min($store.chat.hiddenMainFeedCount, $store.chat.MAIN_FEED_PAGE_SIZE) === 1 ? '' : 's'}`"
                 ></button>
 
-                <template x-for="msg in $store.chat.visibleMainFeedMessages" :key="msg.record_id">
-                  <div class="chat-post" :class="{ 'chat-post-focused': $store.chat.isFocusedMessage(msg.record_id) }" :data-message-id="msg.record_id">
+                <template x-for="(msg, index) in $store.chat.visibleMainFeedMessages" :key="msg.record_id">
+                  <div class="chat-post" :class="{ 'chat-post-focused': $store.chat.isFocusedMessage(msg.record_id), 'chat-post-unread': $store.chat.isMessageUnread(msg), 'chat-post-divider': index > 0 }" :data-message-id="msg.record_id">
                     <div class="chat-msg-actions-menu" @click.outside="$store.chat.isMessageActionsMenuOpen(msg.record_id) && $store.chat.closeMessageActionsMenu()">
                       <button type="button" class="chat-msg-actions-toggle" title="Message actions" aria-label="Message actions" @click.stop="$store.chat.toggleMessageActionsMenu(msg.record_id)">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -1766,6 +1898,7 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen(msg.record_id)" x-cloak x-transition>
+                        <button type="button" @click="$store.chat.openChatThreadFlowDispatch(msg.record_id, 'main_feed')">Dispatch to flow</button>
                         <button type="button" @click="$store.chat.inspectMessageSyncStatus(msg.record_id)">Check sync status</button>
                       </div>
                     </div>
@@ -1858,7 +1991,9 @@
 
             <div class="chat-thread-panel" x-show="$store.chat.activeThreadId" x-transition :class="'thread-' + $store.chat.threadSize">
               <div class="thread-header">
-                <h3>Thread</h3>
+                <div class="thread-header-copy">
+                  <h3>Thread</h3>
+                </div>
                 <div class="thread-header-actions">
                   <button class="thread-delete-btn" @click="$store.chat.deleteActiveThread()" type="button" title="Delete thread">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
@@ -1892,6 +2027,7 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen($store.chat.getThreadParentMessage()?.record_id)" x-cloak x-transition>
+                        <button type="button" @click="$store.chat.openChatThreadFlowDispatch($store.chat.getThreadParentMessage()?.record_id, 'thread_parent')">Dispatch to flow</button>
                         <button type="button" @click="$store.chat.inspectMessageSyncStatus($store.chat.getThreadParentMessage()?.record_id)">Check sync status</button>
                       </div>
                     </div>
@@ -1943,6 +2079,7 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen(reply.record_id)" x-cloak x-transition>
+                        <button type="button" @click="$store.chat.openChatThreadFlowDispatch(reply.record_id, 'thread_reply')">Dispatch to flow</button>
                         <button type="button" @click="$store.chat.inspectMessageSyncStatus(reply.record_id)">Check sync status</button>
                       </div>
                     </div>
@@ -3938,7 +4075,7 @@
                     <p class="flow-card-description" x-text="(flow.description || '').slice(0, 120)"></p>
                     <div class="flow-card-steps">
                       <template x-for="step in (flow.steps || []).slice(0, 5)" :key="step.step_number">
-                        <span class="flow-step-chip" :class="'flow-step-type-' + (step.type || (step.approval_mode === 'auto' ? 'job_dispatch' : (step.approval_mode ? 'approval' : 'job_dispatch')))">
+                        <span class="flow-step-chip" :class="'flow-step-type-' + (step.type || 'job_dispatch')">
                           <span x-text="step.step_number"></span>
                           <span x-text="step.title"></span>
                         </span>
@@ -3982,8 +4119,15 @@
                   this.formTitle = f.title || '';
                   this.formDescription = f.description || '';
                   this.formSteps = JSON.parse(JSON.stringify(f.steps || []));
+                  for (const step of this.formSteps) {
+                    for (const approver of (step?.whitelist_approvers || [])) {
+                      if (String(approver || '').startsWith('npub1')) {
+                        $store.chat.resolveChatProfile(approver);
+                      }
+                    }
+                  }
                   this.formNextFlowId = f.next_flow_id || null;
-                  this.formScopeId = f.scope_id || $store.chat.selectedBoardId || null;
+                  this.formScopeId = f.scope_id || $store.chat.normalizeStoredFlowScopeId($store.chat.selectedBoardId);
                   this.flowScopeQuery = '';
                   this.showFlowScopePicker = false;
                 },
@@ -4025,8 +4169,7 @@
                   } else {
                     this.formSteps.push({
                       step_number: n, title: '', type: 'job_dispatch',
-                      job_type: '', goals: '', manager_guidance: '',
-                      worker_guidance: '', directory_override: '', artifacts_expected: [],
+                      instruction: '', artifacts_expected: [],
                     });
                   }
                 },
@@ -4036,18 +4179,15 @@
                   if (newType === 'approval') {
                     this.formSteps[idx] = {
                       step_number: n, title: old.title || '', type: 'approval',
-                      description: old.goals || old.instruction || '', brief_template: '',
+                      description: old.description || old.instruction || '', brief_template: '',
                       approver_mode: old.approver_mode || 'manual',
-                      whitelist_approvers: old.whitelist_approvers || null,
+                      whitelist_approvers: old.whitelist_approvers || old.approver_whitelist || null,
                       artifacts_expected: old.artifacts_expected || [],
                     };
                   } else {
                     this.formSteps[idx] = {
                       step_number: n, title: old.title || '', type: 'job_dispatch',
-                      job_type: old.job_type || '', goals: old.description || old.instruction || '',
-                      manager_guidance: old.manager_guidance || '',
-                      worker_guidance: old.worker_guidance || '',
-                      directory_override: old.directory_override || '',
+                      instruction: old.instruction || old.description || '',
                       artifacts_expected: old.artifacts_expected || [],
                     };
                   }
@@ -4057,7 +4197,7 @@
                   this.formSteps.forEach((s, i) => s.step_number = i + 1);
                 },
                 async save() {
-                  const effectiveScopeId = this.formScopeId || $store.chat.selectedBoardId || null;
+                  const effectiveScopeId = this.formScopeId || $store.chat.normalizeStoredFlowScopeId($store.chat.selectedBoardId);
                   const scopeObj = effectiveScopeId ? $store.chat.buildScopeAssignment(effectiveScopeId) : {
                     scope_id: null, scope_l1_id: null, scope_l2_id: null,
                     scope_l3_id: null, scope_l4_id: null, scope_l5_id: null,
@@ -4127,7 +4267,7 @@
                         <span class="flow-step-number" x-text="step.step_number"></span>
                         <input type="text" x-model="step.title" placeholder="Step title" class="flow-step-title-input" />
                         <select :value="step.type || 'job_dispatch'" @change="changeStepType(idx, $event.target.value)" class="flow-step-type-select">
-                          <option value="job_dispatch">Job Dispatch</option>
+                          <option value="job_dispatch">Work Step</option>
                           <option value="approval">Approval</option>
                         </select>
                         <button type="button" class="btn-small btn-danger" @click="removeStep(idx)">x</button>
@@ -4136,23 +4276,11 @@
                       <!-- Job Dispatch fields -->
                       <template x-if="(step.type || 'job_dispatch') === 'job_dispatch'">
                         <div class="flow-step-fields">
-                          <label class="flow-step-field-label">Job Type
-                            <input type="text" x-model="step.job_type" placeholder="e.g. research, outreach, code" class="flow-step-field-input" />
-                          </label>
-                          <label class="flow-step-field-label">Goals / Prompt
-                            <textarea x-model="step.goals" rows="2" placeholder="What should this job accomplish?" class="flow-step-field-textarea"
+                          <label class="flow-step-field-label">Instruction
+                            <textarea x-model="step.instruction" rows="3" placeholder="What should this step accomplish?" class="flow-step-field-textarea"
                               @input="$store.chat.handleMentionInput($event.target)"
                               @keydown="$store.chat.handleMentionKeydown($event)"
                             ></textarea>
-                          </label>
-                          <label class="flow-step-field-label">Manager Guidance
-                            <textarea x-model="step.manager_guidance" rows="1" placeholder="Guidance for the manager agent (optional)" class="flow-step-field-textarea"></textarea>
-                          </label>
-                          <label class="flow-step-field-label">Worker Guidance
-                            <textarea x-model="step.worker_guidance" rows="1" placeholder="Guidance for worker agents (optional)" class="flow-step-field-textarea"></textarea>
-                          </label>
-                          <label class="flow-step-field-label">Directory Override
-                            <input type="text" x-model="step.directory_override" placeholder="/path/to/workdir (optional)" class="flow-step-field-input" />
                           </label>
                           <label class="flow-step-field-label">Expected Artifacts
                             <input type="text"
@@ -4180,11 +4308,96 @@
                             </select>
                           </label>
                           <label class="flow-step-field-label">Allowed Approvers
-                            <input type="text"
-                              :value="(step.whitelist_approvers || []).join(', ')"
-                              @change="step.whitelist_approvers = $event.target.value.trim() ? $event.target.value.split(',').map(s => s.trim()).filter(Boolean) : null"
-                              placeholder="e.g. npub1..., group:managers (comma-separated, blank = anyone)"
-                              class="flow-step-field-input" />
+                            <div class="flow-approver-picker" x-data="{
+                              approverQuery: '',
+                              approverIdx: 0,
+                              get approverSuggestions() {
+                                return $store.chat.findFlowApproverSuggestions(this.approverQuery, step.whitelist_approvers || []);
+                              },
+                              async chooseApprover(suggestion) {
+                                const added = await $store.chat.addFlowStepApprover(step, suggestion);
+                                if (added) {
+                                  this.approverQuery = '';
+                                  this.approverIdx = 0;
+                                }
+                              },
+                              async commitApproverQuery() {
+                                const suggestion = this.approverSuggestions[this.approverIdx] || this.approverSuggestions[0] || null;
+                                const added = await $store.chat.consumeFlowStepApproverQuery(step, this.approverQuery, suggestion);
+                                if (added) {
+                                  this.approverQuery = '';
+                                  this.approverIdx = 0;
+                                }
+                              }
+                            }" @click.outside="approverQuery = ''; approverIdx = 0">
+                              <div class="flow-approver-selected-list" x-show="(step.whitelist_approvers || []).length > 0">
+                                <template x-for="token in (step.whitelist_approvers || [])" :key="`flow-approver-${idx}-${token}`">
+                                  <div class="new-channel-resolved-profile flow-approver-selected">
+                                    <template x-if="token.startsWith('npub1') && $store.chat.getSenderAvatar(token)">
+                                      <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar(token)" />
+                                    </template>
+                                    <template x-if="token.startsWith('npub1') && !$store.chat.getSenderAvatar(token)">
+                                      <div class="new-channel-avatar new-channel-avatar-fallback" x-init="$store.chat.resolveChatProfile(token)" x-text="$store.chat.getInitials($store.chat.getFlowApproverLabel(token))"></div>
+                                    </template>
+                                    <template x-if="token.startsWith('group:')">
+                                      <span class="avatar-fallback flow-approver-group-avatar">G</span>
+                                    </template>
+                                    <div class="docs-share-suggestion-copy">
+                                      <span class="flow-approver-selected-title">
+                                        <span x-text="$store.chat.getFlowApproverLabel(token)"></span>
+                                        <span class="docs-share-badge" x-show="token.startsWith('group:')">Group</span>
+                                      </span>
+                                      <small x-text="$store.chat.getFlowApproverSubtitle(token)"></small>
+                                    </div>
+                                    <button type="button" class="task-inline-clear-btn" @click.stop="$store.chat.removeFlowStepApprover(step, token)">Remove</button>
+                                  </div>
+                                </template>
+                              </div>
+                              <input type="text"
+                                x-model="approverQuery"
+                                @input="approverIdx = 0; if (approverQuery.startsWith('npub1') && approverQuery.length >= 20) { $store.chat.resolveChatProfile(approverQuery) }"
+                                @keydown="
+                                  if ($event.key === 'ArrowDown' && approverSuggestions.length > 0) {
+                                    $event.preventDefault();
+                                    approverIdx = (approverIdx + 1) % approverSuggestions.length;
+                                  } else if ($event.key === 'ArrowUp' && approverSuggestions.length > 0) {
+                                    $event.preventDefault();
+                                    approverIdx = (approverIdx - 1 + approverSuggestions.length) % approverSuggestions.length;
+                                  } else if ($event.key === 'Enter' || $event.key === ',') {
+                                    $event.preventDefault();
+                                    commitApproverQuery();
+                                  } else if ($event.key === 'Escape') {
+                                    approverQuery = '';
+                                    approverIdx = 0;
+                                  }
+                                "
+                                placeholder="Type a name, npub, or group: token"
+                                class="flow-step-field-input" />
+                              <ul class="docs-share-suggestions flow-approver-suggestions" x-show="approverQuery && approverSuggestions.length > 0" x-cloak>
+                                <template x-for="(suggestion, suggestionIdx) in approverSuggestions" :key="suggestion.key">
+                                  <li>
+                                    <button type="button" class="docs-share-suggestion"
+                                      :class="{ 'flow-approver-suggestion-active': suggestionIdx === approverIdx }"
+                                      @mousedown.prevent="chooseApprover(suggestion)">
+                                      <template x-if="suggestion.type === 'person' && suggestion.avatarUrl">
+                                        <img class="new-channel-avatar" :src="suggestion.avatarUrl" />
+                                      </template>
+                                      <template x-if="suggestion.type === 'person' && !suggestion.avatarUrl">
+                                        <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(suggestion.label)"></div>
+                                      </template>
+                                      <template x-if="suggestion.type === 'group'">
+                                        <span class="avatar-fallback flow-approver-group-avatar">G</span>
+                                      </template>
+                                      <span class="docs-share-suggestion-copy">
+                                        <strong x-text="suggestion.label"></strong>
+                                        <small x-text="suggestion.subtitle"></small>
+                                      </span>
+                                      <span class="docs-share-badge" x-show="suggestion.type === 'group'">Group</span>
+                                    </button>
+                                  </li>
+                                </template>
+                              </ul>
+                            </div>
                           </label>
                           <label class="flow-step-field-label">Expected Artifacts
                             <input type="text"
@@ -4198,7 +4411,7 @@
                     </div>
                   </template>
                   <div class="flow-add-step-buttons">
-                    <button type="button" class="btn-add-step" @click="addStep('job_dispatch')">+ Job Dispatch</button>
+                    <button type="button" class="btn-add-step" @click="addStep('job_dispatch')">+ Work Step</button>
                     <button type="button" class="btn-add-step" @click="addStep('approval')">+ Approval Gate</button>
                   </div>
                 </div>
@@ -4222,7 +4435,7 @@
                       <span x-text="($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.title) || '(unnamed)'"></span>
                       <span class="flow-step-chip flow-start-confirm-type"
                         :class="'flow-step-type-' + (($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.type) || 'job_dispatch')"
-                        x-text="($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.type === 'approval') ? 'Approval' : 'Job Dispatch'"></span>
+                        x-text="($store.chat.flowStartTarget.steps && $store.chat.flowStartTarget.steps[0]?.type === 'approval') ? 'Approval' : 'Work Step'"></span>
                     </div>
                     <div class="flow-start-context-field">
                       <label class="task-field-label">Run context <span class="flow-start-context-hint">(optional — added to first task)</span></label>
@@ -4250,6 +4463,179 @@
               </div>
             </div>
 
+            <div
+              class="flow-start-confirm-overlay"
+              x-show="$store.chat.showChatThreadFlowDispatchModal"
+              x-transition.opacity
+              @click.self="$store.chat.closeChatThreadFlowDispatch()"
+              x-cloak
+            >
+              <div class="flow-start-confirm-panel chat-thread-flow-dispatch-panel" data-testid="chat-thread-flow-dispatch-modal">
+                <div class="chat-thread-flow-dispatch-header">
+                  <div>
+                    <h3>Dispatch Chat Thread To Flow</h3>
+                    <p>Promote the canonical thread into a normal kickoff task for Wingmen flow dispatch.</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="modal-close"
+                    aria-label="Close dispatch to flow dialog"
+                    @click="$store.chat.closeChatThreadFlowDispatch()"
+                  >&times;</button>
+                </div>
+
+                <div class="chat-thread-flow-dispatch-body">
+                  <template x-if="$store.chat.chatThreadFlowDispatchLoading">
+                    <p class="chat-thread-flow-dispatch-status" aria-live="polite">Resolving canonical thread…</p>
+                  </template>
+
+                  <template x-if="!$store.chat.chatThreadFlowDispatchLoading">
+                    <div class="chat-thread-flow-dispatch-content">
+                      <div class="chat-thread-flow-dispatch-grid">
+                        <label class="chat-thread-flow-dispatch-field">
+                          <span class="task-field-label">Flow</span>
+                          <select
+                            x-model="$store.chat.chatThreadFlowDispatchSelectedFlowId"
+                            @change="$store.chat.chatThreadFlowDispatchSelectedFlowId = $event.target.value || null; $store.chat.handleChatThreadFlowDispatchInputsChanged()"
+                            aria-label="Select flow for chat thread dispatch"
+                            data-testid="chat-thread-flow-dispatch-flow-select"
+                          >
+                            <option value="">Select a flow…</option>
+                            <template x-for="flow in $store.chat.flows.filter(entry => entry.record_state !== 'deleted')" :key="flow.record_id">
+                              <option :value="flow.record_id" x-text="flow.title || 'Untitled flow'"></option>
+                            </template>
+                          </select>
+                        </label>
+
+                        <label class="chat-thread-flow-dispatch-field">
+                          <span class="task-field-label">Manual scope override</span>
+                          <select
+                            x-model="$store.chat.chatThreadFlowDispatchManualScopeId"
+                            @change="$store.chat.chatThreadFlowDispatchManualScopeId = $event.target.value || null; $store.chat.handleChatThreadFlowDispatchInputsChanged()"
+                            aria-label="Override scope for chat thread dispatch"
+                            data-testid="chat-thread-flow-dispatch-scope-select"
+                          >
+                            <option value="">Use automatic resolution</option>
+                            <template x-for="scope in $store.chat.scopes.filter(entry => entry.record_state !== 'deleted')" :key="scope.record_id">
+                              <option :value="scope.record_id" x-text="$store.chat.getTaskBoardOptionLabel(scope.record_id)"></option>
+                            </template>
+                          </select>
+                        </label>
+                      </div>
+
+                      <div class="chat-thread-flow-dispatch-resolution">
+                        <div class="chat-thread-flow-dispatch-resolution-card">
+                          <span class="chat-thread-flow-dispatch-resolution-label">Resolved scope</span>
+                          <strong x-text="$store.chat.chatThreadFlowDispatchResolvedScopeLabel"></strong>
+                          <small x-text="$store.chat.chatThreadFlowDispatchScopeSourceLabel"></small>
+                        </div>
+                        <div class="chat-thread-flow-dispatch-resolution-card">
+                          <span class="chat-thread-flow-dispatch-resolution-label">Source channel</span>
+                          <strong x-text="$store.chat.getChannelLabel($store.chat.chatThreadFlowDispatchSourceChannel) || 'Unknown channel'"></strong>
+                          <small x-text="$store.chat.chatThreadFlowDispatchSource?.sourceSurface || 'main_feed'"></small>
+                        </div>
+                      </div>
+
+                      <div class="chat-thread-flow-dispatch-provenance">
+                        <h4>Source Provenance</h4>
+                        <dl class="chat-thread-flow-dispatch-provenance-list">
+                          <div>
+                            <dt>Clicked message</dt>
+                            <dd x-text="$store.chat.chatThreadFlowDispatchSource?.clickedMessageId || '—'"></dd>
+                          </div>
+                          <div>
+                            <dt>Canonical thread</dt>
+                            <dd x-text="$store.chat.chatThreadFlowDispatchSource?.threadRootMessageId || '—'"></dd>
+                          </div>
+                          <div>
+                            <dt>Thread messages</dt>
+                            <dd x-text="$store.chat.chatThreadFlowDispatchMessages.length"></dd>
+                          </div>
+                          <div>
+                            <dt>Selected flow</dt>
+                            <dd x-text="$store.chat.chatThreadFlowDispatchSelectedFlow?.title || 'Not selected'"></dd>
+                          </div>
+                          <div>
+                            <dt>Resolved scope</dt>
+                            <dd x-text="$store.chat.chatThreadFlowDispatchResolvedScopeLabel"></dd>
+                          </div>
+                        </dl>
+                      </div>
+
+                      <label class="chat-thread-flow-dispatch-field">
+                        <span class="task-field-label">Launch notes</span>
+                        <textarea
+                          x-model="$store.chat.chatThreadFlowDispatchLaunchNotes"
+                          @input="$store.chat.handleChatThreadFlowDispatchInputsChanged()"
+                          rows="4"
+                          placeholder="Add operator guidance before creating the kickoff task..."
+                          class="flow-start-context-input chat-thread-flow-dispatch-notes"
+                          aria-label="Launch notes for chat thread dispatch"
+                          data-testid="chat-thread-flow-dispatch-launch-notes"
+                        ></textarea>
+                      </label>
+
+                      <div class="chat-thread-flow-dispatch-preview-header">
+                        <div>
+                          <h4>Kickoff Preview</h4>
+                          <p>This preview becomes the kickoff task description consumed by Wingmen flow dispatch.</p>
+                        </div>
+                        <button
+                          type="button"
+                          class="btn-secondary"
+                          x-show="$store.chat.chatThreadFlowDispatchDirty || $store.chat.chatThreadFlowDispatchPreviewStale"
+                          @click="$store.chat.regenerateChatThreadFlowDispatchPreview()"
+                          aria-label="Regenerate kickoff preview"
+                          data-testid="chat-thread-flow-dispatch-regenerate"
+                        >Regenerate preview</button>
+                      </div>
+
+                      <p
+                        class="chat-thread-flow-dispatch-warning"
+                        x-show="$store.chat.chatThreadFlowDispatchPreviewStale"
+                        aria-live="polite"
+                      >
+                        Flow, scope, or launch notes changed after manual preview edits. Regenerate the preview if you want the text to match the latest metadata.
+                      </p>
+
+                      <textarea
+                        x-model="$store.chat.chatThreadFlowDispatchPreview"
+                        @input="$store.chat.markChatThreadFlowDispatchPreviewEdited()"
+                        rows="16"
+                        class="flow-start-context-input chat-thread-flow-dispatch-preview"
+                        aria-label="Kickoff description preview"
+                        data-testid="chat-thread-flow-dispatch-preview"
+                      ></textarea>
+
+                      <p
+                        class="chat-thread-flow-dispatch-status chat-thread-flow-dispatch-error"
+                        x-show="$store.chat.chatThreadFlowDispatchError"
+                        x-text="$store.chat.chatThreadFlowDispatchError"
+                        aria-live="polite"
+                      ></p>
+                    </div>
+                  </template>
+                </div>
+
+                <div class="flow-start-confirm-actions chat-thread-flow-dispatch-actions">
+                  <button
+                    type="button"
+                    class="btn-primary"
+                    @click="$store.chat.submitChatThreadFlowDispatch()"
+                    :disabled="!$store.chat.chatThreadFlowDispatchCanSubmit"
+                    aria-label="Create kickoff task from chat thread"
+                    data-testid="chat-thread-flow-dispatch-submit"
+                  >Dispatch to flow</button>
+                  <button
+                    type="button"
+                    class="btn-secondary"
+                    @click="$store.chat.closeChatThreadFlowDispatch()"
+                    aria-label="Cancel chat thread flow dispatch"
+                  >Cancel</button>
+                </div>
+              </div>
+            </div>
+
           </div>
         </template>
 
@@ -4261,7 +4647,7 @@
               return $store.chat.approvals.find(a => a.record_id === id) || null;
             },
           }"
-          x-effect="if ($store.chat.showApprovalDetail && approval) { $store.chat.resolveApprovalLinkedNames(approval).then(() => { if (window.innerWidth >= 900) $store.chat.loadApprovalPreview(approval, 0); }); }"
+          x-effect="if ($store.chat.showApprovalDetail && approval) { $store.chat.resolveApprovalLinkedNames(approval).then(() => { if (window.innerWidth >= 820) $store.chat.loadApprovalPreview(approval, 0); }); }"
         >
           <div class="approval-detail-panel" x-show="approval"
             :class="{ 'approval-has-preview': $store.chat.approvalPreviewRecord, 'approval-expanded': $store.chat.approvalPreviewExpanded && $store.chat.approvalPreviewRecord }">
@@ -4312,10 +4698,10 @@
                 <div class="approval-detail-section" x-show="$store.chat.resolvedArtifacts(approval).length > 0">
                   <h3>Artifacts</h3>
                   <ul class="approval-artifact-list">
-                    <template x-for="ref in $store.chat.resolvedArtifacts(approval)" :key="ref.record_id">
+                    <template x-for="ref in $store.chat.resolvedArtifacts(approval)" :key="ref.artifact_key || ref.record_id">
                       <li class="approval-artifact-item"
-                        :class="{ 'approval-artifact-clickable': ref.type === 'task' || ref.type === 'document', 'approval-preview-active': $store.chat.approvalPreviewRecord?.record_id === ref.record_id }"
-                        @click="$store.chat.loadApprovalPreview(approval, $store.chat.approvalPreviewItems(approval).findIndex(i => i.id === ref.record_id))">
+                        :class="{ 'approval-artifact-clickable': ref.record_id && (ref.type === 'task' || ref.type === 'document'), 'approval-preview-active': $store.chat.approvalPreviewRecord?.record_id === ref.record_id }"
+                        @click="if (ref.record_id) { $store.chat.loadApprovalPreview(approval, $store.chat.approvalPreviewItems(approval).findIndex(i => i.id === ref.record_id)) }">
                         <span x-text="ref.title || (ref.record_id.slice(0, 12) + '...')"></span>
                         <span class="approval-artifact-type" x-text="ref.type"></span>
                       </li>
@@ -4851,6 +5237,322 @@
           </div>
         </template>
 
+        <template x-if="$store.chat.navSection === 'opportunities'">
+          <div class="people-section opportunity-section">
+            <template x-if="!$store.chat.showOpportunityEditor">
+              <div class="people-list-view">
+                <div class="people-list-header">
+                  <input type="text" class="people-filter-input" placeholder="Filter opportunities..." x-model="$store.chat.opportunityFilter">
+                  <button class="btn btn-sm btn-primary" @click="$store.chat.openNewOpportunity()">+ Opportunity</button>
+                </div>
+                <div class="opportunity-metrics-grid">
+                  <article class="opportunity-metric-card">
+                    <p class="opportunity-metric-label">Opportunities</p>
+                    <strong class="opportunity-metric-value" x-text="$store.chat.opportunityMetrics.opportunityCount"></strong>
+                    <span class="opportunity-metric-meta" x-text="`${$store.chat.opportunityMetrics.openCount} open pipeline`"></span>
+                  </article>
+                  <article class="opportunity-metric-card">
+                    <p class="opportunity-metric-label">Total Forecast</p>
+                    <strong class="opportunity-metric-value" x-text="$store.chat.opportunityMetrics.totalForecast.value"></strong>
+                    <span class="opportunity-metric-meta" x-text="$store.chat.opportunityMetrics.totalForecast.meta"></span>
+                  </article>
+                  <article class="opportunity-metric-card">
+                    <p class="opportunity-metric-label">Next 30 Days</p>
+                    <strong class="opportunity-metric-value" x-text="$store.chat.opportunityMetrics.next30Forecast.value"></strong>
+                    <span class="opportunity-metric-meta" x-text="$store.chat.opportunityMetrics.next30Forecast.meta"></span>
+                  </article>
+                  <article class="opportunity-metric-card">
+                    <p class="opportunity-metric-label">Recent Activities</p>
+                    <strong class="opportunity-metric-value" x-text="$store.chat.opportunityMetrics.recentActivityCount"></strong>
+                    <span class="opportunity-metric-meta">Tasks updated in the last 30 days</span>
+                  </article>
+                </div>
+                <div class="people-list">
+                  <template x-for="opportunity in $store.chat.filteredOpportunities.sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')))" :key="opportunity.record_id">
+                    <div class="people-list-item opportunity-list-item" @click="$store.chat.openOpportunityDetail(opportunity.record_id)">
+                      <div class="people-list-item-top">
+                        <div class="people-list-item-name" x-text="opportunity.title || 'Untitled opportunity'"></div>
+                        <div class="people-list-item-actions" @click.stop>
+                          <details class="people-record-menu" @click.outside="$el.open = false">
+                            <summary title="Record actions">
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="12" cy="19" r="1.8"></circle></svg>
+                            </summary>
+                            <div class="people-record-menu-popover">
+                              <button type="button" @click="$store.chat.forkOpportunity(opportunity.record_id); $event.target.closest('details').open = false">Fork</button>
+                              <button type="button" @click="$store.chat.openRecordStatusModal({ familyId: 'opportunity', recordId: opportunity.record_id, label: opportunity.title || 'Opportunity' }); $event.target.closest('details').open = false">Check sync status</button>
+                              <button type="button" @click="$store.chat.openRecordVersionHistory({ familyId: 'opportunity', recordId: opportunity.record_id, label: opportunity.title || 'Opportunity' }); $event.target.closest('details').open = false">Version history</button>
+                              <button type="button" @click="if (confirm('Delete this opportunity?')) $store.chat.deleteOpportunity(opportunity.record_id); $event.target.closest('details').open = false">Delete</button>
+                            </div>
+                          </details>
+                        </div>
+                      </div>
+                      <div class="people-list-item-meta">
+                        <span class="opportunity-stage-badge" :data-stage="opportunity.stage" x-text="opportunity.stage"></span>
+                        <span x-show="opportunity.opportunity_type" x-text="opportunity.opportunity_type"></span>
+                        <span x-show="opportunity.linked_people?.length" x-text="`${opportunity.linked_people.length} people`"></span>
+                        <span x-show="opportunity.linked_organisations?.length" x-text="`${opportunity.linked_organisations.length} orgs`"></span>
+                        <span x-show="opportunity.linked_tasks?.length" x-text="`${opportunity.linked_tasks.length} tasks`"></span>
+                      </div>
+                      <div class="people-list-item-positioning" x-show="opportunity.source" x-text="opportunity.source"></div>
+                      <div class="people-list-item-tags" x-show="opportunity.description" x-text="opportunity.description"></div>
+                    </div>
+                  </template>
+                  <div class="people-empty" x-show="$store.chat.filteredOpportunities.length === 0">
+                    <p>No opportunities yet. Add your first opportunity to start tracking the pipeline.</p>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="$store.chat.showOpportunityEditor && $store.chat.editingOpportunity">
+              <div class="person-editor opportunity-editor">
+                <div class="person-editor-header">
+                  <button class="btn btn-sm" @click="$store.chat.closeOpportunityDetail()">&larr; Back</button>
+                  <h3 x-text="$store.chat.editingOpportunity.record_id ? 'Edit Opportunity' : 'New Opportunity'"></h3>
+                  <div class="person-editor-actions">
+                    <details class="people-record-menu" x-show="$store.chat.editingOpportunity.record_id" @click.outside="$el.open = false">
+                      <summary title="Record actions">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="12" cy="19" r="1.8"></circle></svg>
+                      </summary>
+                      <div class="people-record-menu-popover">
+                        <button type="button" @click="$store.chat.forkOpportunityFromCurrent(); $event.target.closest('details').open = false">Fork</button>
+                        <button type="button" @click="$store.chat.openRecordStatusModal({ familyId: 'opportunity', recordId: $store.chat.editingOpportunity.record_id, label: $store.chat.editingOpportunity.title || 'Opportunity' }); $event.target.closest('details').open = false">Check sync status</button>
+                        <button type="button" @click="$store.chat.openRecordVersionHistory({ familyId: 'opportunity', recordId: $store.chat.editingOpportunity.record_id, label: $store.chat.editingOpportunity.title || 'Opportunity' }); $event.target.closest('details').open = false">Version history</button>
+                        <button type="button" @click="if (confirm('Delete this opportunity?')) $store.chat.deleteOpportunity($store.chat.editingOpportunity.record_id); $event.target.closest('details').open = false">Delete</button>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+                <div class="person-editor-form opportunity-editor-form">
+                  <label>Title</label>
+                  <input type="text" x-model="$store.chat.editingOpportunity.title" placeholder="Opportunity title">
+
+                  <div class="opportunity-field-grid">
+                    <div>
+                      <label>Stage</label>
+                      <select x-model="$store.chat.editingOpportunity.stage">
+                        <template x-for="stage in $store.chat.opportunityStageOptions" :key="stage">
+                          <option :value="stage" x-text="stage"></option>
+                        </template>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Type</label>
+                      <input type="text" x-model="$store.chat.editingOpportunity.opportunity_type" placeholder="automation, compliance, retainer...">
+                      <div class="opportunity-suggestion-list" x-show="$store.chat.opportunityTypeSuggestions.length > 0">
+                        <template x-for="suggestion in $store.chat.opportunityTypeSuggestions" :key="suggestion">
+                          <button type="button" class="opportunity-suggestion-chip" @click="$store.chat.editingOpportunity.opportunity_type = suggestion" x-text="suggestion"></button>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="opportunity-field-grid">
+                    <div>
+                      <label>Responsible</label>
+                      <div class="opportunity-pill-row" x-show="$store.chat.editingOpportunity.responsible_npub">
+                        <span class="opportunity-link-pill" x-text="$store.chat.getSenderName($store.chat.editingOpportunity.responsible_npub)"></span>
+                        <button type="button" class="btn btn-sm btn-danger" @click="$store.chat.clearOpportunityResponsible()">&times;</button>
+                      </div>
+                      <input type="text" x-model="$store.chat.opportunityResponsibleQuery" placeholder="Type a person name or npub...">
+                      <div class="opportunity-suggestion-list" x-show="$store.chat.opportunityResponsibleSuggestions.length > 0">
+                        <template x-for="suggestion in $store.chat.opportunityResponsibleSuggestions" :key="suggestion.npub">
+                          <button type="button" class="opportunity-suggestion-chip" @click="$store.chat.assignOpportunityResponsible(suggestion.npub)" x-text="suggestion.label"></button>
+                        </template>
+                      </div>
+                    </div>
+                    <div>
+                      <label>Source</label>
+                      <input type="text" x-model="$store.chat.editingOpportunity.source" placeholder="Where this came from">
+                    </div>
+                  </div>
+
+                  <div
+                    class="flow-scope-field"
+                    x-data="{ scopeIdx: 0, open: false, query: '' }"
+                    @click.outside="open = false; query = ''"
+                    @focus-opportunity-scope.window="open = true; scopeIdx = 0; $nextTick(() => $refs.opportunityScopeInput?.focus())"
+                  >
+                    <label class="task-field-label">Scope</label>
+                    <template x-if="$store.chat.editingOpportunity.scope_id && !open">
+                      <div class="flow-scope-selected">
+                        <span class="scope-level-badge" :data-level="$store.chat.editingOpportunityScopeLevel" x-text="$store.chat.scopeLevelLabel($store.chat.editingOpportunityScopeLevel)"></span>
+                        <span x-text="$store.chat.editingOpportunityScopeLabel"></span>
+                        <button type="button" class="flow-scope-clear" @click="$store.chat.clearEditingOpportunityScope()" title="Remove scope">&times;</button>
+                      </div>
+                    </template>
+                      <input
+                        type="text"
+                        x-ref="opportunityScopeInput"
+                        x-model="query"
+                        @focus="open = true; scopeIdx = 0"
+                        @keydown.escape="open = false; query = ''"
+                      @keydown.arrow-down.prevent="scopeIdx = Math.min(scopeIdx + 1, $store.chat.scopePickerFlatFor(query).length - 1)"
+                      @keydown.arrow-up.prevent="scopeIdx = Math.max(scopeIdx - 1, 0)"
+                      @keydown.enter.prevent="if ($store.chat.scopePickerFlatFor(query)[scopeIdx]) { $store.chat.assignScopeToEditingOpportunity($store.chat.scopePickerFlatFor(query)[scopeIdx].record_id); open = false; query = '' }"
+                      placeholder="Search scopes..."
+                      class="flow-scope-input"
+                    />
+                    <ul class="scope-typeahead-results" x-show="open && $store.chat.scopePickerFlatFor(query).length > 0" x-cloak>
+                      <template x-for="(scope, idx) in $store.chat.scopePickerFlatFor(query)" :key="scope.record_id">
+                        <li
+                          class="scope-typeahead-option"
+                          :class="{ 'scope-typeahead-active': idx === scopeIdx }"
+                          @click="$store.chat.assignScopeToEditingOpportunity(scope.record_id); open = false; query = ''"
+                          @mouseenter="scopeIdx = idx"
+                        >
+                          <span class="scope-level-badge" :data-level="scope.level" x-text="$store.chat.scopeLevelLabel(scope.level)"></span>
+                          <span x-text="scope.breadcrumb || scope.title"></span>
+                        </li>
+                      </template>
+                    </ul>
+                    <div class="scope-typeahead-empty" x-show="open && $store.chat.scopePickerFlatFor(query).length === 0">
+                      No scopes found.
+                    </div>
+                  </div>
+
+                  <div class="opportunity-field-grid">
+                    <div>
+                      <label>Expected value</label>
+                      <input type="number" x-model.number="$store.chat.editingOpportunity.expected_value" placeholder="25000">
+                    </div>
+                    <div>
+                      <label>Currency</label>
+                      <input type="text" x-model="$store.chat.editingOpportunity.currency" placeholder="AUD">
+                    </div>
+                    <div>
+                      <label>Expected close</label>
+                      <input type="date" x-model="$store.chat.editingOpportunity.expected_close_at">
+                    </div>
+                  </div>
+
+                  <template x-if="$store.chat.editingOpportunity.origin_opportunity_id">
+                    <div class="task-parent-link">
+                      <span class="task-field-label">Forked from:</span>
+                      <button type="button" class="task-parent-btn" @click="$store.chat.openOpportunityDetail($store.chat.editingOpportunity.origin_opportunity_id)" x-text="$store.chat.resolveReferenceLabel({ type: 'opportunity', id: $store.chat.editingOpportunity.origin_opportunity_id })"></button>
+                    </div>
+                  </template>
+
+                  <label>Description</label>
+                  <textarea
+                    x-model="$store.chat.editingOpportunity.description"
+                    placeholder="Notes, context, commercial detail..."
+                    rows="5"
+                    @input="$store.chat.handleMentionInput($event.target)"
+                    @keydown="$store.chat.handleMentionKeydown($event)"
+                  ></textarea>
+
+                  <div class="opportunity-link-section">
+                    <label>Linked people</label>
+                    <div class="opportunity-pill-row" x-show="($store.chat.editingOpportunity.person_links || []).length > 0">
+                      <template x-for="link in $store.chat.editingOpportunity.person_links" :key="link.person_id">
+                        <span class="opportunity-link-pill">
+                          <button type="button" class="opportunity-link-open" @click="$store.chat.navigateTo('people'); $store.chat.peopleSubTab = 'people';" x-text="$store.chat.getPersonName(link.person_id) || link.person_id"></button>
+                          <span class="opportunity-link-primary" x-show="link.primary">Primary</span>
+                          <button type="button" class="opportunity-link-remove" @click="$store.chat.unlinkPersonFromEditingOpportunity(link.person_id)">&times;</button>
+                        </span>
+                      </template>
+                    </div>
+                    <input type="text" x-model="$store.chat.opportunityPersonQuery" placeholder="Type ahead to link a person...">
+                    <div class="opportunity-suggestion-list" x-show="$store.chat.opportunityPersonSuggestions.length > 0">
+                      <template x-for="person in $store.chat.opportunityPersonSuggestions" :key="person.record_id">
+                        <button type="button" class="opportunity-suggestion-chip" @click="$store.chat.linkPersonToEditingOpportunity(person.record_id)" x-text="person.title || 'Unnamed person'"></button>
+                      </template>
+                    </div>
+                  </div>
+
+                  <div class="opportunity-link-section">
+                    <label>Linked organisations</label>
+                    <div class="opportunity-pill-row" x-show="($store.chat.editingOpportunity.organisation_links || []).length > 0">
+                      <template x-for="link in $store.chat.editingOpportunity.organisation_links" :key="link.organisation_id">
+                        <span class="opportunity-link-pill">
+                          <button type="button" class="opportunity-link-open" @click="$store.chat.navigateTo('people'); $store.chat.peopleSubTab = 'organisations';" x-text="$store.chat.getOrgName(link.organisation_id) || link.organisation_id"></button>
+                          <span class="opportunity-link-primary" x-show="link.primary">Primary</span>
+                          <button type="button" class="opportunity-link-remove" @click="$store.chat.unlinkOrganisationFromEditingOpportunity(link.organisation_id)">&times;</button>
+                        </span>
+                      </template>
+                    </div>
+                    <input type="text" x-model="$store.chat.opportunityOrganisationQuery" placeholder="Type ahead to link an organisation...">
+                    <div class="opportunity-suggestion-list" x-show="$store.chat.opportunityOrganisationSuggestions.length > 0">
+                      <template x-for="organisation in $store.chat.opportunityOrganisationSuggestions" :key="organisation.record_id">
+                        <button type="button" class="opportunity-suggestion-chip" @click="$store.chat.linkOrganisationToEditingOpportunity(organisation.record_id)" x-text="organisation.title || 'Unnamed organisation'"></button>
+                      </template>
+                    </div>
+                  </div>
+
+                  <div class="opportunity-link-section">
+                    <label>Linked tasks</label>
+                    <div class="opportunity-pill-row" x-show="($store.chat.editingOpportunity.task_links || []).length > 0">
+                      <template x-for="link in $store.chat.editingOpportunity.task_links" :key="link.task_id">
+                        <span class="opportunity-link-pill">
+                          <button type="button" class="opportunity-link-open" @click="$store.chat.handleMentionNavigate('task', link.task_id)" x-text="($store.chat.tasks.find(task => task.record_id === link.task_id) || {}).title || link.task_id"></button>
+                          <span class="opportunity-link-primary" x-show="link.primary">Primary</span>
+                          <button type="button" class="opportunity-link-remove" @click="$store.chat.unlinkTaskFromEditingOpportunity(link.task_id)">&times;</button>
+                        </span>
+                      </template>
+                    </div>
+                    <input type="text" x-model="$store.chat.opportunityTaskQuery" placeholder="Type ahead to link a follow-up task or create one...">
+                    <div class="opportunity-suggestion-list" x-show="$store.chat.opportunityTaskSuggestions.length > 0">
+                      <template x-for="task in $store.chat.opportunityTaskSuggestions" :key="task.record_id">
+                        <button type="button" class="opportunity-suggestion-chip" @click="$store.chat.linkTaskToEditingOpportunity(task.record_id)" x-text="task.title || 'Untitled task'"></button>
+                      </template>
+                    </div>
+                    <div class="opportunity-suggestion-list" x-show="$store.chat.opportunityTaskDraftTitle && !$store.chat.opportunityTaskHasExactMatch">
+                      <button
+                        type="button"
+                        class="opportunity-suggestion-chip"
+                        @click="if ($store.chat.canCreateOpportunityTask) { $store.chat.createTaskForEditingOpportunity() } else { $dispatch('focus-opportunity-scope') }"
+                      >
+                        <span x-text="$store.chat.canCreateOpportunityTask ? 'Create task:' : 'Set scope to create task:'"></span>
+                        <span x-text="$store.chat.opportunityTaskDraftTitle"></span>
+                      </button>
+                    </div>
+                    <p class="settings-field-help" x-show="$store.chat.opportunityTaskDraftTitle && !$store.chat.editingOpportunity.scope_id">
+                      Set an opportunity scope before creating a task here.
+                    </p>
+                  </div>
+
+                  <template x-if="$store.chat.editingOpportunity.record_id">
+                    <div class="task-comments-section opportunity-comments-section">
+                      <label class="task-field-label">Comments</label>
+                      <div class="task-comment-add">
+                        <textarea
+                          x-model="$store.chat.newOpportunityCommentBody"
+                          @input="$store.chat.handleMentionInput($event.target)"
+                          @keydown="$store.chat.handleComposerKeydown($event, () => { if ($store.chat.editingOpportunity?.record_id) $store.chat.addOpportunityComment($store.chat.editingOpportunity.record_id); })"
+                          placeholder="Add a comment..."
+                          rows="2"
+                        ></textarea>
+                        <div class="task-comment-actions">
+                          <button type="button" @click="if ($store.chat.editingOpportunity?.record_id) $store.chat.addOpportunityComment($store.chat.editingOpportunity.record_id)" :disabled="!$store.chat.newOpportunityCommentBody.trim()">Post</button>
+                        </div>
+                      </div>
+                      <div class="task-comments-list">
+                        <template x-for="comment in $store.chat.opportunityComments" :key="comment.record_id">
+                          <div class="task-comment-item">
+                            <div class="task-comment-header">
+                              <span x-text="$store.chat.getSenderName(comment.sender_npub)"></span>
+                              <span class="task-comment-date" x-text="new Date(comment.updated_at || comment.created_at).toLocaleString()"></span>
+                            </div>
+                            <div class="task-comment-body markdown-body" x-html="$store.chat.renderMarkdown(comment.body)"></div>
+                          </div>
+                        </template>
+                        <div class="task-comments-empty" x-show="$store.chat.opportunityComments.length === 0">
+                          <p>No comments yet.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div class="person-editor-save">
+                    <button class="btn btn-primary" @click="$store.chat.saveEditingOpportunity()">Save</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
         <template x-if="$store.chat.navSection === 'settings'">
           <div class="settings-section">
           <div class="settings-tabs">
@@ -5036,16 +5738,24 @@
               <p class="auth-extension-hint" x-show="$store.chat.knownWorkspaces.length === 0">No workspaces yet. Create one to start using group-based records.</p>
             </div>
 
-            <div class="preset-connect-panel" x-show="!$store.chat.backendUrl">
+            <div class="preset-connect-panel" x-show="!$store.chat.backendUrl && $store.chat.presetConnectHost">
               <button
                 type="button"
                 class="preset-connect-btn"
-                @click="$store.chat.connectToPreset('https://sb4.otherstuff.ai')"
+                @click="$store.chat.connectToPreset($store.chat.presetConnectHost.url)"
                 :disabled="$store.chat.presetConnecting"
               >
-                <span x-show="!$store.chat.presetConnecting">The Other Stuff &mdash; SuperBased</span>
+                <span
+                  x-show="!$store.chat.presetConnecting"
+                  x-text="$store.chat.presetConnectHost.towerName || $store.chat.presetConnectHost.label || $store.chat.presetConnectHost.url"
+                ></span>
                 <span x-show="$store.chat.presetConnecting">Connecting...</span>
               </button>
+              <p
+                class="connect-host-description"
+                x-show="$store.chat.presetConnectHost?.towerDescription"
+                x-text="$store.chat.presetConnectHost?.towerDescription"
+              ></p>
             </div>
 
             <form class="auth-form" @submit.prevent="$store.chat.saveConnectionSettings()">
@@ -5161,6 +5871,172 @@
           </div>
 
           <div class="settings-tab-content" x-show="$store.chat.canAdminWorkspace && $store.chat.settingsTab === 'automation'">
+          <section class="settings-panel">
+            <div class="settings-panel-header">
+              <div>
+                <h2>Agent Chat</h2>
+                <p>Passive inspection for any saved workspace Agent Chat record. Flight Deck no longer acts as the required control plane for local Agent Chat routing.</p>
+              </div>
+              <span
+                class="agent-chat-trigger-status"
+                :class="{
+                  'agent-chat-trigger-status-enabled': $store.chat.agentChatTriggerStatus === 'enabled',
+                  'agent-chat-trigger-status-disabled': $store.chat.agentChatTriggerStatus === 'disabled',
+                  'agent-chat-trigger-status-invalid': $store.chat.agentChatTriggerStatus === 'invalid',
+                  'agent-chat-trigger-status-unconfigured': $store.chat.agentChatTriggerStatus === 'unconfigured'
+                }"
+                x-text="$store.chat.agentChatTriggerStatusLabel()"
+              ></span>
+            </div>
+
+            <div class="trigger-banner trigger-error" x-show="$store.chat.agentChatTriggerError" x-text="$store.chat.agentChatTriggerError"></div>
+            <div class="trigger-banner trigger-success" x-show="$store.chat.agentChatTriggerSuccess" x-text="$store.chat.agentChatTriggerSuccess"></div>
+
+            <div class="agent-chat-trigger-summary-card">
+              <div class="agent-chat-trigger-summary-grid">
+                <article class="agent-chat-trigger-summary-item">
+                  <span class="agent-chat-trigger-summary-label">Workspace record</span>
+                  <strong x-text="$store.chat.agentChatTriggerStatusLabel()"></strong>
+                  <small x-text="$store.chat.agentChatTriggerConfigured ? ($store.chat.agentChatTriggerEnabled ? 'Shown for compatibility and passive diagnostics only.' : 'Shown for compatibility only; the saved record itself is paused.') : 'No workspace Agent Chat record is saved here, which does not block normal local routing.'"></small>
+                </article>
+                <article class="agent-chat-trigger-summary-item">
+                  <span class="agent-chat-trigger-summary-label">Scope</span>
+                  <strong>Passive diagnostics</strong>
+                  <small>Wingmen owns local agent registration and routing. Flight Deck only inspects any saved workspace record here.</small>
+                </article>
+                <article class="agent-chat-trigger-summary-item">
+                  <span class="agent-chat-trigger-summary-label">Target group</span>
+                  <strong x-text="$store.chat.agentChatTargetGroupLabel()"></strong>
+                  <small x-text="$store.chat.agentChatTargetGroupDetail()"></small>
+                </article>
+                <article class="agent-chat-trigger-summary-item">
+                  <span class="agent-chat-trigger-summary-label">Interpretation</span>
+                  <strong x-text="$store.chat.agentChatTriggerValidationHeadline()"></strong>
+                  <small x-text="$store.chat.agentChatTriggerValidationDetail()"></small>
+                </article>
+              </div>
+            </div>
+
+            <p class="settings-field-help">
+              Local Agent Chat routing now lives in Wingmen agent registration and bot key ownership. Flight Deck shows any saved workspace record here only as a compatibility hint.
+            </p>
+
+            <p
+              class="settings-field-help agent-chat-routing-note"
+              x-show="$store.chat.agentChatTriggerConfigured && $store.chat.agentChatTriggerUpdatedAt"
+            >
+              Saved
+              <span x-text="$store.chat.formatRelativeTime($store.chat.agentChatTriggerUpdatedAt)"></span>
+              as a workspace record for
+              <span x-text="$store.chat.agentChatTriggerTargetGroup?.name || $store.chat.agentChatTriggerTargetGroupNpub || 'the selected group'"></span>.
+            </p>
+
+            <div
+              class="trigger-banner trigger-error"
+              x-show="$store.chat.agentChatTriggerConfigured && !$store.chat.agentChatTriggerTargetGroup && ($store.chat.agentChatTriggerTargetGroupId || $store.chat.agentChatTriggerTargetGroupNpub)"
+            >
+              The saved workspace Agent Chat record references a group Flight Deck can no longer see. Passive diagnostics are limited until that record is repaired or removed in the owning system.
+            </div>
+
+            <div class="agent-chat-trigger-diagnostics">
+              <div class="agent-chat-trigger-diagnostics-header">
+                <div>
+                  <h3>Passive Diagnostics</h3>
+                  <p>Use these checks to inspect any saved workspace record and local key readiness. They do not act as the authoritative runtime control plane.</p>
+                </div>
+              </div>
+
+              <p class="settings-field-help" x-text="$store.chat.agentChatDiagnosticsScopeNote"></p>
+
+              <p
+                class="settings-field-help"
+                x-show="!$store.chat.agentChatTriggerConfigured"
+              >
+                No saved workspace Agent Chat record is available to inspect here. That is normal for the agent-first design and does not block local Wingmen routing.
+              </p>
+
+              <div class="settings-actions">
+                <button
+                  type="button"
+                  class="btn-cancel"
+                  @click="$store.chat.refreshAgentChatTriggerDiagnostics()"
+                  :disabled="!$store.chat.agentChatTriggerConfigured || $store.chat.agentChatTriggerDiagnosticsLoading || !$store.chat.agentChatTriggerTargetGroup"
+                  x-text="$store.chat.agentChatTriggerDiagnosticsLoading ? 'Refreshing...' : 'Refresh Passive Diagnostics'"
+                ></button>
+              </div>
+
+              <div class="agent-chat-trigger-operator-list" x-show="$store.chat.agentChatOperatorWarnings.length > 0">
+                <template x-for="warning in $store.chat.agentChatOperatorWarnings" :key="warning.code">
+                  <article class="agent-chat-trigger-operator-card" :class="`agent-chat-trigger-operator-${warning.severity}`">
+                    <div class="agent-chat-trigger-operator-header">
+                      <div>
+                        <span class="agent-chat-trigger-operator-kind" x-text="warning.kind"></span>
+                        <h4 x-text="warning.title"></h4>
+                      </div>
+                      <span
+                        class="agent-chat-trigger-operator-badge"
+                        :class="`agent-chat-trigger-operator-badge-${warning.severity}`"
+                        x-text="warning.severity === 'error' ? 'Action needed' : 'Needs review'"
+                      ></span>
+                    </div>
+                    <p class="agent-chat-trigger-operator-summary" x-text="warning.summary"></p>
+                    <p class="settings-field-help" x-text="warning.action"></p>
+                  </article>
+                </template>
+              </div>
+
+              <p
+                class="settings-field-help"
+                x-show="!$store.chat.agentChatTriggerDiagnosticsLoading && $store.chat.agentChatTriggerTargetGroup && $store.chat.agentChatOperatorWarnings.length === 0"
+              >
+                Flight Deck is not seeing saved-record, membership, or wrapped-key problems for the current compatibility view.
+              </p>
+
+              <p class="error-text" x-show="$store.chat.agentChatTriggerDiagnosticsError" x-text="$store.chat.agentChatTriggerDiagnosticsError"></p>
+              <p class="settings-field-help" x-show="$store.chat.agentChatTriggerDiagnosticsLoading">Inspecting saved-record members...</p>
+              <p
+                class="settings-field-help"
+                x-show="!$store.chat.agentChatTriggerDiagnosticsLoading && $store.chat.agentChatTriggerTargetGroup && $store.chat.agentChatTriggerDiagnostics.length === 0"
+              >
+                No saved-record members to inspect.
+              </p>
+
+              <div class="agent-chat-trigger-diagnostics-subheader" x-show="$store.chat.agentChatTriggerDiagnostics.length > 0">
+                <h4>Saved-Record Key Checks</h4>
+                <p>Each visible member is checked for a wrapped key matching the current group epoch referenced by the saved workspace record.</p>
+              </div>
+
+              <div class="agent-chat-trigger-diagnostics-list" x-show="$store.chat.agentChatTriggerDiagnostics.length > 0">
+                <template x-for="diag in $store.chat.agentChatTriggerDiagnostics" :key="`agent-chat-diag-${diag.member_npub}`">
+                  <article class="agent-chat-trigger-diagnostic-card">
+                    <div class="agent-chat-trigger-diagnostic-header">
+                      <div class="agent-chat-trigger-diagnostic-person">
+                        <template x-if="$store.chat.getSenderAvatar(diag.member_npub)">
+                          <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar(diag.member_npub)" />
+                        </template>
+                        <template x-if="!$store.chat.getSenderAvatar(diag.member_npub)">
+                          <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(diag.member_npub))"></div>
+                        </template>
+                        <div>
+                          <strong x-text="$store.chat.getSenderName(diag.member_npub)"></strong>
+                          <small x-text="diag.member_npub"></small>
+                          <span class="agent-chat-trigger-member-role" x-show="$store.chat.isKnownAgentChatBotNpub(diag.member_npub)">Configured bot</span>
+                        </div>
+                      </div>
+                      <span
+                        class="agent-chat-trigger-diagnostic-badge"
+                        :class="`agent-chat-trigger-diagnostic-${diag.status}`"
+                        x-text="$store.chat.agentChatTriggerDiagnosticLabel(diag.status)"
+                      ></span>
+                    </div>
+                    <p class="agent-chat-trigger-diagnostic-summary" x-text="diag.summary"></p>
+                    <p class="settings-field-help" x-text="diag.detail"></p>
+                  </article>
+                </template>
+              </div>
+            </div>
+          </section>
+
           <section class="settings-panel">
             <div class="settings-panel-header">
               <div>
@@ -5399,10 +6275,10 @@
               </button>
             </div>
 
-            <p class="groups-empty" x-show="$store.chat.groups.length === 0">No groups yet. Create one to start sharing.</p>
+            <p class="groups-empty" x-show="$store.chat.currentWorkspaceGroups.length === 0">No groups yet. Create one to start sharing.</p>
 
-            <ul class="groups-list" x-show="$store.chat.groups.length > 0">
-              <template x-for="group in $store.chat.groups" :key="group.group_id">
+            <ul class="groups-list" x-show="$store.chat.currentWorkspaceGroups.length > 0">
+              <template x-for="group in $store.chat.currentWorkspaceGroups" :key="group.group_id">
                 <li class="group-card">
                   <div class="group-card-header">
                     <h3 class="group-card-name" x-text="group.name || 'Untitled group'"></h3>
@@ -5449,14 +6325,14 @@
               placeholder="npub1..." :disabled="$store.chat.shareInvitePending" />
 
             <label class="docs-field-label" style="margin-top: 0.75rem;">Group</label>
-            <select class="new-group-input" x-model="$store.chat.shareInviteGroupId" :disabled="$store.chat.shareInvitePending || $store.chat.groups.length === 0">
+            <select class="new-group-input" x-model="$store.chat.shareInviteGroupId" :disabled="$store.chat.shareInvitePending || $store.chat.currentWorkspaceGroups.length === 0">
               <option value="">Select a group…</option>
-              <template x-for="group in $store.chat.groups" :key="group.group_id">
+              <template x-for="group in $store.chat.currentWorkspaceGroups" :key="group.group_id">
                 <option :value="group.group_id" x-text="group.name || 'Untitled group'"></option>
               </template>
             </select>
 
-            <p class="groups-empty" x-show="$store.chat.groups.length === 0">Create a group first.</p>
+            <p class="groups-empty" x-show="$store.chat.currentWorkspaceGroups.length === 0">Create a group first.</p>
 
             <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center;">
               <button type="button" class="btn-confirm"
@@ -6000,7 +6876,7 @@
           @click="$store.chat.selectMention(result)"
           @mouseenter="$store.chat.mentionSelectedIndex = idx"
         >
-          <span class="mention-result-type" x-text="result.type === 'person' ? '@' : result.type === 'doc' ? 'DOC' : result.type === 'scope' ? 'SCOPE' : result.type === 'flow' ? 'FLOW' : 'TASK'"></span>
+          <span class="mention-result-type" x-text="result.type === 'person' ? '@' : result.type === 'doc' ? 'DOC' : result.type === 'scope' ? 'SCOPE' : result.type === 'flow' ? 'FLOW' : result.type === 'opportunity' ? 'OPP' : 'TASK'"></span>
           <span class="mention-result-label" x-text="result.label"></span>
           <span class="mention-result-sublabel" x-show="result.sublabel" x-text="result.sublabel"></span>
         </li>

@@ -308,7 +308,48 @@ describe('createDocument should inherit scope shares from scoped directory', () 
 });
 
 // ---------------------------------------------------------------------------
-// 5. Simulate updateDirectoryScope fix
+// 5. Simulate createDirectory fix
+// ---------------------------------------------------------------------------
+
+describe('createDirectory should inherit scope shares from parent directory', () => {
+  function simulateCreateDirectoryShares(parentDirectory, scopesMap, groups, getInheritedShares) {
+    const inherited = getInheritedShares(parentDirectory);
+    const scopeId = parentDirectory?.scope_id || null;
+
+    if (!scopeId) {
+      return { shares: inherited, group_ids: getShareGroupIds(inherited) };
+    }
+
+    const scope = scopesMap.get(scopeId);
+    if (!scope) {
+      return { shares: inherited, group_ids: getShareGroupIds(inherited) };
+    }
+
+    const scopeShares = buildScopeShares(normalizeGroupIds(scope.group_ids), groups);
+    const merged = mergeDocShareLists(inherited, scopeShares);
+    return { shares: merged, group_ids: getShareGroupIds(merged) };
+  }
+
+  it('inherits both parent shares and parent scope groups', () => {
+    const scope = makeScope('scope-1', 'l1', null, { group_ids: ['g-scope'] });
+    const scopesMap = makeScopesMap(scope);
+    const parentDirectory = {
+      record_id: 'dir-parent',
+      scope_id: 'scope-1',
+      shares: [{ type: 'group', key: 'group:g-explicit', group_npub: 'g-explicit', access: 'write' }],
+    };
+
+    const result = simulateCreateDirectoryShares(parentDirectory, scopesMap, [makeGroup('g-scope')], () => [
+      normalizeDocShare({ type: 'group', group_npub: 'g-explicit', access: 'write' }, 'dir-parent'),
+    ]);
+
+    expect(result.group_ids).toContain('g-explicit');
+    expect(result.group_ids).toContain('g-scope');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Simulate updateDirectoryScope fix
 // ---------------------------------------------------------------------------
 
 describe('updateDirectoryScope should merge scope shares', () => {

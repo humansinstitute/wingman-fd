@@ -1883,7 +1883,9 @@ export function initApp() {
     // storageImageManagerMixin applied via applyMixins
 
     applyDirectories(directories = []) {
-      const nextDirectories = Array.isArray(directories) ? directories : [];
+      const nextDirectories = Array.isArray(directories)
+        ? directories.map((item) => this.normalizeDirectoryRowGroupRefs ? this.normalizeDirectoryRowGroupRefs(item) : item)
+        : [];
       if (!sameListBySignature(this.directories, nextDirectories)) {
         this.directories = nextDirectories;
       }
@@ -1897,7 +1899,9 @@ export function initApp() {
     },
 
     applyDocuments(documents = []) {
-      const nextDocuments = Array.isArray(documents) ? documents : [];
+      const nextDocuments = Array.isArray(documents)
+        ? documents.map((item) => this.normalizeDocumentRowGroupRefs ? this.normalizeDocumentRowGroupRefs(item) : item)
+        : [];
       if (!sameListBySignature(this.documents, nextDocuments)) {
         this.documents = nextDocuments;
       }
@@ -1948,20 +1952,26 @@ export function initApp() {
     },
 
     patchDirectoryLocal(nextDirectory) {
+      const normalizedDirectory = this.normalizeDirectoryRowGroupRefs
+        ? this.normalizeDirectoryRowGroupRefs(nextDirectory)
+        : nextDirectory;
       const index = this.directories.findIndex((item) => item.record_id === nextDirectory.record_id);
       if (index >= 0) {
-        this.directories.splice(index, 1, { ...this.directories[index], ...nextDirectory });
+        this.directories.splice(index, 1, { ...this.directories[index], ...normalizedDirectory });
       } else {
-        this.directories = [...this.directories, nextDirectory];
+        this.directories = [...this.directories, normalizedDirectory];
       }
     },
 
     patchDocumentLocal(nextDocument) {
+      const normalizedDocument = this.normalizeDocumentRowGroupRefs
+        ? this.normalizeDocumentRowGroupRefs(nextDocument)
+        : nextDocument;
       const index = this.documents.findIndex((item) => item.record_id === nextDocument.record_id);
       if (index >= 0) {
-        this.documents.splice(index, 1, { ...this.documents[index], ...nextDocument });
+        this.documents.splice(index, 1, { ...this.documents[index], ...normalizedDocument });
       } else {
-        this.documents = [...this.documents, nextDocument];
+        this.documents = [...this.documents, normalizedDocument];
       }
       this.refreshOpenDocFromLatestDocument({ force: false });
     },
@@ -3862,13 +3872,15 @@ export function initApp() {
         const shares = this.getEffectiveDocShares(item);
         const now = new Date().toISOString();
         const nextVersion = (item.version ?? 1) + 1;
-        const updated = {
+        const updated = this.normalizeDocumentRowGroupRefs({
           ...item,
+          shares,
+          group_ids: this.getShareGroupIds(shares),
           record_state: 'deleted',
           sync_status: 'pending',
           version: nextVersion,
           updated_at: now,
-        };
+        });
         await upsertDocument(updated);
         this.patchDocumentLocal(updated);
         await addPendingWrite({
@@ -3888,11 +3900,12 @@ export function initApp() {
             scope_l5_id: item.scope_l5_id ?? null,
             scope_policy_group_ids: item.scope_policy_group_ids ?? null,
             shares,
+            group_ids: updated.group_ids,
             version: nextVersion,
             previous_version: item.version ?? 1,
             record_state: 'deleted',
             signature_npub: this.signingNpub,
-            write_group_ref: item.group_ids?.[0] || null,
+            write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
           }),
         });
       }
@@ -4157,7 +4170,7 @@ export function initApp() {
       }
       if (shares.length === 0) shares = this.getDefaultPrivateShares();
       const groupIds = this.getShareGroupIds(shares);
-      const updated = {
+      const baseUpdated = {
         ...item,
         parent_directory_id: targetFolderId,
         ...scopeAssignment,
@@ -4170,6 +4183,9 @@ export function initApp() {
         version: nextVersion,
         updated_at: new Date().toISOString(),
       };
+      const updated = isDirectory
+        ? this.normalizeDirectoryRowGroupRefs(baseUpdated)
+        : this.normalizeDocumentRowGroupRefs(baseUpdated);
 
       if (isDirectory) {
         await upsertDirectory(updated);
@@ -4196,10 +4212,11 @@ export function initApp() {
           scope_l5_id: updated.scope_l5_id ?? null,
           scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares: updated.shares,
+          group_ids: updated.group_ids,
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: updated.group_ids?.[0] || null,
+          write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
         })
         : await outboundDocument({
           record_id: updated.record_id,
@@ -4215,10 +4232,11 @@ export function initApp() {
           scope_l5_id: updated.scope_l5_id ?? null,
           scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
           shares: updated.shares,
+          group_ids: updated.group_ids,
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: updated.group_ids?.[0] || null,
+          write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
         });
 
       await addPendingWrite({
@@ -4549,7 +4567,15 @@ export function initApp() {
         const nextVersion = (directory.version ?? 1) + 1;
         const now = new Date().toISOString();
         const shares = this.getEffectiveDocShares(directory);
-        const updated = { ...directory, record_state: 'deleted', sync_status: 'pending', version: nextVersion, updated_at: now };
+        const updated = this.normalizeDirectoryRowGroupRefs({
+          ...directory,
+          shares,
+          group_ids: this.getShareGroupIds(shares),
+          record_state: 'deleted',
+          sync_status: 'pending',
+          version: nextVersion,
+          updated_at: now,
+        });
 
         await upsertDirectory(updated);
         this.patchDirectoryLocal(updated);
@@ -4561,7 +4587,8 @@ export function initApp() {
             previous_version: directory.version ?? 1,
             signature_npub: this.signingNpub,
             shares,
-            write_group_ref: updated.group_ids?.[0] || null,
+            group_ids: updated.group_ids,
+            write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
           }),
         });
       }
@@ -4573,7 +4600,15 @@ export function initApp() {
         const nextVersion = (doc.version ?? 1) + 1;
         const now = new Date().toISOString();
         const shares = this.getEffectiveDocShares(doc);
-        const updated = { ...doc, record_state: 'deleted', sync_status: 'pending', version: nextVersion, updated_at: now };
+        const updated = this.normalizeDocumentRowGroupRefs({
+          ...doc,
+          shares,
+          group_ids: this.getShareGroupIds(shares),
+          record_state: 'deleted',
+          sync_status: 'pending',
+          version: nextVersion,
+          updated_at: now,
+        });
 
         await upsertDocument(updated);
         this.patchDocumentLocal(updated);
@@ -4585,7 +4620,8 @@ export function initApp() {
             previous_version: doc.version ?? 1,
             signature_npub: this.signingNpub,
             shares,
-            write_group_ref: updated.group_ids?.[0] || null,
+            group_ids: updated.group_ids,
+            write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
           }),
         });
       }

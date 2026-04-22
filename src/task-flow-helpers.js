@@ -129,6 +129,9 @@ export function buildStoredFlowKickoffScopeAssignment(flow = null) {
   const groupIds = Array.isArray(flow.group_ids)
     ? flow.group_ids.map((groupId) => String(groupId || '').trim()).filter(Boolean)
     : [];
+  const shares = Array.isArray(flow.shares)
+    ? cloneJsonValue(flow.shares, []).filter(Boolean)
+    : [];
   const scopePolicyGroupIds = Array.isArray(flow.scope_policy_group_ids)
     ? flow.scope_policy_group_ids.map((groupId) => String(groupId || '').trim()).filter(Boolean)
     : null;
@@ -142,7 +145,7 @@ export function buildStoredFlowKickoffScopeAssignment(flow = null) {
     scope_l5_id: normalizeNullableId(flow.scope_l5_id),
     scope_policy_group_ids: scopePolicyGroupIds,
     group_ids: groupIds,
-    shares: [],
+    shares,
     write_group_ref: normalizeNullableId(flow.board_group_id || groupIds[0] || null),
   };
 }

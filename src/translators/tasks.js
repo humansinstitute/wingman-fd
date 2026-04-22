@@ -205,7 +205,6 @@ export function parseFlowReferenceFromText(text) {
 export function resolveFlowLinkage({ title, description, references, flows }) {
   const refs = [...(references || [])];
   const titleParsed = parseFlowReferenceFromText(title);
-  const isRunIntent = !!titleParsed;
 
   // Try to resolve flow_id from title "Run Flow: X" pattern
   let resolvedFlowId = null;
@@ -236,9 +235,19 @@ export function resolveFlowLinkage({ title, description, references, flows }) {
 
   return {
     flow_id: resolvedFlowId,
-    // Only generate run context when the task title explicitly initiates a flow run
-    flow_run_id: resolvedFlowId && isRunIntent ? crypto.randomUUID() : null,
-    flow_step: resolvedFlowId && isRunIntent ? 1 : null,
+    flow_run_id: null,
+    flow_step: null,
     references: resolvedFlowId ? refs : references || [],
   };
+}
+
+export function resolveFlowDispatchAssignee({
+  flowId = null,
+  flowRunId = null,
+  defaultAgentNpub = '',
+  botNpub = '',
+} = {}) {
+  if (!flowId || flowRunId) return null;
+  const dispatchBotNpub = String(defaultAgentNpub || botNpub || '').trim();
+  return dispatchBotNpub || null;
 }

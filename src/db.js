@@ -59,6 +59,11 @@ const WORKSPACE_STORES = {
   read_cursors:       '&record_id, cursor_key, viewer_npub, read_until',
 };
 
+const WORKSPACE_STORES_V8 = {
+  ...WORKSPACE_STORES,
+  opportunities: 'record_id, owner_npub, stage, responsible_npub, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, *group_ids',
+};
+
 function createWorkspaceDb(workspaceDbKey) {
   const db = new Dexie(`wingman-fd-ws-${workspaceDbKey}`);
   const WORKSPACE_STORES_V2 = {
@@ -117,6 +122,14 @@ function createWorkspaceDb(workspaceDbKey) {
   db.version(5).stores(WORKSPACE_STORES_V5);
   // v6: add persons, organisations tables
   db.version(6).stores(WORKSPACE_STORES);
+  db.version(7).stores({
+    ...WORKSPACE_STORES,
+    agent_chat_triggers: '&workspace_owner_npub, record_id, updated_at',
+  });
+  db.version(8).stores({
+    ...WORKSPACE_STORES_V8,
+    agent_chat_triggers: '&workspace_owner_npub, record_id, updated_at',
+  });
   return db;
 }
 
@@ -293,6 +306,19 @@ export async function getWorkspaceSettingsSnapshot(workspaceDbKey, workspaceOwne
 
 export async function upsertWorkspaceSettings(settings) {
   return wsDb().workspace_settings.put(sanitizeForStorage(settings));
+}
+
+// ---------------------------------------------------------------------------
+// agent_chat_triggers helpers — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function getAgentChatTrigger(workspaceOwnerNpub) {
+  if (!workspaceOwnerNpub) return null;
+  return wsDb().agent_chat_triggers.get(workspaceOwnerNpub);
+}
+
+export async function upsertAgentChatTrigger(trigger) {
+  return wsDb().agent_chat_triggers.put(sanitizeForStorage(trigger));
 }
 
 // ---------------------------------------------------------------------------
@@ -833,6 +859,23 @@ export async function getOrganisationsByOwner(ownerNpub) {
 }
 
 // ---------------------------------------------------------------------------
+// opportunities — workspace DB
+// ---------------------------------------------------------------------------
+
+export async function upsertOpportunity(opportunity) {
+  return wsDb().opportunities.put(sanitizeForStorage(opportunity));
+}
+
+export async function getOpportunityById(recordId) {
+  return wsDb().opportunities.get(recordId);
+}
+
+export async function getOpportunitiesByOwner(ownerNpub) {
+  const rows = await wsDb().opportunities.where('owner_npub').equals(ownerNpub).toArray();
+  return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+// ---------------------------------------------------------------------------
 // Bulk clear helpers — workspace DB
 // ---------------------------------------------------------------------------
 
@@ -853,6 +896,7 @@ export async function clearRuntimeData() {
     db.approvals.clear(),
     db.persons.clear(),
     db.organisations.clear(),
+    db.opportunities.clear(),
     db.sync_quarantine.clear(),
     db.groups.clear(),
     db.pending_writes.clear(),

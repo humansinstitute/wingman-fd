@@ -109,6 +109,18 @@ export function normalizeWorkspaceEntry(raw = {}) {
   const serviceNpub = String(raw.serviceNpub || raw.service_npub || parsedToken.serviceNpub || '').trim() || null;
   const appNpub = String(raw.appNpub || raw.app_npub || parsedToken.appNpub || APP_NPUB || '').trim() || null;
   const relayUrls = sanitizeRelayUrls(raw.relayUrls ?? raw.relay_urls ?? parsedToken.relayUrls);
+  const towerName = sanitizeOptionalString(
+    raw.towerName
+    ?? raw.tower_name
+    ?? parsedToken.towerName
+    ?? null,
+  );
+  const towerDescription = sanitizeOptionalString(
+    raw.towerDescription
+    ?? raw.tower_description
+    ?? parsedToken.towerDescription
+    ?? null,
+  );
   const name = String(
     raw.name
     ?? raw.workspace_name
@@ -133,6 +145,8 @@ export function normalizeWorkspaceEntry(raw = {}) {
     || buildSuperBasedConnectionToken({
       directHttpsUrl,
       serviceNpub,
+      towerName,
+      towerDescription,
       workspaceOwnerNpub,
       appNpub,
       relayUrls,
@@ -151,6 +165,8 @@ export function normalizeWorkspaceEntry(raw = {}) {
     avatarUrl,
     directHttpsUrl,
     serviceNpub,
+    towerName,
+    towerDescription,
     appNpub,
     relayUrls,
     defaultGroupNpub: String(raw.defaultGroupNpub || raw.default_group_npub || '').trim() || null,
@@ -181,6 +197,8 @@ function normalizeWorkspacePatch(raw = {}) {
     [['avatarUrl', 'avatar_url', 'workspace_avatar_url', 'workspaceAvatarUrl'], 'avatarUrl'],
     [['directHttpsUrl', 'direct_https_url', 'backendUrl', 'httpUrl'], 'directHttpsUrl'],
     [['serviceNpub', 'service_npub'], 'serviceNpub'],
+    [['towerName', 'tower_name'], 'towerName'],
+    [['towerDescription', 'tower_description'], 'towerDescription'],
     [['appNpub', 'app_npub'], 'appNpub'],
     [['defaultGroupNpub', 'default_group_npub'], 'defaultGroupNpub'],
     [['defaultGroupId', 'default_group_id'], 'defaultGroupId'],
@@ -258,6 +276,8 @@ export function workspaceFromToken(token, extras = {}) {
     workspaceOwnerNpub,
     directHttpsUrl: parsed.directHttpsUrl,
     serviceNpub: parsed.serviceNpub,
+    towerName: parsed.towerName,
+    towerDescription: parsed.towerDescription,
     appNpub: parsed.appNpub,
     relayUrls: parsed.relayUrls || [],
     connectionToken: token,

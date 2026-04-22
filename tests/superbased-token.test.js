@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSuperBasedToken } from '../src/superbased-token.js';
+import { buildSuperBasedConnectionToken, parseSuperBasedToken } from '../src/superbased-token.js';
 
 describe('parseSuperBasedToken', () => {
   it('parses v1 connection keys', () => {
@@ -9,6 +9,8 @@ describe('parseSuperBasedToken', () => {
       relay: 'wss://cvm.otherstuff.studio',
       app_npub: 'npub1app',
       service_npub: 'npub1service',
+      tower_name: 'Other Stuff Tower',
+      tower_description: 'Private family tower',
       workspace_owner_npub: 'npub1owner',
     }));
 
@@ -21,6 +23,8 @@ describe('parseSuperBasedToken', () => {
       appNpub: 'npub1app',
       serverNpub: 'npub1service',
       serviceNpub: 'npub1service',
+      towerName: 'Other Stuff Tower',
+      towerDescription: 'Private family tower',
       workspaceOwnerNpub: 'npub1owner',
     }));
   });
@@ -56,5 +60,26 @@ describe('parseSuperBasedToken', () => {
 
   it('rejects invalid tokens', () => {
     expect(parseSuperBasedToken('not-base64')).toEqual({ isValid: false });
+  });
+
+  it('round-trips optional tower discovery metadata in connection keys', () => {
+    const token = buildSuperBasedConnectionToken({
+      directHttpsUrl: 'https://tower.example',
+      serviceNpub: 'npub1service',
+      towerName: 'Family Tower',
+      towerDescription: 'Private family workspace host',
+      workspaceOwnerNpub: 'npub1workspace',
+      appNpub: 'npub1app',
+    });
+
+    expect(parseSuperBasedToken(token)).toEqual(expect.objectContaining({
+      isValid: true,
+      directHttpsUrl: 'https://tower.example',
+      serviceNpub: 'npub1service',
+      towerName: 'Family Tower',
+      towerDescription: 'Private family workspace host',
+      workspaceOwnerNpub: 'npub1workspace',
+      appNpub: 'npub1app',
+    }));
   });
 });

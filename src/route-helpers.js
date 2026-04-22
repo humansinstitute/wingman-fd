@@ -1,6 +1,6 @@
 export const KNOWN_PAGES = new Set([
   'flight-deck', 'notifications', 'status', 'tasks', 'calendar', 'schedules',
-  'chat', 'docs', 'reports', 'people', 'scopes', 'settings',
+  'chat', 'docs', 'reports', 'opportunities', 'people', 'scopes', 'settings', 'live',
 ]);
 
 export function pageToSection(page) {
@@ -76,6 +76,7 @@ export function parseRouteLocation(href) {
       descendants: url.searchParams.get('descendants') || null,
       groupid: url.searchParams.get('groups') || url.searchParams.get('groupid') || null,
       reportid: url.searchParams.get('reportid') || null,
+      opportunityid: url.searchParams.get('opportunityid') || null,
       taskid: url.searchParams.get('taskid') || null,
       view: url.searchParams.get('view') || null,
       workspacekey: url.searchParams.get('workspacekey') || null,

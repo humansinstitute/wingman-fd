@@ -30,6 +30,7 @@ describe('sync repair helpers', () => {
   it('exposes stable metadata for all selectable sync families', () => {
     expect(SYNC_FAMILY_OPTIONS.map((family) => family.id)).toEqual([
       'settings',
+      'agent_chat_trigger',
       'channel',
       'chat_message',
       'directory',
@@ -44,6 +45,7 @@ describe('sync repair helpers', () => {
       'approval',
       'person',
       'organisation',
+      'opportunity',
     ]);
     expect(getSyncFamily('comment')?.table).toBe('comments');
     expect(getSyncStateKeyForFamily('audio_note')).toBe(`sync_since:${getSyncFamily('audio_note')?.hash}`);

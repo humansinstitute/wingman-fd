@@ -35,6 +35,9 @@ import {
 import {
   buildTaskCalendar,
 } from './task-calendar.js';
+import {
+  isActiveFlowParentTask,
+} from './task-flow-helpers.js';
 import { toRaw } from './utils/state-helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -138,9 +141,13 @@ function getTaskGraph(store) {
   let cached = taskGraphCache.get(tasks);
   if (cached) return cached;
 
+  const taskById = new Map();
   const parentIds = new Set();
   const subtasksByParent = new Map();
   for (const task of tasks) {
+    if (task?.record_state !== 'deleted' && task?.record_id) {
+      taskById.set(task.record_id, task);
+    }
     if (task?.record_state === 'deleted' || !task?.parent_task_id) continue;
     parentIds.add(task.parent_task_id);
     const subtasks = subtasksByParent.get(task.parent_task_id);
@@ -150,7 +157,7 @@ function getTaskGraph(store) {
 
   const parentStateByParent = new Map();
   for (const [parentId, subtasks] of subtasksByParent.entries()) {
-    parentStateByParent.set(parentId, computeParentState(subtasks));
+    parentStateByParent.set(parentId, computeParentDisplayState(taskById.get(parentId) || null, subtasks));
   }
 
   cached = {
@@ -269,6 +276,13 @@ function getTaskBoardDerived(store) {
   });
 
   return value;
+}
+
+export function computeParentDisplayState(parentTask, subtasks) {
+  if (isActiveFlowParentTask(parentTask, subtasks)) {
+    return parentTask?.state || 'new';
+  }
+  return computeParentState(subtasks);
 }
 
 export function resolveGroupId(groupRef, groups) {
@@ -538,6 +552,10 @@ export const taskBoardStateMixin = {
     if (ref.type === 'flow') {
       const flow = this.flows.find(f => f.record_id === ref.id);
       return flow?.title || ref.id.slice(0, 8);
+    }
+    if (ref.type === 'opportunity') {
+      const opportunity = this.opportunities.find((item) => item.record_id === ref.id);
+      return opportunity?.title || ref.id.slice(0, 8);
     }
     return ref.id.slice(0, 8);
   },

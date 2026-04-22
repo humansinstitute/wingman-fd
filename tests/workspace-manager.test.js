@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { guessDefaultBackendUrl, workspaceManagerMixin } from '../src/workspace-manager.js';
+import * as api from '../src/api.js';
 
 // ---------------------------------------------------------------------------
 // Helper: bind a mixin method to a fake store context
@@ -39,12 +40,23 @@ function bindMethod(methodName, storeOverrides = {}) {
     workspaceSettingsVersion: 0,
     workspaceSettingsGroupIds: [],
     workspaceHarnessUrl: '',
+    agentChatTriggerRecordId: '',
+    agentChatTriggerEnabled: true,
+    agentChatTriggerTargetGroupId: '',
+    agentChatTriggerTargetGroupNpub: '',
+    agentChatTriggerDiagnostics: [],
+    agentChatTriggerDiagnosticsLoading: false,
+    botNpub: '',
+    defaultAgentNpub: '',
     workspaceTriggers: [],
     wingmanHarnessInput: '',
     wingmanHarnessDirty: false,
     wingmanHarnessError: null,
     removingWorkspace: false,
     error: null,
+    channels: [],
+    selectedChannelId: '',
+    selectedChannel: null,
     getShortNpub: (npub) => npub?.slice(0, 8) || '',
     getInitials: (name) => (name || 'WS').slice(0, 2).toUpperCase(),
     getSenderAvatar: () => null,
@@ -169,6 +181,22 @@ describe('workspace computed getters', () => {
     expect(store.currentWorkspaceName).toBe('No workspace selected');
   });
 
+  it('currentWorkspaceBackendName prefers tower discovery metadata', () => {
+    const ws = {
+      workspaceKey: 'service:npub1service::workspace:npub1ws',
+      workspaceOwnerNpub: 'npub1ws',
+      directHttpsUrl: 'https://tower.example',
+      towerName: 'Family Tower',
+    };
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      knownWorkspaces: [ws],
+      selectedWorkspaceKey: ws.workspaceKey,
+      currentWorkspaceOwnerNpub: 'npub1ws',
+    });
+
+    expect(store.currentWorkspaceBackendName).toBe('Family Tower');
+  });
+
   it('currentWorkspaceGroups filters by owner', () => {
     const { store } = bindMethod('getWorkspaceByOwner', {
       currentWorkspaceOwnerNpub: 'npub1ws',
@@ -217,6 +245,119 @@ describe('workspace computed getters', () => {
       ],
     });
     expect(store.currentWorkspaceContentGroups.map((group) => group.name)).toEqual(['Team']);
+  });
+
+  it('agentChatTriggerValidationHeadline flags missing saved groups', () => {
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      agentChatTriggerRecordId: 'agent-chat-trigger:npub1ws',
+      agentChatTriggerEnabled: true,
+      agentChatTriggerTargetGroupId: 'grp-missing',
+      groups: [],
+    });
+
+    expect(store.agentChatTriggerValidationHeadline()).toBe('Needs review');
+  });
+
+  it('agentChatOperatorWarnings reports missing bot membership in the target group', () => {
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      agentChatTriggerRecordId: 'agent-chat-trigger:npub1ws',
+      agentChatTriggerEnabled: true,
+      agentChatTriggerTargetGroupId: 'grp-agents',
+      botNpub: 'npub1bot',
+      groups: [
+        {
+          owner_npub: 'npub1ws',
+          group_id: 'grp-agents',
+          name: 'Agent Ops',
+          member_npubs: ['npub1human'],
+        },
+      ],
+      getSenderName: (npub) => (npub === 'npub1bot' ? 'Bot Ops' : npub),
+    });
+
+    expect(store.agentChatOperatorWarnings).toEqual([
+      expect.objectContaining({
+        code: 'no-bot-members',
+        kind: 'Membership',
+        severity: 'error',
+      }),
+    ]);
+  });
+
+  it('agentChatOperatorWarnings reports wrapped-key failures for configured bots', () => {
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      agentChatTriggerRecordId: 'agent-chat-trigger:npub1ws',
+      agentChatTriggerEnabled: true,
+      agentChatTriggerTargetGroupId: 'grp-agents',
+      botNpub: 'npub1bot',
+      groups: [
+        {
+          owner_npub: 'npub1ws',
+          group_id: 'grp-agents',
+          name: 'Agent Ops',
+          member_npubs: ['npub1bot'],
+        },
+      ],
+      agentChatTriggerDiagnostics: [
+        {
+          member_npub: 'npub1bot',
+          status: 'stale',
+          summary: 'Wrapped keys stop at epoch 2.',
+          detail: 'Rotate or reprovision wrapped keys.',
+        },
+      ],
+      getSenderName: (npub) => (npub === 'npub1bot' ? 'Bot Ops' : npub),
+    });
+
+    expect(store.agentChatOperatorWarnings).toEqual([
+      expect.objectContaining({
+        code: 'bot-keys-blocked',
+        kind: 'Wrapped keys',
+        severity: 'error',
+      }),
+    ]);
+  });
+
+  it('agentChatDiagnosticsScopeNote explains when bot verification is unavailable', () => {
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      agentChatTriggerRecordId: 'agent-chat-trigger:npub1ws',
+      agentChatTriggerEnabled: true,
+      agentChatTriggerTargetGroupId: 'grp-agents',
+      groups: [
+        {
+          owner_npub: 'npub1ws',
+          group_id: 'grp-agents',
+          name: 'Agent Ops',
+          member_npubs: ['npub1human'],
+        },
+      ],
+    });
+
+    expect(store.agentChatDiagnosticsScopeNote).toContain('informative only');
+    expect(store.agentChatDiagnosticsScopeNote).toContain('known bot identities');
+  });
+
+  it('agentChatTriggerValidationDetail explains that Flight Deck no longer owns routing when no record exists', () => {
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      agentChatTriggerRecordId: '',
+    });
+
+    expect(store.agentChatTriggerValidationHeadline()).toBe('Not required');
+    expect(store.agentChatTriggerValidationDetail()).toContain('Flight Deck no longer needs a saved workspace record');
+    expect(store.agentChatTriggerValidationDetail()).toContain('Wingmen owns local agent registration and routing');
+  });
+
+  it('agentChatTriggerStatusLabel de-emphasizes the record as legacy state', () => {
+    const { store } = bindMethod('getWorkspaceByOwner', {});
+
+    expect(store.agentChatTriggerStatusLabel('enabled')).toBe('Legacy record present');
+    expect(store.agentChatTriggerStatusLabel('disabled')).toBe('Legacy record paused');
+    expect(store.agentChatTriggerStatusLabel('invalid')).toBe('Legacy record invalid');
+    expect(store.agentChatTriggerStatusLabel('unconfigured')).toBe('No workspace record');
   });
 
   it('memberPrivateGroup finds private group for session member', () => {
@@ -460,6 +601,67 @@ describe('workspace profile editing', () => {
     // Should not reset when saving
     expect(store.workspaceProfileDirty).toBe(true);
   });
+
+  it('saveWorkspaceProfile writes slug through the workspace route and preserves the server slug', async () => {
+    const updateWorkspaceSpy = vi.spyOn(api, 'updateWorkspace').mockResolvedValue({
+      name: 'Renamed Workspace',
+      slug: 'canonical-server-slug',
+      description: 'Updated description',
+      avatar_url: 'storage://workspace-avatar-1',
+    });
+
+    const persistWorkspaceSettings = vi.fn().mockResolvedValue(undefined);
+    const syncWorkspaceProfileDraft = vi.fn();
+    const mergeKnownWorkspaces = vi.fn();
+    const originalWindow = globalThis.window;
+    globalThis.window = {
+      confirm: vi.fn(() => true),
+    };
+
+    try {
+      const { fn, store } = bindMethod('saveWorkspaceProfile', {
+        canAdminWorkspace: true,
+        currentWorkspace: {
+          workspaceKey: 'workspace:npub1ws',
+          workspaceOwnerNpub: 'npub1ws',
+          name: 'Original Workspace',
+          slug: 'original-workspace',
+        },
+        workspaceProfileNameInput: 'Renamed Workspace',
+        workspaceProfileSlugInput: 'renamed-workspace',
+        workspaceProfileDescriptionInput: 'Updated description',
+        workspaceProfileAvatarInput: 'storage://workspace-avatar-1',
+        persistWorkspaceSettings,
+        syncWorkspaceProfileDraft,
+        mergeKnownWorkspaces,
+      });
+
+      await fn();
+
+      expect(updateWorkspaceSpy).toHaveBeenCalledWith('npub1ws', {
+        name: 'Renamed Workspace',
+        slug: 'renamed-workspace',
+        description: 'Updated description',
+        avatar_url: 'storage://workspace-avatar-1',
+      });
+      expect(store.workspaceProfileRowsByKey['workspace:npub1ws']).toMatchObject({
+        slug: 'canonical-server-slug',
+        name: 'Renamed Workspace',
+      });
+      expect(mergeKnownWorkspaces).toHaveBeenCalledWith([
+        expect.objectContaining({
+          slug: 'canonical-server-slug',
+          workspaceOwnerNpub: 'npub1ws',
+        }),
+      ]);
+      expect(persistWorkspaceSettings).toHaveBeenCalledTimes(1);
+      expect(syncWorkspaceProfileDraft).toHaveBeenCalledWith({ force: true });
+      expect(store.workspaceProfileError).toBeNull();
+    } finally {
+      updateWorkspaceSpy.mockRestore();
+      globalThis.window = originalWindow;
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -535,11 +737,13 @@ describe('workspace bootstrap modal', () => {
     const { fn, store } = bindMethod('openWorkspaceBootstrapModal', {
       newWorkspaceName: 'leftover',
       newWorkspaceDescription: 'leftover',
+      showConnectModal: true,
       showWorkspaceBootstrapModal: false,
       showWorkspaceSwitcherMenu: true,
       mobileNavOpen: true,
     });
     fn();
+    expect(store.showConnectModal).toBe(false);
     expect(store.showWorkspaceBootstrapModal).toBe(true);
     expect(store.showWorkspaceSwitcherMenu).toBe(false);
     expect(store.mobileNavOpen).toBe(false);
@@ -576,10 +780,12 @@ describe('updateWorkspaceBootstrapPrompt', () => {
       backendUrl: 'https://backend.example.com',
       currentWorkspaceOwnerNpub: '',
       knownWorkspaces: [],
+      showConnectModal: true,
       showWorkspaceBootstrapModal: false,
     });
     const result = fn();
     expect(result).toBe(true);
+    expect(store.showConnectModal).toBe(false);
     expect(store.showWorkspaceBootstrapModal).toBe(true);
   });
 

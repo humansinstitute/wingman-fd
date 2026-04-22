@@ -540,11 +540,11 @@ export const scopesManagerMixin = {
         group_ids: this.getShareGroupIds(this.getStoredDocShares(doc)),
         scope_policy_group_ids: null,
       };
-    const updated = {
+    const updated = this.normalizeDocumentRowGroupRefs({
       ...doc,
       ...scopeAssignment,
       ...patch,
-    };
+    });
     this.patchDocumentLocal(updated);
     await upsertDocument(updated);
     await this._pushDocScopeUpdate(updated, options);
@@ -553,19 +553,20 @@ export const scopesManagerMixin = {
   async _pushDocScopeUpdate(doc, options = {}) {
     const ownerNpub = this.workspaceOwnerNpub;
     const nextVersion = (doc.version ?? 1) + 1;
-    const updated = toRaw({
+    const updated = toRaw(this.normalizeDocumentRowGroupRefs({
       ...doc,
       version: nextVersion,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
-    });
+    }));
     await upsertDocument(updated);
     this.patchDocumentLocal(updated);
     const envelope = await outboundDocument({
       ...updated,
+      group_ids: updated.group_ids,
       previous_version: doc.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -605,14 +606,14 @@ export const scopesManagerMixin = {
         group_ids: this.getShareGroupIds(this.getStoredDocShares(dir)),
         scope_policy_group_ids: null,
       };
-    const updated = toRaw({
+    const updated = toRaw(this.normalizeDirectoryRowGroupRefs({
       ...dir,
       ...scopeAssignment,
       ...patch,
       version: (dir.version ?? 1) + 1,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
-    });
+    }));
     await this.queueDirectoryRecord(updated, dir);
     await this.flushAndBackgroundSync();
   },
@@ -696,10 +697,11 @@ export const scopesManagerMixin = {
     this.patchDirectoryLocal(row);
     const envelope = await outboundDirectory({
       ...row,
+      group_ids: row.group_ids,
       version: row.version ?? 1,
       previous_version: previous?.version ?? 0,
       signature_npub: this.signingNpub,
-      write_group_ref: row.group_ids?.[0] || null,
+      write_group_ref: row.write_group_id || row.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: row.record_id,
@@ -976,13 +978,13 @@ export const scopesManagerMixin = {
     });
     if (!this.hasScopedPolicyRepairChanges(item, patch)) return false;
 
-    const updated = toRaw({
+    const updated = toRaw(this.normalizeDocumentRowGroupRefs({
       ...item,
       ...patch,
       version: (item.version ?? 1) + 1,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
-    });
+    }));
     await upsertDocument(updated);
     this.patchDocumentLocal(updated);
     const envelope = await outboundDocument({
@@ -999,10 +1001,11 @@ export const scopesManagerMixin = {
       scope_l5_id: updated.scope_l5_id ?? null,
       scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
       shares: updated.shares,
+      group_ids: updated.group_ids,
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1020,13 +1023,13 @@ export const scopesManagerMixin = {
     });
     if (!this.hasScopedPolicyRepairChanges(item, patch)) return false;
 
-    const updated = toRaw({
+    const updated = toRaw(this.normalizeDirectoryRowGroupRefs({
       ...item,
       ...patch,
       version: (item.version ?? 1) + 1,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
-    });
+    }));
     await upsertDirectory(updated);
     this.patchDirectoryLocal(updated);
     const envelope = await outboundDirectory({
@@ -1042,10 +1045,11 @@ export const scopesManagerMixin = {
       scope_l5_id: updated.scope_l5_id ?? null,
       scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
       shares: updated.shares,
+      group_ids: updated.group_ids,
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
     });
     await addPendingWrite({
       record_id: updated.record_id,

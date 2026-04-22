@@ -52,6 +52,45 @@ module.exports = {
       "autorestart": false,
       "max_restarts": 0,
       "min_uptime": "5s"
+    },
+    {
+      "name": "quiet-silver-bastion-job-software-dev-worker-codex-51-494fbffb",
+      "namespace": "wingman-agents",
+      "script": "bash",
+      "args": [
+        "-lc",
+        "unset KEYTELEPORT_PRIVKEY; unset OPENAI_BASE_URL OPENAI_API_KEY CODEX_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_API_KEY OPENROUTER_HOST OPENROUTER_API_KEY GOOSE_PROVIDER; exec '/Users/mini/code/wingmen/out/agentapi' 'server' '--port' '3705' '--allowed-origins' '*' '--allowed-hosts' 'localhost,127.0.0.1,[::1],dev.otherstuff.studio,dev.otherstuff.ai,wm21.otherstuff.ai' '--type=codex' '--' '/Users/mini/.bun/bin/codex' '-c' 'mcp_servers.wingman.command=\"bun\"' '-c' 'mcp_servers.wingman.args=[\"run\",\"/Users/mini/code/wingmen/src/mcp/stdio-server.ts\"]' '-c' 'mcp_servers.wingman.env={ WINGMAN_URL = \"http://localhost:3021\", SESSION_ID = \"494fbffb-7345-4f04-8e64-4ff2ce8b5d26\", BOT_PUBKEY_HEX = \"8a0b47319650a72d9f9ff3b2640e384854d65045a97028723e22ec2701ca4e30\", BOT_NPUB = \"npub13g95wvvk2znjm8ul7wexgr3cfp2dv5z949czsu37ytkzwqw2fccqdahg3z\", USER_NPUB = \"npub1s4658awhcachmhzk5jhsg256gzdl7e4gh5a9zq8skjyt7g3k2axql224qz\", AGENT_NSEC = \"f849750b955c423dcb2bbfb7392198f438a61dd931c52c743f7ed0f87d680b9b\" }' < /dev/null"
+      ],
+      "cwd": "/Users/mini/code/wingmanbefree/wingman-fd",
+      "env": {
+        "SESSION_ID": "494fbffb-7345-4f04-8e64-4ff2ce8b5d26",
+        "SESSION_NAME": "job:software-dev:worker:codex:51ac849c",
+        "SESSION_PORT": "3705",
+        "SESSION_DIRECTORY": "/Users/mini/code/wingmanbefree/wingman-fd",
+        "SESSION_AGENT": "codex",
+        "USER_ALIAS": "quiet-silver-bastion",
+        "WINGMAN_URL": "http://localhost:3021",
+        "BOT_PUBKEY_HEX": "8a0b47319650a72d9f9ff3b2640e384854d65045a97028723e22ec2701ca4e30",
+        "BOT_NPUB": "npub13g95wvvk2znjm8ul7wexgr3cfp2dv5z949czsu37ytkzwqw2fccqdahg3z",
+        "USER_NPUB": "npub1s4658awhcachmhzk5jhsg256gzdl7e4gh5a9zq8skjyt7g3k2axql224qz",
+        "AGENT_NSEC": "f849750b955c423dcb2bbfb7392198f438a61dd931c52c743f7ed0f87d680b9b",
+        "WINGMAN_GITEA_OWNER": "wm21",
+        "WINGMAN_GITEA_TOKEN": "417ccffdca0026ca67c63ae0861676b1b229c758",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "credential.https://gitea.pages.otherstuff.ai.helper",
+        "GIT_CONFIG_VALUE_0": "/Users/mini/code/wingmen/data/gitea-credential-helper.sh",
+        "GIT_AUTHOR_NAME": "wm21",
+        "GIT_AUTHOR_EMAIL": "wm21@wingman-os.ai",
+        "GIT_COMMITTER_NAME": "wm21",
+        "GIT_COMMITTER_EMAIL": "wm21@wingman-os.ai"
+      },
+      "out_file": "/Users/mini/code/wingmanbefree/wingman-fd/apps/logs/quiet-silver-bastion-job-software-dev-worker-codex-51-494fbffb-out.log",
+      "error_file": "/Users/mini/code/wingmanbefree/wingman-fd/apps/logs/quiet-silver-bastion-job-software-dev-worker-codex-51-494fbffb-error.log",
+      "log_date_format": "YYYY-MM-DD HH:mm:ss",
+      "merge_logs": true,
+      "autorestart": false,
+      "max_restarts": 0,
+      "min_uptime": "5s"
     }
   ]
 };

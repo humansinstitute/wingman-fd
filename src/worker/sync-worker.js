@@ -15,6 +15,7 @@ import {
   getPendingWrites,
   removePendingWrite,
   upsertWorkspaceSettings,
+  upsertAgentChatTrigger,
   upsertChannel,
   upsertMessage,
   upsertDocument,
@@ -29,6 +30,7 @@ import {
   upsertApproval,
   upsertPerson,
   upsertOrganisation,
+  upsertOpportunity,
   getSyncState,
   setSyncState,
   upsertSyncQuarantineEntry,
@@ -50,12 +52,15 @@ import { inboundFlow, recordFamilyHash as flowFamilyHash } from '../translators/
 import { inboundApproval, recordFamilyHash as approvalFamilyHash } from '../translators/approvals.js';
 import { inboundPerson, recordFamilyHash as personFamilyHash } from '../translators/persons.js';
 import { inboundOrganisation, recordFamilyHash as organisationFamilyHash } from '../translators/organisations.js';
+import { inboundOpportunity, recordFamilyHash as opportunityFamilyHash } from '../translators/opportunities.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
+import { inboundAgentChatTrigger, recordFamilyHash as agentChatTriggerFamilyHash } from '../translators/agent-chat-trigger.js';
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
 import { pruneInaccessibleRecords, repairStaleGroupRefs } from '../access-pruner.js';
 import { flightDeckLog } from '../logging.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
+const AGENT_CHAT_TRIGGER_FAMILY = agentChatTriggerFamilyHash('agent_chat_trigger');
 const CHANNEL_FAMILY = recordFamilyHash('channel');
 const MESSAGE_FAMILY = recordFamilyHash('chat_message');
 const DOCUMENT_FAMILY = recordFamilyHash('document');
@@ -70,6 +75,7 @@ const FLOW_FAMILY = flowFamilyHash('flow');
 const APPROVAL_FAMILY = approvalFamilyHash('approval');
 const PERSON_FAMILY = personFamilyHash('person');
 const ORGANISATION_FAMILY = organisationFamilyHash('organisation');
+const OPPORTUNITY_FAMILY = opportunityFamilyHash('opportunity');
 const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
 const WRITE_BATCH_SIZE = 25;
 
@@ -81,6 +87,9 @@ async function materializeRecordForFamily(family, record) {
   if (family === SETTINGS_FAMILY) {
     const row = await inboundWorkspaceSettings(record);
     await upsertWorkspaceSettings(row);
+  } else if (family === AGENT_CHAT_TRIGGER_FAMILY) {
+    const row = await inboundAgentChatTrigger(record);
+    await upsertAgentChatTrigger(row);
   } else if (family === CHANNEL_FAMILY) {
     const row = await inboundChannel(record);
     await upsertChannel(row);
@@ -123,6 +132,9 @@ async function materializeRecordForFamily(family, record) {
   } else if (family === ORGANISATION_FAMILY) {
     const row = await inboundOrganisation(record);
     await upsertOrganisation(row);
+  } else if (family === OPPORTUNITY_FAMILY) {
+    const row = await inboundOpportunity(record);
+    await upsertOpportunity(row);
   }
 }
 

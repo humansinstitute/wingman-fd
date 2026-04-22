@@ -202,6 +202,31 @@ describe('findGroupMemberSuggestions', () => {
   });
 });
 
+describe('findFlowApproverSuggestions', () => {
+  it('returns empty for empty query', () => {
+    const { fn } = bindMethod('findFlowApproverSuggestions');
+    expect(fn('')).toEqual([]);
+  });
+
+  it('finds both people and groups while excluding selected tokens', () => {
+    const { fn } = bindMethod('findFlowApproverSuggestions', {
+      addressBookPeople: [
+        { npub: 'npub1alice', label: 'Alice' },
+        { npub: 'npub1bob', label: 'Bob' },
+      ],
+      groups: [
+        { group_id: 'g1', name: 'Approvers', member_npubs: ['npub1alice'] },
+        { group_id: 'g2', name: 'Stakeholders', member_npubs: ['npub1bob'] },
+      ],
+    });
+
+    const results = fn('a', ['npub1alice', 'group:g2']);
+    expect(results.some((item) => item.type === 'person' && item.token === 'npub1alice')).toBe(false);
+    expect(results.some((item) => item.type === 'group' && item.token === 'group:g2')).toBe(false);
+    expect(results.some((item) => item.type === 'group' && item.token === 'group:g1')).toBe(true);
+  });
+});
+
 describe('mapGroupDraftMembers', () => {
   it('maps npubs to member objects', () => {
     const { fn } = bindMethod('mapGroupDraftMembers', {
@@ -300,5 +325,17 @@ describe('computed getters', () => {
     const suggestions = store.docShareSuggestions;
     expect(suggestions.some((s) => s.type === 'person')).toBe(true);
     expect(suggestions.some((s) => s.type === 'group')).toBe(true);
+  });
+
+  it('getFlowApproverLabel and subtitle resolve people and groups', () => {
+    const store = createStore({
+      addressBookPeople: [{ npub: 'npub1alice', label: 'Alice' }],
+      groups: [{ group_id: 'g1', name: 'Approvers', member_npubs: ['npub1alice'] }],
+    });
+
+    expect(store.getFlowApproverLabel('npub1alice')).toBe('Alice');
+    expect(store.getFlowApproverSubtitle('npub1alice')).toBe('npub1alice');
+    expect(store.getFlowApproverLabel('group:g1')).toBe('Approvers');
+    expect(store.getFlowApproverSubtitle('group:g1')).toBe('1 members');
   });
 });

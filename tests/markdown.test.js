@@ -1,6 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { renderMarkdownToHtml } from '../src/markdown.js';
+import { renderMarkdownToHtml, resolveMarkdownHref } from '../src/markdown.js';
+
+const originalWindow = globalThis.window;
+
+function setWindowHref(href) {
+  globalThis.window = {
+    location: new URL(href),
+  };
+}
+
+afterEach(() => {
+  if (originalWindow === undefined) delete globalThis.window;
+  else globalThis.window = originalWindow;
+});
 
 describe('renderMarkdownToHtml', () => {
   it('renders richer markdown blocks and safe links', () => {
@@ -88,5 +101,34 @@ describe('renderMarkdownToHtml', () => {
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(html).not.toContain('javascript:alert(1)');
     expect(html).toContain('>bad<');
+  });
+
+  it('keeps same-origin doc links on the docs route even when copied from chat', () => {
+    setWindowHref('http://localhost/demo/chat?channelid=chan-1');
+
+    expect(resolveMarkdownHref('http://localhost/demo/chat?docid=doc-42'))
+      .toBe('http://localhost/demo/docs?docid=doc-42');
+
+    const html = renderMarkdownToHtml('[doc](http://localhost/demo/chat?docid=doc-42)');
+    expect(html).toContain('href="http://localhost/demo/docs?docid=doc-42"');
+  });
+
+  it('supports relative document links from the current chat route', () => {
+    setWindowHref('http://localhost/demo/chat?channelid=chan-1');
+
+    expect(resolveMarkdownHref('?docid=doc-99')).toBe('http://localhost/demo/docs?docid=doc-99');
+
+    const html = renderMarkdownToHtml('[doc](?docid=doc-99)');
+    expect(html).toContain('href="http://localhost/demo/docs?docid=doc-99"');
+  });
+
+  it('normalizes bare task links onto the current workspace route', () => {
+    setWindowHref('http://localhost/demo/chat?channelid=chan-1&workspacekey=wk-1');
+
+    expect(resolveMarkdownHref('/tasks?scopeid=scope-1&taskid=task-42'))
+      .toBe('http://localhost/demo/tasks?scopeid=scope-1&taskid=task-42&workspacekey=wk-1');
+
+    const html = renderMarkdownToHtml('[task](/tasks?scopeid=scope-1&taskid=task-42)');
+    expect(html).toContain('href="http://localhost/demo/tasks?scopeid=scope-1&amp;taskid=task-42&amp;workspacekey=wk-1"');
   });
 });

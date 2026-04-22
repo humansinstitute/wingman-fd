@@ -70,10 +70,12 @@ describe('docs translator', () => {
       title: 'Plan',
       content: 'outline',
       parent_directory_id: null,
+      group_ids: ['g-1', 'g-direct'],
       shares: [
         {
           type: 'group',
           key: 'group:g-1',
+          group_id: 'g-1',
           group_npub: 'g-1',
           access: 'read',
           label: 'Readers',
@@ -93,7 +95,7 @@ describe('docs translator', () => {
 
     expect(envelope.record_family_hash).toBe(recordFamilyHash('document'));
     expect(envelope.group_payloads).toHaveLength(2);
-    expect(envelope.group_payloads.find((item) => item.group_npub === 'g-1')?.write).toBe(false);
+    expect(envelope.group_payloads.find((item) => item.group_npub === 'g-1')?.write).toBe(true);
     expect(envelope.group_payloads.find((item) => item.group_npub === 'g-direct')?.write).toBe(true);
 
     const inner = JSON.parse(envelope.owner_payload.ciphertext);
@@ -146,6 +148,7 @@ describe('docs translator', () => {
       owner_npub: 'npub_owner',
       title: 'Archive',
       parent_directory_id: null,
+      group_ids: ['deliverable-group'],
       scope_id: 'deliverable-1',
       scope_l1_id: 'product-1',
       scope_l2_id: 'project-1',

@@ -1,28 +1,13 @@
 import { recordFamilyHash } from './chat.js';
 import { APP_NPUB } from '../app-identity.js';
 import { buildGroupPayloads as buildEncryptedGroupPayloads, decryptRecordPayload, encryptOwnerPayload } from './record-crypto.js';
-import { buildWriteGroupFields, extractGroupIds, normalizeShareGroupRefs } from './group-refs.js';
-
-async function buildGroupPayloads(payload, shares = []) {
-  const byGroup = new Map();
-
-  for (const share of shares) {
-    const groupNpub = share.type === 'person'
-      ? (share.via_group_npub || share.group_npub)
-      : share.group_npub;
-    if (!groupNpub) continue;
-
-    const existing = byGroup.get(groupNpub);
-    const canWrite = share.access === 'write' || existing?.write === true;
-    byGroup.set(groupNpub, canWrite);
-  }
-
-  return buildEncryptedGroupPayloads([...byGroup.keys()], payload, byGroup);
-}
+import { buildWriteGroupFields, buildGroupRefMap, extractGroupIds, normalizeGroupRef, normalizeShareGroupRefs } from './group-refs.js';
 
 export async function inboundDirectory(record) {
   const payload = await decryptRecordPayload(record);
   const data = payload.data ?? payload;
+  const groupPayloads = record.group_payloads || [];
+  const groupRefMap = buildGroupRefMap(groupPayloads);
 
   return {
     record_id: record.record_id,
@@ -36,8 +21,9 @@ export async function inboundDirectory(record) {
     scope_l4_id: data.scope_l4_id ?? null,
     scope_l5_id: data.scope_l5_id ?? null,
     scope_policy_group_ids: Array.isArray(data.scope_policy_group_ids) ? data.scope_policy_group_ids : null,
-    shares: normalizeShareGroupRefs(data.shares, record.group_payloads || []),
-    group_ids: extractGroupIds(record.group_payloads || []),
+    shares: normalizeShareGroupRefs(data.shares, groupPayloads),
+    group_ids: extractGroupIds(groupPayloads),
+    write_group_id: normalizeGroupRef(record.write_group_id || record.write_group_npub, groupRefMap),
     sync_status: 'synced',
     record_state: data.record_state ?? 'active',
     version: record.version ?? 1,
@@ -58,6 +44,7 @@ export async function outboundDirectory({
   scope_l5_id = null,
   scope_policy_group_ids = null,
   shares = [],
+  group_ids = [],
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
@@ -93,13 +80,15 @@ export async function outboundDirectory({
     signature_npub,
     ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
-    group_payloads: await buildGroupPayloads(innerPayload, shares),
+    group_payloads: await buildEncryptedGroupPayloads(group_ids || [], innerPayload),
   };
 }
 
 export async function inboundDocument(record) {
   const payload = await decryptRecordPayload(record);
   const data = payload.data ?? payload;
+  const groupPayloads = record.group_payloads || [];
+  const groupRefMap = buildGroupRefMap(groupPayloads);
 
   return {
     record_id: record.record_id,
@@ -114,8 +103,9 @@ export async function inboundDocument(record) {
     scope_l4_id: data.scope_l4_id ?? null,
     scope_l5_id: data.scope_l5_id ?? null,
     scope_policy_group_ids: Array.isArray(data.scope_policy_group_ids) ? data.scope_policy_group_ids : null,
-    shares: normalizeShareGroupRefs(data.shares, record.group_payloads || []),
-    group_ids: extractGroupIds(record.group_payloads || []),
+    shares: normalizeShareGroupRefs(data.shares, groupPayloads),
+    group_ids: extractGroupIds(groupPayloads),
+    write_group_id: normalizeGroupRef(record.write_group_id || record.write_group_npub, groupRefMap),
     sync_status: 'synced',
     record_state: data.record_state ?? 'active',
     version: record.version ?? 1,
@@ -137,6 +127,7 @@ export async function outboundDocument({
   scope_l5_id = null,
   scope_policy_group_ids = null,
   shares = [],
+  group_ids = [],
   version = 1,
   previous_version = 0,
   signature_npub = owner_npub,
@@ -173,6 +164,6 @@ export async function outboundDocument({
     signature_npub,
     ...buildWriteGroupFields(write_group_ref),
     owner_payload: await encryptOwnerPayload(owner_npub, innerPayload),
-    group_payloads: await buildGroupPayloads(innerPayload, shares),
+    group_payloads: await buildEncryptedGroupPayloads(group_ids || [], innerPayload),
   };
 }

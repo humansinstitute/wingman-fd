@@ -6,7 +6,7 @@ describe('scopeid preservation across section navigation', () => {
   const base = 'http://localhost:5173';
 
   describe('parseRouteLocation reads scopeid from all sections', () => {
-    const sections = ['tasks', 'calendar', 'chat', 'docs', 'reports', 'people', 'scopes', 'settings'];
+    const sections = ['tasks', 'calendar', 'chat', 'docs', 'reports', 'opportunities', 'people', 'scopes', 'settings'];
 
     for (const section of sections) {
       it(`reads scopeid from ${section} URL`, () => {

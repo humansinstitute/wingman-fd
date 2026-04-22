@@ -15,16 +15,22 @@ import { toRaw } from './utils/state-helpers.js';
 
 export const personsManagerMixin = {
   applyPersons(persons) {
-    const next = (Array.isArray(persons) ? persons : []).filter(
+    const rows = (Array.isArray(persons) ? persons : []).filter(
       (p) => p.record_state !== 'deleted',
     );
+    const next = typeof this.hydratePersonsWithOpportunityLinks === 'function'
+      ? this.hydratePersonsWithOpportunityLinks(rows)
+      : rows;
     this.persons = next;
   },
 
   applyOrganisations(orgs) {
-    const next = (Array.isArray(orgs) ? orgs : []).filter(
+    const rows = (Array.isArray(orgs) ? orgs : []).filter(
       (o) => o.record_state !== 'deleted',
     );
+    const next = typeof this.hydrateOrganisationsWithOpportunityLinks === 'function'
+      ? this.hydrateOrganisationsWithOpportunityLinks(rows)
+      : rows;
     this.organisations = next;
   },
 

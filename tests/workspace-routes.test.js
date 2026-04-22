@@ -137,6 +137,13 @@ describe('parseRouteLocation', () => {
     expect(route.params.taskid).toBe('xyz');
   });
 
+  it('extracts opportunity query params alongside slug', () => {
+    const route = parseRouteLocation(`${base}/be-free/opportunities?opportunityid=opp-1`);
+    expect(route.workspaceSlug).toBe('be-free');
+    expect(route.section).toBe('opportunities');
+    expect(route.params.opportunityid).toBe('opp-1');
+  });
+
   it('extracts workspace identity hints alongside slug', () => {
     const route = parseRouteLocation(
       `${base}/be-free/chat?workspacekey=${encodeURIComponent('service:npub1ai::workspace:npub1ws')}&channelid=chan-1`,
@@ -156,7 +163,7 @@ describe('parseRouteLocation', () => {
   });
 
   it('parses all known page sections', () => {
-    const pages = ['chat', 'tasks', 'calendar', 'schedules', 'docs', 'reports', 'people', 'scopes', 'settings'];
+    const pages = ['chat', 'tasks', 'calendar', 'schedules', 'docs', 'reports', 'opportunities', 'people', 'scopes', 'settings', 'live'];
     for (const page of pages) {
       const route = parseRouteLocation(`${base}/my-ws/${page}`);
       expect(route.workspaceSlug).toBe('my-ws');

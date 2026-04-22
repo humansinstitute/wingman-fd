@@ -5,6 +5,11 @@ describe('page title', () => {
   it('builds task and calendar titles', () => {
     expect(buildFlightDeckDocumentTitle({ section: 'tasks' })).toBe('Tasks - Wingman: Flight Deck');
     expect(buildFlightDeckDocumentTitle({ section: 'calendar' })).toBe('Calendar - Wingman: Flight Deck');
+    expect(buildFlightDeckDocumentTitle({ section: 'opportunities' })).toBe('Opportunities - Wingman: Flight Deck');
+  });
+
+  it('builds a Live title for the session drawer surface', () => {
+    expect(buildFlightDeckDocumentTitle({ section: 'live' })).toBe('Live - Wingman: Flight Deck');
   });
 
   it('builds chat titles with channel context', () => {

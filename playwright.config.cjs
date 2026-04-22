@@ -1,10 +1,10 @@
-import { defineConfig } from 'playwright/test';
+const { defineConfig } = require('playwright/test');
 
 const port = process.env.PLAYWRIGHT_PORT || '4173';
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://127.0.0.1:${port}`;
 const backendUrl = process.env.PLAYWRIGHT_SUPERBASED_URL || 'https://sb4.otherstuff.studio';
 
-export default defineConfig({
+module.exports = defineConfig({
   testDir: './tests/e2e',
   timeout: 180_000,
   expect: {

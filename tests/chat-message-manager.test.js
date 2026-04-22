@@ -1,11 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
+import './setup.js';
 
 // Mock Alpine.js — it requires a browser `window` at import time
 vi.mock('alpinejs', () => ({
   default: { nextTick: (fn) => fn?.() },
 }));
 
+vi.mock('../src/translators/chat.js', () => ({
+  outboundChatMessage: vi.fn(async (payload) => ({ ...payload, record_family_hash: 'mock:chat_message' })),
+  outboundChannel: vi.fn(async (payload) => ({ ...payload, record_family_hash: 'mock:channel' })),
+  recordFamilyHash: (family) => `mock:${family}`,
+}));
+
 import { chatMessageManagerMixin } from '../src/chat-message-manager.js';
+import { createChatThreadFlowDispatchState } from '../src/chat-thread-flow-dispatch.js';
+import { clearRuntimeData, deleteWorkspaceDb, openWorkspaceDb } from '../src/db.js';
 
 // ---------------------------------------------------------------------------
 // Helper: create a fake store with all mixin methods applied
@@ -14,6 +23,8 @@ function createStore(overrides = {}) {
   const store = {
     messages: [],
     channels: [],
+    flows: [],
+    scopes: [],
     selectedChannelId: null,
     activeThreadId: null,
     threadInput: '',
@@ -34,6 +45,9 @@ function createStore(overrides = {}) {
     threadRepliesScrollFrame: null,
     chatPreviewMeasureFrame: null,
     showChannelSettingsModal: false,
+    showFlowStartConfirm: false,
+    flowStartTarget: null,
+    flowStartContext: '',
     messageActionsMenuId: null,
     error: null,
     session: null,
@@ -56,9 +70,42 @@ function createStore(overrides = {}) {
     createEncryptedGroup: vi.fn().mockResolvedValue({ group_id: 'g1' }),
     getPreferredChannelWriteGroup: vi.fn().mockReturnValue('g1'),
     getChannelLabel: vi.fn().mockReturnValue('test-channel'),
+    getTaskBoardOptionLabel: vi.fn((scopeId) => scopeId ? `Scope ${scopeId}` : ''),
+    buildTaskBoardAssignment: vi.fn((scopeId) => {
+      if (scopeId === '__unscoped__') {
+        return {
+          scope_id: null,
+          scope_l1_id: null,
+          scope_l2_id: null,
+          scope_l3_id: null,
+          scope_l4_id: null,
+          scope_l5_id: null,
+          scope_policy_group_ids: null,
+          board_group_id: 'workspace-default',
+          group_ids: ['workspace-default'],
+          shares: [{ type: 'group', group_npub: 'workspace-default', access: 'write' }],
+        };
+      }
+      return {
+        scope_id: scopeId,
+        scope_l1_id: scopeId,
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        scope_policy_group_ids: [`policy:${scopeId}`],
+        board_group_id: `group:${scopeId}`,
+        group_ids: [`group:${scopeId}`],
+        shares: [{ type: 'group', group_npub: `group:${scopeId}`, access: 'write' }],
+      };
+    }),
     materializeAudioDrafts: vi.fn().mockResolvedValue({ attachments: [] }),
     containsInlineImageUploadToken: vi.fn().mockReturnValue(false),
     _fireMentionTriggers: vi.fn(),
+    isAgentChatParticipantNpub: vi.fn().mockReturnValue(false),
+    formatAgentChatParticipantNames: vi.fn().mockReturnValue(''),
+    agentChatTargetGroupLabel: vi.fn().mockReturnValue('Agent group'),
+    getSenderName: vi.fn((npub) => npub ? `Name ${npub}` : ''),
     openRecordStatusModal: vi.fn(),
     workspaceOwnerNpub: 'npub1owner',
     ...overrides,
@@ -123,6 +170,23 @@ describe('chat message computed getters', () => {
     expect(store.visibleMainFeedMessages.map((message) => message.record_id)).toEqual(['m2', 'm3']);
     expect(store.hiddenMainFeedCount).toBe(1);
     expect(store.hasMoreMainFeedMessages).toBe(true);
+  });
+
+  it('visibleMainFeedMessages defaults to the newest 80 messages when the page size is 80', () => {
+    const messages = Array.from({ length: 85 }, (_, index) => ({
+      record_id: `m${index + 1}`,
+      parent_message_id: null,
+      updated_at: new Date(Date.UTC(2024, 0, 1, 0, 0, index)).toISOString(),
+    }));
+    const store = createStore({
+      MAIN_FEED_PAGE_SIZE: 80,
+      mainFeedVisibleCount: 80,
+      messages,
+    });
+    expect(store.visibleMainFeedMessages).toHaveLength(80);
+    expect(store.hiddenMainFeedCount).toBe(5);
+    expect(store.visibleMainFeedMessages[0]?.record_id).toBe('m6');
+    expect(store.visibleMainFeedMessages.at(-1)?.record_id).toBe('m85');
   });
 
   it('threadMessages returns empty when no active thread', () => {
@@ -241,6 +305,20 @@ describe('thread lifecycle', () => {
     expect(store.mainFeedVisibleCount).toBe(160);
     fn();
     expect(store.mainFeedVisibleCount).toBe(240);
+  });
+
+  it('showMoreMainFeedMessages expands by 80 and restores the captured anchor', () => {
+    const anchor = { id: 'm80' };
+    const { fn, store } = bindMethod('showMoreMainFeedMessages', {
+      mainFeedVisibleCount: 80,
+      MAIN_FEED_PAGE_SIZE: 80,
+      captureScrollAnchor: vi.fn().mockReturnValue(anchor),
+      restoreScrollAnchor: vi.fn(),
+    });
+    fn();
+    expect(store.mainFeedVisibleCount).toBe(160);
+    expect(store.captureScrollAnchor).toHaveBeenCalled();
+    expect(store.restoreScrollAnchor).toHaveBeenCalledWith(anchor);
   });
 
   it('getThreadParentMessage returns parent', () => {
@@ -391,6 +469,33 @@ describe('applyMessages', () => {
     ]);
     expect(store.activeThreadId).toBe('m1');
   });
+
+  it('schedules a bottom scroll when pendingChatScrollToLatest is set', async () => {
+    const scheduleChatFeedScrollToBottom = vi.fn();
+    const { fn } = bindMethod('applyMessages', {
+      pendingChatScrollToLatest: true,
+      scheduleChatFeedScrollToBottom,
+    });
+    await fn([
+      { record_id: 'm1', sender_npub: 'npub1a', parent_message_id: null, updated_at: '2024-01-01T00:00:00Z' },
+    ]);
+    expect(scheduleChatFeedScrollToBottom).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes a load-more visibility hook whenever older messages are hidden', () => {
+    const messages = Array.from({ length: 30 }, (_, index) => ({
+      record_id: `m${index + 1}`,
+      parent_message_id: null,
+      updated_at: `2024-01-01T00:${String(index).padStart(2, '0')}:00Z`,
+    }));
+    const store = createStore({
+      MAIN_FEED_PAGE_SIZE: 21,
+      mainFeedVisibleCount: 21,
+      messages,
+      chatFeedNearTop: false,
+    });
+    expect(store.showMainFeedLoadMoreControl).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -490,6 +595,42 @@ describe('sendMessage', () => {
     });
     await fn();
     expect(store.error).toBe('Wait for image upload to finish.');
+  });
+
+  it('schedules a chat-feed scroll after inserting the local pending row', async () => {
+    const workspaceDbKey = 'chat-message-manager-send-message';
+    openWorkspaceDb(workspaceDbKey);
+    await clearRuntimeData();
+
+    try {
+      const scheduleChatFeedScrollToBottom = vi.fn();
+      const patchMessageLocal = vi.fn();
+      const { fn, store } = bindMethod('sendMessage', {
+        session: { npub: 'npub1viewer' },
+        workspaceOwnerNpub: 'npub1owner',
+        selectedChannelId: 'ch1',
+        channels: [{ record_id: 'ch1', owner_npub: 'npub1owner', group_ids: [] }],
+        messageInput: 'hello world',
+        scheduleChatFeedScrollToBottom,
+        patchMessageLocal,
+        flushAndBackgroundSync: vi.fn().mockResolvedValue(undefined),
+        getPreferredChannelWriteGroup: vi.fn().mockReturnValue(null),
+      });
+
+      await fn();
+
+      expect(scheduleChatFeedScrollToBottom).toHaveBeenCalledTimes(1);
+      expect(patchMessageLocal).toHaveBeenCalledTimes(1);
+      expect(patchMessageLocal.mock.calls[0][0]).toEqual(expect.objectContaining({
+        channel_id: 'ch1',
+        body: 'hello world',
+        sender_npub: 'npub1viewer',
+        sync_status: 'pending',
+      }));
+      expect(store.messageInput).toBe('');
+    } finally {
+      await deleteWorkspaceDb(workspaceDbKey);
+    }
   });
 });
 
@@ -672,5 +813,289 @@ describe('chat message actions menu', () => {
       recordId: 'msg-unknown',
       label: 'Chat message',
     });
+  });
+});
+
+function createDispatchReadyStore(overrides = {}) {
+  return createStore({
+    ...createChatThreadFlowDispatchState(),
+    channels: [
+      { record_id: 'channel-1', scope_id: 'scope-channel', title: 'General' },
+    ],
+    flows: [
+      {
+        record_id: 'flow-1',
+        title: 'Flow One',
+        scope_id: 'scope-flow',
+        scope_l1_id: 'scope-flow',
+        scope_policy_group_ids: ['policy:scope-flow'],
+        group_ids: ['group:scope-flow'],
+        record_state: 'active',
+      },
+      {
+        record_id: 'flow-2',
+        title: 'Flow Two',
+        record_state: 'active',
+      },
+    ],
+    chatThreadFlowDispatchSource: {
+      channelId: 'channel-1',
+      clickedMessageId: 'reply-1',
+      threadRootMessageId: 'root-1',
+      sourceSurface: 'thread_reply',
+      dispatchedAt: '2026-04-21T13:28:21.377Z',
+    },
+    chatThreadFlowDispatchMessages: [
+      {
+        record_id: 'root-1',
+        channel_id: 'channel-1',
+        parent_message_id: null,
+        body: 'Root message',
+        sender_npub: 'npub1root',
+        updated_at: '2026-04-21T13:28:21.377Z',
+      },
+      {
+        record_id: 'reply-1',
+        channel_id: 'channel-1',
+        parent_message_id: 'root-1',
+        body: 'Reply message',
+        sender_npub: 'npub1reply',
+        updated_at: '2026-04-21T13:30:21.377Z',
+      },
+    ],
+    ...overrides,
+  });
+}
+
+describe('chat thread flow dispatch modal state', () => {
+  it('opens from the canonical message set and leaves the plain flow-start path untouched', async () => {
+    const threadRoot = {
+      record_id: 'root-1',
+      channel_id: 'channel-1',
+      parent_message_id: null,
+      body: 'Root message',
+      updated_at: '2026-04-21T10:00:00.000Z',
+      record_state: 'active',
+    };
+    const earlierReply = {
+      record_id: 'reply-1',
+      channel_id: 'channel-1',
+      parent_message_id: 'root-1',
+      body: 'First reply',
+      updated_at: '2026-04-21T10:01:00.000Z',
+      record_state: 'active',
+    };
+    const clickedReply = {
+      record_id: 'reply-2',
+      channel_id: 'channel-1',
+      parent_message_id: 'root-1',
+      body: 'Clicked reply',
+      updated_at: '2026-04-21T10:02:00.000Z',
+      record_state: 'active',
+    };
+
+    const { fn, store } = bindMethod('openChatThreadFlowDispatch', {
+      channels: [{ record_id: 'channel-1', scope_id: 'scope-channel', title: 'General' }],
+      flows: [{ record_id: 'flow-1', title: 'Flow One', record_state: 'active' }],
+      selectedChannelId: 'channel-1',
+      mainFeedVisibleCount: 1,
+      messageActionsMenuId: 'reply-2',
+      showFlowStartConfirm: true,
+      flowStartTarget: { record_id: 'existing-flow' },
+      flowStartContext: 'keep-existing-start-context',
+      messages: [
+        threadRoot,
+        earlierReply,
+        clickedReply,
+        {
+          record_id: 'other-root',
+          channel_id: 'channel-1',
+          parent_message_id: null,
+          body: 'Newest top-level message',
+          updated_at: '2026-04-21T10:05:00.000Z',
+          record_state: 'active',
+        },
+      ],
+    });
+
+    await fn('reply-2', 'thread_reply');
+
+    expect(store.messageActionsMenuId).toBeNull();
+    expect(store.showChatThreadFlowDispatchModal).toBe(true);
+    expect(store.chatThreadFlowDispatchLoading).toBe(false);
+    expect(store.chatThreadFlowDispatchSource).toEqual(expect.objectContaining({
+      channelId: 'channel-1',
+      clickedMessageId: 'reply-2',
+      threadRootMessageId: 'root-1',
+      sourceSurface: 'thread_reply',
+    }));
+    expect(store.chatThreadFlowDispatchMessages.map((message) => message.record_id)).toEqual([
+      'root-1',
+      'reply-1',
+      'reply-2',
+    ]);
+    expect(store.chatThreadFlowDispatchSelectedFlowId).toBeNull();
+    expect(store.chatThreadFlowDispatchManualScopeId).toBeNull();
+    expect(store.chatThreadFlowDispatchResolvedScopeId).toBe('scope-channel');
+    expect(store.chatThreadFlowDispatchScopeSource).toBe('channel');
+    expect(store.chatThreadFlowDispatchResolvedScopeAssignment).toMatchObject({
+      scope_id: 'scope-channel',
+      write_group_ref: 'group:scope-channel',
+    });
+    expect(store.showFlowStartConfirm).toBe(true);
+    expect(store.flowStartTarget).toEqual({ record_id: 'existing-flow' });
+    expect(store.flowStartContext).toBe('keep-existing-start-context');
+  });
+
+  it('closeChatThreadFlowDispatch resets the full dispatch state block', () => {
+    const store = createStore({
+      showChatThreadFlowDispatchModal: true,
+      chatThreadFlowDispatchSource: { channelId: 'channel-1' },
+      chatThreadFlowDispatchMessages: [{ record_id: 'root-1' }],
+      chatThreadFlowDispatchSelectedFlowId: 'flow-1',
+      chatThreadFlowDispatchManualScopeId: 'scope-override',
+      chatThreadFlowDispatchResolvedScopeId: 'scope-override',
+      chatThreadFlowDispatchResolvedScopeAssignment: { scope_id: 'scope-override' },
+      chatThreadFlowDispatchScopeSource: 'override',
+      chatThreadFlowDispatchLaunchNotes: 'Launch note',
+      chatThreadFlowDispatchPreview: 'Preview text',
+      chatThreadFlowDispatchDirty: true,
+      chatThreadFlowDispatchPreviewStale: true,
+      chatThreadFlowDispatchLoading: true,
+      chatThreadFlowDispatchSubmitting: true,
+      chatThreadFlowDispatchError: 'Failed',
+    });
+
+    store.closeChatThreadFlowDispatch();
+
+    const expected = createChatThreadFlowDispatchState();
+    for (const [key, value] of Object.entries(expected)) {
+      expect(store[key]).toEqual(value);
+    }
+  });
+
+  it('keeps thread resolution consistent across main-feed, thread-parent, and thread-reply entry points', async () => {
+    const baseOverrides = {
+      channels: [{ record_id: 'channel-1', scope_id: 'scope-channel', title: 'General' }],
+      flows: [{ record_id: 'flow-1', title: 'Flow One', record_state: 'active' }],
+      messages: [
+        {
+          record_id: 'root-1',
+          channel_id: 'channel-1',
+          parent_message_id: null,
+          body: 'Root message',
+          updated_at: '2026-04-21T10:00:00.000Z',
+          record_state: 'active',
+        },
+        {
+          record_id: 'reply-1',
+          channel_id: 'channel-1',
+          parent_message_id: 'root-1',
+          body: 'Reply message',
+          updated_at: '2026-04-21T10:02:00.000Z',
+          record_state: 'active',
+        },
+      ],
+    };
+
+    const mainFeedStore = createStore(baseOverrides);
+    const threadParentStore = createStore(baseOverrides);
+    const threadReplyStore = createStore(baseOverrides);
+
+    await mainFeedStore.openChatThreadFlowDispatch('root-1', 'main_feed');
+    await threadParentStore.openChatThreadFlowDispatch('root-1', 'thread_parent');
+    await threadReplyStore.openChatThreadFlowDispatch('reply-1', 'thread_reply');
+
+    const expectedTranscript = ['root-1', 'reply-1'];
+
+    expect(mainFeedStore.chatThreadFlowDispatchSource?.threadRootMessageId).toBe('root-1');
+    expect(threadParentStore.chatThreadFlowDispatchSource?.threadRootMessageId).toBe('root-1');
+    expect(threadReplyStore.chatThreadFlowDispatchSource?.threadRootMessageId).toBe('root-1');
+    expect(mainFeedStore.chatThreadFlowDispatchMessages.map((message) => message.record_id)).toEqual(expectedTranscript);
+    expect(threadParentStore.chatThreadFlowDispatchMessages.map((message) => message.record_id)).toEqual(expectedTranscript);
+    expect(threadReplyStore.chatThreadFlowDispatchMessages.map((message) => message.record_id)).toEqual(expectedTranscript);
+  });
+});
+
+describe('chat thread flow dispatch preview lifecycle', () => {
+  it('regenerates the preview when flow selection changes while the preview is not dirty', () => {
+    const store = createDispatchReadyStore();
+
+    store.chatThreadFlowDispatchSelectedFlowId = 'flow-1';
+    store.handleChatThreadFlowDispatchInputsChanged();
+
+    expect(store.chatThreadFlowDispatchPreview).toContain('selected_flow_id: flow-1');
+    expect(store.chatThreadFlowDispatchPreview).toContain('selected_flow_title: Flow One');
+    expect(store.chatThreadFlowDispatchDirty).toBe(false);
+    expect(store.chatThreadFlowDispatchPreviewStale).toBe(false);
+  });
+
+  it('regenerates the preview when the manual scope override changes while the preview is not dirty', () => {
+    const store = createDispatchReadyStore({
+      chatThreadFlowDispatchSelectedFlowId: 'flow-1',
+    });
+
+    store.regenerateChatThreadFlowDispatchPreview();
+    store.chatThreadFlowDispatchManualScopeId = 'scope-override';
+    store.handleChatThreadFlowDispatchInputsChanged();
+
+    expect(store.chatThreadFlowDispatchResolvedScopeId).toBe('scope-override');
+    expect(store.chatThreadFlowDispatchScopeSource).toBe('override');
+    expect(store.chatThreadFlowDispatchPreview).toContain('resolved_scope_id: scope-override');
+  });
+
+  it('regenerates the preview when launch notes change while the preview is not dirty', () => {
+    const store = createDispatchReadyStore({
+      chatThreadFlowDispatchSelectedFlowId: 'flow-1',
+    });
+
+    store.chatThreadFlowDispatchLaunchNotes = 'Use the current repo and preserve acceptance criteria.';
+    store.handleChatThreadFlowDispatchInputsChanged();
+
+    expect(store.chatThreadFlowDispatchPreview).toContain('Use the current repo and preserve acceptance criteria.');
+  });
+
+  it('marks the preview as dirty after a manual edit', () => {
+    const store = createDispatchReadyStore({
+      chatThreadFlowDispatchPreview: 'Manually edited preview',
+    });
+
+    store.markChatThreadFlowDispatchPreviewEdited();
+
+    expect(store.chatThreadFlowDispatchDirty).toBe(true);
+  });
+
+  it('marks the preview stale instead of overwriting manual edits when dependencies change later', () => {
+    const store = createDispatchReadyStore({
+      chatThreadFlowDispatchSelectedFlowId: 'flow-1',
+    });
+
+    store.regenerateChatThreadFlowDispatchPreview();
+    store.chatThreadFlowDispatchPreview = 'Manual operator preview';
+    store.markChatThreadFlowDispatchPreviewEdited();
+    store.chatThreadFlowDispatchLaunchNotes = 'Updated launch note';
+    store.handleChatThreadFlowDispatchInputsChanged();
+
+    expect(store.chatThreadFlowDispatchPreview).toBe('Manual operator preview');
+    expect(store.chatThreadFlowDispatchPreviewStale).toBe(true);
+  });
+
+  it('explicit regenerate clears the stale marker and rebuilds the preview', () => {
+    const store = createDispatchReadyStore({
+      chatThreadFlowDispatchSelectedFlowId: 'flow-1',
+    });
+
+    store.regenerateChatThreadFlowDispatchPreview();
+    store.chatThreadFlowDispatchPreview = 'Manual operator preview';
+    store.markChatThreadFlowDispatchPreviewEdited();
+    store.chatThreadFlowDispatchLaunchNotes = 'Updated launch note';
+    store.handleChatThreadFlowDispatchInputsChanged();
+
+    const regenerated = store.regenerateChatThreadFlowDispatchPreview();
+
+    expect(regenerated).toContain('Updated launch note');
+    expect(store.chatThreadFlowDispatchPreview).toContain('Updated launch note');
+    expect(store.chatThreadFlowDispatchDirty).toBe(false);
+    expect(store.chatThreadFlowDispatchPreviewStale).toBe(false);
   });
 });

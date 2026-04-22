@@ -9,6 +9,7 @@ vi.mock('../src/translators/record-crypto.js', () => ({
 
 import {
   getTaskFlowInfo,
+  findTaskForFlowRunStep,
   buildAttachFlowPatch,
   buildDetachFlowPatch,
   buildFirstStepDescription,
@@ -51,6 +52,28 @@ describe('getTaskFlowInfo', () => {
     expect(info.isActiveRun).toBe(true);
     expect(info.flowRunId).toBe('run-001');
     expect(info.flowStep).toBe(2);
+  });
+
+  it('includes flow steps for inline task-detail rendering', () => {
+    const task = {
+      record_id: 't3',
+      flow_id: 'flow-abc',
+      flow_run_id: 'run-001',
+      flow_step: 2,
+    };
+    const info = getTaskFlowInfo(task, [
+      {
+        record_id: 'flow-abc',
+        title: 'Proposal Pipeline',
+        record_state: 'active',
+        steps: [
+          { step_number: 1, title: 'Research', type: 'job_dispatch' },
+          { step_number: 2, title: 'Review', type: 'approval' },
+        ],
+      },
+    ]);
+    expect(info.steps).toHaveLength(2);
+    expect(info.steps.map((step) => step.step_number)).toEqual([1, 2]);
   });
 
   it('handles missing flow gracefully (deleted/not found)', () => {
@@ -139,6 +162,28 @@ describe('buildDetachFlowPatch', () => {
     const patch = buildDetachFlowPatch(null);
     expect(patch.flow_id).toBeNull();
     expect(patch.references).toEqual([]);
+  });
+});
+
+// ─── findTaskForFlowRunStep ──────────────────────────────────
+
+describe('findTaskForFlowRunStep', () => {
+  it('finds the task for a flow run step', () => {
+    const tasks = [
+      { record_id: 't1', flow_run_id: 'run-1', flow_step: 1, record_state: 'active' },
+      { record_id: 't2', flow_run_id: 'run-1', flow_step: 2, record_state: 'active' },
+      { record_id: 't3', flow_run_id: 'run-2', flow_step: 2, record_state: 'active' },
+    ];
+    const found = findTaskForFlowRunStep(tasks, 'run-1', 2);
+    expect(found?.record_id).toBe('t2');
+  });
+
+  it('skips deleted tasks and returns null when no match exists', () => {
+    const tasks = [
+      { record_id: 't1', flow_run_id: 'run-1', flow_step: 1, record_state: 'deleted' },
+    ];
+    expect(findTaskForFlowRunStep(tasks, 'run-1', 1)).toBeNull();
+    expect(findTaskForFlowRunStep(tasks, 'run-1', null)).toBeNull();
   });
 });
 

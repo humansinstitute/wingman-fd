@@ -1,4 +1,5 @@
 import { Marked } from 'marked';
+import { buildSectionUrl, parseRouteLocation } from './route-helpers.js';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -19,6 +20,83 @@ function sanitizeUrl(rawHref, allowedProtocols = []) {
   } catch {
     const lowerHref = href.toLowerCase();
     return allowedProtocols.some((protocol) => lowerHref.startsWith(protocol)) ? href : null;
+  }
+}
+
+function getWindowHref() {
+  if (typeof window !== 'undefined' && window.location?.href) return window.location.href;
+  return 'http://localhost/';
+}
+
+function getWindowOrigin() {
+  if (typeof window !== 'undefined' && window.location?.origin) return window.location.origin;
+  return 'http://localhost';
+}
+
+function normalizeFlightDeckRoute(url) {
+  const route = parseRouteLocation(url.href);
+  const currentRoute = parseRouteLocation(getWindowHref());
+  const params = route.params || {};
+  const currentParams = currentRoute.params || {};
+  let section = route.section;
+  const workspaceSlug = route.workspaceSlug || currentRoute.workspaceSlug || null;
+  const workspacekey = params.workspacekey || currentParams.workspacekey || null;
+  const needsWorkspaceSlug = !route.workspaceSlug && Boolean(workspaceSlug) && route.section !== 'status';
+
+  if (params.docid && section !== 'docs') section = 'docs';
+  else if (params.reportid && section !== 'reports') section = 'reports';
+  else if ((params.taskid || params.view) && section !== 'tasks' && section !== 'calendar') section = 'tasks';
+  else if ((params.channelid || params.threadid) && section !== 'chat') section = 'chat';
+  else if (!needsWorkspaceSlug && (!workspacekey || params.workspacekey === workspacekey)) return url.href;
+
+  const nextUrl = new URL(buildSectionUrl({
+    workspaceSlug,
+    section,
+    scopeid: params.scopeid,
+    params: {
+      channelid: params.channelid,
+      threadid: params.threadid,
+      folderid: params.folderid,
+      docid: params.docid,
+      versioning: params.versioning,
+      commentid: params.commentid,
+      descendants: params.descendants,
+      groupid: params.groupid,
+      reportid: params.reportid,
+      taskid: params.taskid,
+      view: params.view,
+      workspacekey,
+      token: params.token,
+    },
+  }), url.origin);
+  nextUrl.hash = url.hash;
+  return nextUrl.href;
+}
+
+export function resolveMarkdownHref(rawHref) {
+  const href = String(rawHref ?? '').trim();
+  if (!href) return null;
+
+  const explicitHref = sanitizeUrl(href, ['file:', 'http:', 'https:', 'mailto:', 'nostr:']);
+  if (explicitHref) {
+    try {
+      const resolved = new URL(explicitHref);
+      if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
+        return resolved.origin === getWindowOrigin() ? normalizeFlightDeckRoute(resolved) : resolved.href;
+      }
+      return resolved.href;
+    } catch {
+      return explicitHref;
+    }
+  }
+
+  try {
+    const resolved = new URL(href, getWindowHref());
+    if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return null;
+    if (resolved.origin !== getWindowOrigin()) return null;
+    return normalizeFlightDeckRoute(resolved);
+  } catch {
+    return null;
   }
 }
 
@@ -55,7 +133,7 @@ renderer.link = function ({ href, title, tokens }) {
     const safeId = escapeHtml(mentionId);
     return `<a href="#" class="mention-link mention-link-${escapeHtml(mentionType)}" data-mention-type="${escapeHtml(mentionType)}" data-mention-id="${safeId}">@${label}</a>`;
   }
-  const safeHref = sanitizeUrl(href, ['file:', 'http:', 'https:', 'mailto:', 'nostr:']);
+  const safeHref = resolveMarkdownHref(href);
   const label = this.parser.parseInline(tokens);
   if (!safeHref) return label;
   const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';

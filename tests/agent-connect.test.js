@@ -35,6 +35,8 @@ describe('buildAgentConnectPackage', () => {
     const pkg = buildAgentConnectPackage({
       windowOrigin: 'https://open-cap-rose.wm21.otherstuff.ai',
       backendUrl: 'https://sb4.otherstuff.studio',
+      towerName: 'Family Tower',
+      towerDescription: 'Private family workspace host',
       session: {
         npub: 'npub1owner',
         pubkey: 'b'.repeat(64),
@@ -46,5 +48,7 @@ describe('buildAgentConnectPackage', () => {
     expect(parsed.directHttpsUrl).toBe('https://sb4.otherstuff.studio');
     expect(parsed.workspaceOwnerNpub).toBe('npub1owner');
     expect(parsed.appNpub).toMatch(/^npub1/);
+    expect(parsed.towerName).toBe('Family Tower');
+    expect(parsed.towerDescription).toBe('Private family workspace host');
   });
 });

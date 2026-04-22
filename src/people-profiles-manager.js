@@ -250,6 +250,93 @@ export const peopleProfilesManagerMixin = {
       }));
   },
 
+  findFlowApproverSuggestions(query, selectedApprovers = []) {
+    const needle = String(query || '').trim().toLowerCase();
+    if (!needle) return [];
+
+    const existing = new Set(
+      (selectedApprovers || []).map((value) => String(value || '').trim()).filter(Boolean),
+    );
+    const wsKeyNpubs = new Set(Object.keys(this._wsKeyDisplayMap || {}));
+
+    const people = this.addressBookPeople
+      .filter((person) => !wsKeyNpubs.has(person.npub))
+      .filter((person) => !existing.has(person.npub))
+      .filter((person) =>
+        String(person.npub || '').toLowerCase().includes(needle)
+        || String(this.getSenderName(person.npub) || '').toLowerCase().includes(needle)
+        || String(person.label || '').toLowerCase().includes(needle)
+      )
+      .slice(0, 6)
+      .map((person) => ({
+        type: 'person',
+        key: `person:${person.npub}`,
+        token: person.npub,
+        label: this.getSenderName(person.npub),
+        subtitle: person.npub,
+        avatarUrl: this.getSenderAvatar(person.npub),
+      }));
+
+    const groups = this.groups
+      .map((group) => {
+        const groupRef = String(group.group_id || group.group_npub || '').trim();
+        return {
+          group,
+          groupRef,
+          token: groupRef ? `group:${groupRef}` : '',
+        };
+      })
+      .filter(({ token }) => token && !existing.has(token))
+      .filter(({ group, groupRef, token }) =>
+        String(group.name || '').toLowerCase().includes(needle)
+        || String(groupRef || '').toLowerCase().includes(needle)
+        || token.toLowerCase().includes(needle)
+        || (group.member_npubs || []).some((member) => String(member || '').toLowerCase().includes(needle))
+      )
+      .slice(0, 6)
+      .map(({ group, token }) => ({
+        type: 'group',
+        key: token,
+        token,
+        label: group.name || token.slice(6),
+        subtitle: `${(group.member_npubs || []).length} members`,
+      }));
+
+    return [...people, ...groups].slice(0, 8);
+  },
+
+  getFlowApproverLabel(token) {
+    const value = String(token || '').trim();
+    if (!value) return '';
+    if (value.startsWith('npub1')) {
+      return this.getSenderName(value);
+    }
+    if (value.startsWith('group:')) {
+      const groupRef = value.slice(6);
+      const group = this.groups.find((candidate) =>
+        String(candidate.group_id || '').trim() === groupRef
+        || String(candidate.group_npub || '').trim() === groupRef
+      );
+      return group?.name || groupRef;
+    }
+    return value;
+  },
+
+  getFlowApproverSubtitle(token) {
+    const value = String(token || '').trim();
+    if (!value) return '';
+    if (value.startsWith('npub1')) return value;
+    if (value.startsWith('group:')) {
+      const groupRef = value.slice(6);
+      const group = this.groups.find((candidate) =>
+        String(candidate.group_id || '').trim() === groupRef
+        || String(candidate.group_npub || '').trim() === groupRef
+      );
+      return group ? `${(group.member_npubs || []).length} members` : value;
+    }
+    return value;
+  },
+
   mapGroupDraftMembers(memberNpubs = []) {
     return [...new Set((memberNpubs || []).map((value) => String(value || '').trim()).filter(Boolean))]
       .map((npub) => {
@@ -324,7 +411,7 @@ export const peopleProfilesManagerMixin = {
     const sharedGroups = new Set(
       this.docEditorShares
         .filter((share) => share.type === 'group')
-        .map((share) => share.group_npub)
+        .map((share) => share.group_id || share.group_npub)
     );
 
     const people = this.addressBookPeople

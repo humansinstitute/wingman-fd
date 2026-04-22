@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeDocShare,
+  normalizeDocAccessRow,
   serializeDocShares,
   mergeDocShareLists,
   getShareGroupIds,
+  getPreferredDocWriteGroupRef,
   getDocCommentSummary,
   getStoredDocShares,
   getExplicitDocShares,
@@ -67,14 +69,14 @@ describe('docs-manager pure utilities', () => {
       expect(result.inherited_from_directory_id).toBe('dir-123');
     });
 
-    it('uses existing key if provided', () => {
+    it('canonicalizes group keys even when an existing key is provided', () => {
       const result = normalizeDocShare({
         type: 'person',
         key: 'custom-key',
         person_npub: 'npub1abc',
         access: 'read',
       });
-      expect(result.key).toBe('custom-key');
+      expect(result.key).toBe('person:npub1abc');
     });
 
     it('falls back to via_group_npub for group key when group_npub is missing', () => {
@@ -84,6 +86,18 @@ describe('docs-manager pure utilities', () => {
         access: 'read',
       });
       expect(result.key).toBe('group:npub1via');
+    });
+
+    it('prefers stable group_id fields when present', () => {
+      const result = normalizeDocShare({
+        type: 'group',
+        group_id: 'uuid-1',
+        group_npub: 'npub_old_epoch',
+        access: 'write',
+      });
+      expect(result.key).toBe('group:uuid-1');
+      expect(result.group_id).toBe('uuid-1');
+      expect(result.group_npub).toBe('npub_old_epoch');
     });
   });
 
@@ -218,6 +232,37 @@ describe('docs-manager pure utilities', () => {
       const result = getExplicitDocShares(item);
       expect(result).toHaveLength(1);
       expect(result[0].person_npub).toBe('npub1');
+    });
+  });
+
+  describe('normalizeDocAccessRow', () => {
+    it('normalizes group_ids, share refs, and write_group_id through a resolver', () => {
+      const result = normalizeDocAccessRow({
+        group_ids: ['npub_old_epoch'],
+        write_group_id: 'npub_old_epoch',
+        shares: [
+          { type: 'group', group_npub: 'npub_old_epoch', access: 'write' },
+        ],
+      }, (value) => value === 'npub_old_epoch' ? 'uuid-1' : value);
+
+      expect(result.group_ids).toEqual(['uuid-1']);
+      expect(result.write_group_id).toBe('uuid-1');
+      expect(result.shares[0].group_id).toBe('uuid-1');
+      expect(result.shares[0].key).toBe('group:uuid-1');
+    });
+  });
+
+  describe('getPreferredDocWriteGroupRef', () => {
+    it('prefers scope policy groups before generic group order', () => {
+      const result = getPreferredDocWriteGroupRef({
+        group_ids: ['g-read', 'g-scope'],
+        scope_policy_group_ids: ['g-scope'],
+        shares: [
+          { type: 'group', group_npub: 'g-read', access: 'read' },
+          { type: 'group', group_npub: 'g-scope', access: 'write' },
+        ],
+      });
+      expect(result).toBe('g-scope');
     });
   });
 });

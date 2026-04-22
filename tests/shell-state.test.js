@@ -104,6 +104,8 @@ describe('shell state key inventory', () => {
     expect(SHELL_STATE_KEYS).toContain('connectHostUrl');
     expect(SHELL_STATE_KEYS).toContain('connectHostLabel');
     expect(SHELL_STATE_KEYS).toContain('connectHostServiceNpub');
+    expect(SHELL_STATE_KEYS).toContain('connectHostTowerName');
+    expect(SHELL_STATE_KEYS).toContain('connectHostTowerDescription');
     expect(SHELL_STATE_KEYS).toContain('connectHostError');
     expect(SHELL_STATE_KEYS).toContain('connectHostBusy');
     expect(SHELL_STATE_KEYS).toContain('connectManualUrl');
@@ -206,6 +208,8 @@ describe('shell state default values', () => {
     expect(shell.showConnectModal).toBe(false);
     expect(shell.connectStep).toBe(1);
     expect(shell.connectHostUrl).toBe('');
+    expect(shell.connectHostTowerName).toBe('');
+    expect(shell.connectHostTowerDescription).toBe('');
     expect(shell.connectWorkspaces).toEqual([]);
   });
 

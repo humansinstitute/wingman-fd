@@ -17,6 +17,8 @@ import {
   getApprovalsByStatus,
   getPersonsByOwner,
   getOrganisationsByOwner,
+  getOpportunitiesByOwner,
+  getOpportunityById,
 } from './db.js';
 import { recordFamilyHash } from './translators/chat.js';
 
@@ -89,6 +91,11 @@ function buildWorkspaceSpecs(store) {
       key: 'ws:flows',
       query: () => getFlowsByOwner(ownerNpub),
       onNext: (flows) => store.applyFlows(flows),
+    },
+    {
+      key: 'ws:opportunities',
+      query: () => getOpportunitiesByOwner(ownerNpub),
+      onNext: (opportunities) => store.applyOpportunities(opportunities),
     },
   ];
 
@@ -239,6 +246,28 @@ function buildWorkspaceSpecs(store) {
         },
       ];
       break;
+    case 'opportunities':
+      sectionSpecs = [
+        {
+          key: 'opportunities:persons',
+          query: () => getPersonsByOwner(ownerNpub),
+          onNext: (persons) => store.applyPersons(persons),
+        },
+        {
+          key: 'opportunities:organisations',
+          query: () => getOrganisationsByOwner(ownerNpub),
+          onNext: (organisations) => store.applyOrganisations(organisations),
+        },
+        {
+          key: 'opportunities:tasks',
+          query: () => getTasksByOwner(ownerNpub),
+          onNext: (tasks) => store.applyTasks(tasks),
+        },
+      ];
+      break;
+    case 'live':
+      sectionSpecs = [];
+      break;
     default:
       sectionSpecs = [];
   }
@@ -338,6 +367,28 @@ function buildDetailSpecs(store) {
         },
       ];
     }
+    case 'opportunities': {
+      const opportunityId = String(store?.activeOpportunityId || '').trim();
+      if (!opportunityId) return [];
+      return [
+        {
+          key: `opportunities:selected-opportunity:${opportunityId}`,
+          query: () => getOpportunityById(opportunityId),
+          onNext: (opportunity) => {
+            if (store.workspaceOwnerNpub !== ownerNpub || store.activeOpportunityId !== opportunityId) return;
+            return store.applySelectedOpportunity(opportunity);
+          },
+        },
+        {
+          key: `opportunities:comments:${opportunityId}`,
+          query: () => getCommentsByTarget(opportunityId),
+          onNext: (comments) => {
+            if (store.workspaceOwnerNpub !== ownerNpub || store.activeOpportunityId !== opportunityId) return;
+            return store.applyOpportunityComments(comments);
+          },
+        },
+      ];
+    }
     default:
       return [];
   }
@@ -432,6 +483,19 @@ export const sectionLiveQueryMixin = {
     const state = getSectionState(this);
     for (const [key, subscription] of state.detail.entries()) {
       if (!key.startsWith('tasks:comments:') && !key.startsWith('tasks:selected-task:')) continue;
+      stopSubscription(this, subscription);
+      state.detail.delete(key);
+    }
+  },
+
+  startOpportunityCommentsLiveQuery() {
+    this.startWorkspaceLiveQueries();
+  },
+
+  stopOpportunityCommentsLiveQuery() {
+    const state = getSectionState(this);
+    for (const [key, subscription] of state.detail.entries()) {
+      if (!key.startsWith('opportunities:comments:') && !key.startsWith('opportunities:selected-opportunity:')) continue;
       stopSubscription(this, subscription);
       state.detail.delete(key);
     }

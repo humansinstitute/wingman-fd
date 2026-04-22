@@ -24,6 +24,7 @@ import {
   upsertMessage,
   upsertPerson,
   upsertOrganisation,
+  upsertOpportunity,
   getCommentsByTarget,
   upsertComment,
 } from './db.js';
@@ -49,6 +50,7 @@ import { outboundChannel, outboundChatMessage } from './translators/chat.js';
 import { outboundFlow } from './translators/flows.js';
 import { outboundPerson } from './translators/persons.js';
 import { outboundOrganisation } from './translators/organisations.js';
+import { outboundOpportunity } from './translators/opportunities.js';
 import { decryptRecordPayload } from './translators/record-crypto.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import { outboundComment } from './translators/comments.js';
@@ -179,6 +181,8 @@ export const syncManagerMixin = {
         return this.persons || [];
       case 'organisation':
         return this.organisations || [];
+      case 'opportunity':
+        return this.opportunities || [];
       default:
         return [];
     }
@@ -382,16 +386,22 @@ export const syncManagerMixin = {
       const shares = typeof this.getEffectiveDocShares === 'function'
         ? this.getEffectiveDocShares(localRecord)
         : (localRecord.shares || []);
-      const writeGroupNpub = localRecord.group_ids?.[0] || null;
-      if (!writeGroupNpub) throw new Error('Document is missing a writable group.');
+      const groupIds = typeof this.getShareGroupIds === 'function'
+        ? this.getShareGroupIds(shares)
+        : (localRecord.group_ids || []);
+      const writeGroupRef = typeof this.getPreferredDocWriteGroupRef === 'function'
+        ? this.getPreferredDocWriteGroupRef({ ...localRecord, shares, group_ids: groupIds })
+        : (localRecord.write_group_id || groupIds?.[0] || null);
+      if (!writeGroupRef) throw new Error('Document is missing a writable group.');
       return outboundDocument({
         ...localRecord,
         owner_npub: ownerNpub,
         shares,
+        group_ids: groupIds,
         version,
         previous_version: previousVersion,
         signature_npub: signatureNpub,
-        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
       });
     }
 
@@ -399,16 +409,22 @@ export const syncManagerMixin = {
       const shares = typeof this.getEffectiveDocShares === 'function'
         ? this.getEffectiveDocShares(localRecord)
         : (localRecord.shares || []);
-      const writeGroupNpub = localRecord.group_ids?.[0] || null;
-      if (!writeGroupNpub) throw new Error('Folder is missing a writable group.');
+      const groupIds = typeof this.getShareGroupIds === 'function'
+        ? this.getShareGroupIds(shares)
+        : (localRecord.group_ids || []);
+      const writeGroupRef = typeof this.getPreferredDocWriteGroupRef === 'function'
+        ? this.getPreferredDocWriteGroupRef({ ...localRecord, shares, group_ids: groupIds })
+        : (localRecord.write_group_id || groupIds?.[0] || null);
+      if (!writeGroupRef) throw new Error('Folder is missing a writable group.');
       return outboundDirectory({
         ...localRecord,
         owner_npub: ownerNpub,
         shares,
+        group_ids: groupIds,
         version,
         previous_version: previousVersion,
         signature_npub: signatureNpub,
-        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
       });
     }
 
@@ -460,7 +476,7 @@ export const syncManagerMixin = {
       });
     }
 
-    if (familyId === 'person' || familyId === 'organisation') {
+    if (familyId === 'person' || familyId === 'organisation' || familyId === 'opportunity') {
       let writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
       let groupIds = effectiveLocalRecord.group_ids ?? [];
       // Fall back to workspace default group if the record has none
@@ -471,7 +487,11 @@ export const syncManagerMixin = {
       const shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
         ? this.buildScopeDefaultShares(groupIds)
         : (effectiveLocalRecord.shares || []);
-      const outbound = familyId === 'person' ? outboundPerson : outboundOrganisation;
+      const outbound = familyId === 'person'
+        ? outboundPerson
+        : familyId === 'organisation'
+          ? outboundOrganisation
+          : outboundOpportunity;
       return outbound({
         ...effectiveLocalRecord,
         owner_npub: ownerNpub,
@@ -546,6 +566,15 @@ export const syncManagerMixin = {
       await upsertOrganisation(nextRecord);
       this.organisations = this.organisations.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
       return;
+    }
+
+    if (familyId === 'opportunity') {
+      await upsertOpportunity(nextRecord);
+      if (typeof this.applyOpportunities === 'function') {
+        this.applyOpportunities(this.opportunities.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry));
+      } else {
+        this.opportunities = this.opportunities.map((entry) => entry.record_id === nextRecord.record_id ? nextRecord : entry);
+      }
     }
   },
 

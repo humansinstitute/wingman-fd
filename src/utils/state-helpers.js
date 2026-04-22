@@ -37,6 +37,10 @@ export function workspaceSettingsRecordId(workspaceOwnerNpub) {
   return `workspace-settings:${workspaceOwnerNpub}`;
 }
 
+export function agentChatTriggerRecordId(workspaceOwnerNpub) {
+  return `agent-chat-trigger:${workspaceOwnerNpub}`;
+}
+
 export function storageObjectIdFromRef(value) {
   const match = String(value || '').trim().match(/^storage:\/\/([A-Za-z0-9-]+)$/);
   return match?.[1] || '';

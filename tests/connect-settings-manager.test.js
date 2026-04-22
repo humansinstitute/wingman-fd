@@ -24,6 +24,8 @@ function createStore(overrides = {}) {
     connectHostUrl: '',
     connectHostLabel: '',
     connectHostServiceNpub: '',
+    connectHostTowerName: '',
+    connectHostTowerDescription: '',
     connectHostError: null,
     connectHostBusy: false,
     connectManualUrl: '',
@@ -52,6 +54,7 @@ function createStore(overrides = {}) {
     updateWorkspaceBootstrapPrompt: vi.fn(),
     rememberPeople: vi.fn().mockResolvedValue(undefined),
     resolveChatProfile: vi.fn(),
+    refreshKnownHostsMetadata: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 
@@ -150,18 +153,50 @@ describe('saveConnectionSettings', () => {
     await fn();
     expect(store.superbasedError).toBe('Connection key or backend URL required');
   });
+
+  it('captures tower metadata from a pasted connection token', async () => {
+    const token = btoa(JSON.stringify({
+      type: 'superbased_connection',
+      version: 2,
+      direct_https_url: 'https://tower.example',
+      service_npub: 'npub1service',
+      tower_name: 'Family Tower',
+      tower_description: 'Shared family workspace host',
+      workspace_owner_npub: 'npub1workspace',
+    }));
+    const { fn, store } = bindMethod('saveConnectionSettings', {
+      superbasedTokenInput: token,
+      session: { npub: 'npub1me' },
+      mergeKnownWorkspaces: vi.fn(),
+    });
+
+    await fn();
+
+    expect(store.knownHosts).toContainEqual(expect.objectContaining({
+      url: 'https://tower.example',
+      label: 'Family Tower',
+      serviceNpub: 'npub1service',
+      towerName: 'Family Tower',
+      towerDescription: 'Shared family workspace host',
+    }));
+  });
 });
 
 // --- connect modal ---
 describe('connect modal', () => {
   it('openConnectModal initializes state', () => {
-    const { fn, store } = bindMethod('openConnectModal');
+    const refreshKnownHostsMetadata = vi.fn().mockResolvedValue(undefined);
+    const { fn, store } = bindMethod('openConnectModal', { refreshKnownHostsMetadata });
     fn();
+    expect(store.showWorkspaceBootstrapModal).toBe(false);
     expect(store.showConnectModal).toBe(true);
     expect(store.connectStep).toBe(1);
     expect(store.connectHostUrl).toBe('');
+    expect(store.connectHostTowerName).toBe('');
+    expect(store.connectHostTowerDescription).toBe('');
     expect(store.connectHostBusy).toBe(false);
     expect(store.connectWorkspaces).toEqual([]);
+    expect(refreshKnownHostsMetadata).toHaveBeenCalledTimes(1);
   });
 
   it('closeConnectModal closes when not busy', () => {
@@ -210,9 +245,17 @@ describe('known hosts', () => {
     const { fn, store } = bindMethod('addKnownHost', {
       knownHosts: [{ url: 'https://host.example.com', label: 'Old', serviceNpub: '' }],
     });
-    fn({ url: 'https://host.example.com', label: 'New', serviceNpub: 'npub1svc' });
+    fn({
+      url: 'https://host.example.com',
+      label: 'New',
+      serviceNpub: 'npub1svc',
+      towerName: 'Tower Name',
+      towerDescription: 'Private tower',
+    });
     expect(store.knownHosts).toHaveLength(1);
-    expect(store.knownHosts[0].label).toBe('New');
+    expect(store.knownHosts[0].label).toBe('Tower Name');
+    expect(store.knownHosts[0].towerName).toBe('Tower Name');
+    expect(store.knownHosts[0].towerDescription).toBe('Private tower');
   });
 
   it('addKnownHost strips trailing slashes', () => {
@@ -232,17 +275,60 @@ describe('known hosts', () => {
       knownHosts: [{ url: 'https://custom.example.com', label: 'Custom', serviceNpub: '' }],
     });
     const merged = store.mergedHostsList;
-    expect(merged.length).toBeGreaterThanOrEqual(2);
     expect(merged.some((h) => h.url === 'https://custom.example.com')).toBe(true);
   });
 
   it('mergedHostsList deduplicates by URL', () => {
     const store = createStore({
-      knownHosts: [{ url: 'https://sb4.otherstuff.ai', label: 'Dup', serviceNpub: '' }],
+      knownHosts: [
+        { url: 'https://host.example.com', label: 'Original', serviceNpub: '' },
+        { url: 'https://host.example.com', label: 'Updated', serviceNpub: 'npub1svc', towerName: 'Tower', towerDescription: 'Shared host' },
+      ],
     });
     const merged = store.mergedHostsList;
-    const matchingUrls = merged.filter((h) => h.url === 'https://sb4.otherstuff.ai');
+    const matchingUrls = merged.filter((h) => h.url === 'https://host.example.com');
     expect(matchingUrls).toHaveLength(1);
+    expect(matchingUrls[0]).toMatchObject({
+      label: 'Tower',
+      serviceNpub: 'npub1svc',
+      towerName: 'Tower',
+      towerDescription: 'Shared host',
+    });
+  });
+
+  it('refreshKnownHostsMetadata fetches live tower metadata for known hosts', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: 'ok',
+        service_npub: 'npub1svc',
+        tower_name: 'Managed Tower',
+        tower_description: 'Managed on the server',
+      }),
+    });
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock;
+
+    try {
+      const store = createStore({
+        knownHosts: [{ url: 'https://tower.example', label: 'https://tower.example', serviceNpub: '' }],
+      });
+      const fn = connectSettingsManagerMixin.refreshKnownHostsMetadata.bind(store);
+
+      await fn();
+
+      expect(fetchMock).toHaveBeenCalledWith('https://tower.example/health');
+      expect(store.knownHosts).toContainEqual(expect.objectContaining({
+        url: 'https://tower.example',
+        label: 'Managed Tower',
+        serviceNpub: 'npub1svc',
+        towerName: 'Managed Tower',
+        towerDescription: 'Managed on the server',
+      }));
+      expect(store.persistWorkspaceSettings).toHaveBeenCalledTimes(1);
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });
 

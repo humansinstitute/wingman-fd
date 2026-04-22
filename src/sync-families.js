@@ -3,13 +3,16 @@ import { recordFamilyHash as reportFamilyHash } from './translators/reports.js';
 import { recordFamilyHash as taskFamilyHash } from './translators/tasks.js';
 import { recordFamilyHash as scheduleFamilyHash } from './translators/schedules.js';
 import { recordFamilyHash as settingsFamilyHash } from './translators/settings.js';
+import { recordFamilyHash as agentChatTriggerFamilyHash } from './translators/agent-chat-trigger.js';
 import { recordFamilyHash as flowFamilyHash } from './translators/flows.js';
 import { recordFamilyHash as approvalFamilyHash } from './translators/approvals.js';
 import { recordFamilyHash as personFamilyHash } from './translators/persons.js';
 import { recordFamilyHash as organisationFamilyHash } from './translators/organisations.js';
+import { recordFamilyHash as opportunityFamilyHash } from './translators/opportunities.js';
 
 export const SYNC_FAMILY_OPTIONS = Object.freeze([
   { id: 'settings', label: 'Workspace settings', hash: settingsFamilyHash('settings'), table: 'workspace_settings' },
+  { id: 'agent_chat_trigger', label: 'Agent Chat trigger', hash: agentChatTriggerFamilyHash('agent_chat_trigger'), table: 'agent_chat_triggers' },
   { id: 'channel', label: 'Channels', hash: chatFamilyHash('channel'), table: 'channels' },
   { id: 'chat_message', label: 'Chat messages', hash: chatFamilyHash('chat_message'), table: 'chat_messages' },
   { id: 'directory', label: 'Directories', hash: chatFamilyHash('directory'), table: 'directories' },
@@ -24,6 +27,7 @@ export const SYNC_FAMILY_OPTIONS = Object.freeze([
   { id: 'approval', label: 'Approvals', hash: approvalFamilyHash('approval'), table: 'approvals' },
   { id: 'person', label: 'People', hash: personFamilyHash('person'), table: 'persons' },
   { id: 'organisation', label: 'Organisations', hash: organisationFamilyHash('organisation'), table: 'organisations' },
+  { id: 'opportunity', label: 'Opportunities', hash: opportunityFamilyHash('opportunity'), table: 'opportunities' },
 ]);
 
 export const DEFAULT_SYNC_FAMILY_IDS = Object.freeze(SYNC_FAMILY_OPTIONS.map((family) => family.id));

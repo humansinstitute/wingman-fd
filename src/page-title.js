@@ -28,12 +28,16 @@ export function buildFlightDeckDocumentTitle({
       if (nextDocTitle) return buildSectionTitle(`Docs | ${nextDocTitle}`);
       if (nextFolderLabel) return buildSectionTitle(`Docs | ${nextFolderLabel}`);
       return buildSectionTitle('Docs');
+    case 'opportunities':
+      return buildSectionTitle('Opportunities');
     case 'people':
       return buildSectionTitle('People');
     case 'scopes':
       return buildSectionTitle('Scopes');
     case 'settings':
       return buildSectionTitle('Settings');
+    case 'live':
+      return buildSectionTitle('Live');
     case 'chat':
     default:
       if (nextChannelLabel) return buildSectionTitle(`Chat | ${nextChannelLabel}`);

@@ -1,783 +1,501 @@
-# Design: SSE Push Updates for Real-Time Sync
+# Design: Flight Deck Sync Catch-Up, Cold-Start, and Recovery Policy
 
-**Status:** Draft
-**Date:** 2026-04-01
-**Depends on:** [target_alpine_dexie_archi.md](./target_alpine_dexie_archi.md), WP2 (Web Worker sync runtime)
+**Status:** Draft  
+**Date:** 2026-04-22  
+**Scope:** Flight Deck, Tower, and Yoke sync/runtime behavior  
+**Related:** `wingman-fd/src/sync-manager.js`, `wingman-fd/src/worker/sync-worker-runner.js`, `wingman-tower/src/routes/stream.ts`, `wingman-tower/src/sse-hub.ts`, `wingman-yoke/src/sync.js`, `docs/log/wp4-sse-sync-messaging-contract.md`
 
 ---
 
-## Problem Statement
+## Problem
+
+SSE is already the agreed primary live-update path. The current design problem is
+not transport choice. It is continuity handling:
+
+- when should Flight Deck resume from a previously seen stream position
+- when should it do a bounded delta catch-up using existing family cursors
+- when should it escalate to a real cold-start or full reconciliation
+- how do we explain, log, and debug those transitions
+
+Pete's observed failure mode is that normal wake, reconnect, and routine use on
+mobile and laptop often feel like recovery mode or a cold re-read of record
+families rather than a bounded catch-up from the last known good position.
+
+The policy in this document makes **cold-start and full reconciliation the
+exception**, not the default.
+
+## Goals
+
+1. Keep SSE as the default steady-state freshness path.
+2. Persist enough local state that worker restarts, browser wake, and reconnects
+   can resume cleanly.
+3. Use bounded delta catch-up whenever continuity is still plausible.
+4. Escalate to full reconciliation only on explicit continuity-break signals.
+5. Detect linked-record integrity gaps without silently broadening every issue
+   into a workspace-wide recovery.
+6. Make recovery-mode entry observable and explainable.
+
+## Non-goals
+
+- Replacing Yoke with SSE. Yoke remains an explicit sync client.
+- Pushing encrypted payloads over SSE. SSE remains advisory.
+- Using wall-clock age alone as proof that continuity is broken.
+
+---
+
+## Current Runtime Gaps
+
+The current runtime explains why recovery behavior appears too often:
+
+1. `ensureBackgroundSync(true)` reconnects SSE too aggressively. Many UI and
+   workspace paths call it, and `connectSSEStream()` is not idempotent, so
+   normal navigation can tear down and reopen the stream.
+2. `sseLastEventId` lives only in worker memory. A worker restart, tab reload,
+   or mobile suspend loses the replay cursor even when local family cursors are
+   still valid.
+3. Flight Deck ignores the `connected` event payload from Tower. Tower already
+   emits the current stream cursor, but the worker only updates its cursor from
+   `record-changed` events. A quiet workspace can reconnect without any stored
+   replay cursor.
+4. `catch-up-required` currently schedules an ordinary background sync rather
+   than an explicit continuity-break recovery path.
+5. `lastSuccessAt` is overloaded. It is updated by write flush success, which is
+   not the same thing as inbound continuity or read freshness.
+6. The current catch-up overlay can be raised by a time threshold (`10 hours`)
+   rather than by a real continuity-break signal.
+
+Those gaps create false transitions from "healthy but briefly disconnected" into
+"looks stale, reconnect, maybe full sync."
+
+---
+
+## Design Principles
+
+1. **Continuity beats age.** A 12-hour sleep with a valid replay cursor is still
+   resumable. A 30-second disconnect after a worker restart with no cursor may
+   require delta catch-up.
+2. **Persist both stream and family state.** SSE continuity and record-family
+   progress are related but different.
+3. **Make recovery layered.** Replay first, then bounded delta, then targeted
+   integrity repair, then full reconciliation.
+4. **Do not let UI timers define sync semantics.** Visibility, focus, and route
+   changes may trigger checks, but they should not by themselves force
+   reconnect/recovery.
+5. **Target integrity gaps narrowly.** Missing children or linked records should
+   trigger family-specific repair before workspace-wide recovery.
 
-Flight Deck currently polls Tower every 15 seconds (active section) or 30 seconds (idle) via `backgroundSyncTick()`. Each tick runs a full `performSync` cycle:
+---
 
-1. Refresh groups (conditional)
-2. Flush pending writes
-3. POST `/api/v4/records/heartbeat` with all family cursors
-4. If stale families found → GET `/api/v4/records` per stale family
-5. Decrypt + materialize each record into Dexie
-6. Update unread summaries
+## Runtime State Machine
 
-Even when nothing has changed, this cycle costs:
+### State Summary
 
-- A signed NIP-98 request for the heartbeat
-- Worker wake + message round-trip
-- Dexie cursor reads for every family
-- Alpine sync-status reactivity
+| State | Meaning | Entry signals | Exit path |
+| --- | --- | --- | --- |
+| `cold_start` | No trusted local sync baseline exists | empty local DB, no family cursors, manual full reset | `full_reconcile` |
+| `stream_connecting` | Opening or reopening SSE | app start, reconnect, token refresh | `live`, `delta_catchup`, `polling_fallback`, `recovery_required` |
+| `live` | SSE connected and continuity intact | successful `connected`, replay or no gap | stay live or move to `delta_catchup` on stream drop |
+| `delta_catchup` | Resume via replay or heartbeat-bounded stale-family pull | replay requested, stream drop, worker restart with local cursors, short offline gap | `live`, `integrity_repair`, `polling_fallback`, `recovery_required` |
+| `integrity_repair` | Targeted repair for missing linked records after bounded catch-up | parent/child/reference gap detected | `live` or `recovery_required` |
+| `recovery_required` | Continuity is explicitly broken | Tower `catch-up-required`, corrupted local cursor state, repeated targeted repair failure | `full_reconcile` |
+| `full_reconcile` | Broad workspace reconciliation | manual full sync, cold start, explicit recovery | `live` |
+| `polling_fallback` | SSE unavailable but local state still usable | repeated reconnect failures, transient stream outage | `stream_connecting`, `delta_catchup`, or `recovery_required` |
 
-At 15-second cadence that is ~5,760 sync cycles per day per tab. The vast majority return "nothing changed."
+### User-facing mapping
 
-### What polling cannot fix
+| UI state | Backing runtime states |
+| --- | --- |
+| normal live | `live` |
+| reconnecting | `stream_connecting`, `delta_catchup`, `polling_fallback` |
+| targeted repair | `integrity_repair` |
+| recovery mode | `recovery_required`, `full_reconcile` |
 
-- **Latency floor.** Other clients see changes up to 15 seconds late. Chat feels sluggish.
-- **Idle CPU.** The heartbeat cycle runs even when no data has changed, keeping the worker and main thread periodically hot.
-- **Scaling cost.** Every connected client hits Tower on a fixed cadence regardless of activity. Tower bears O(clients × cadence) request volume even at rest.
+The blocking catch-up overlay should be shown only for:
 
-## Proposal
+- `cold_start`
+- `full_reconcile`
+- user-invoked manual full sync
+- explicit continuity break after `recovery_required`
 
-Replace the poll-based inbound sync trigger with a **Server-Sent Events (SSE)** stream from Tower.
+It should **not** appear for normal replay-based resume or bounded stale-family
+catch-up.
 
-The SSE stream delivers lightweight change notifications. The client's Web Worker receives these notifications and pulls only the affected family, only when data actually changed.
+---
 
-The outbound write path (pending writes → worker flush → POST) is unchanged, except the flush interval can become more aggressive since inbound and outbound are now decoupled.
+## Persisted State
 
-## Why SSE, Not WebSocket
+Flight Deck already persists per-family `sync_since:<familyHash>` cursors. That
+must remain the authoritative record-family watermark. The missing piece is a
+persisted stream continuity record.
 
-| Concern | SSE | WebSocket |
-|---|---|---|
-| Data direction | Server → client (our primary need) | Bidirectional |
-| Reconnect | Built into EventSource spec | Manual reconnect logic |
-| Auth | Standard HTTP headers on connect | Requires auth in upgrade or first frame |
-| Proxy/CDN | Works through standard HTTP infrastructure | Often needs special proxy config |
-| Complexity | Simple text stream, native browser API | Frame protocol, ping/pong, close codes |
-| Outbound writes | Use existing POST `/api/v4/records/sync` | Would duplicate the existing write API |
+### Flight Deck persisted sync state
 
-SSE is sufficient because the data flow is asymmetric: Tower pushes notifications, client pushes writes via existing REST endpoints. WebSocket adds bidirectional complexity with no current benefit.
+Store these keys in `sync_state`:
 
-## Architecture
+| Key | Purpose |
+| --- | --- |
+| `sync_since:<familyHash>` | latest fully applied timestamp per family |
+| `sse:last_event_id` | highest acknowledged SSE event id |
+| `sse:last_event_seen_at` | wall clock when that event was processed |
+| `sse:last_connected_event_id` | `connected.event_id` from Tower |
+| `sse:last_connected_at` | wall clock for the last successful stream connect |
+| `sync:last_inbound_apply_at` | last time a remote pull materially applied data |
+| `sync:last_outbound_flush_at` | last successful write flush |
+| `sync:last_heartbeat_ok_at` | last successful heartbeat summary check |
+| `sync:last_transition` | last runtime transition reason payload |
+| `sync:last_recovery_reason` | latest reason that entered `recovery_required` or `full_reconcile` |
 
-### Stream Topology
+### What counts as acknowledging an SSE cursor
 
-One SSE connection per active workspace, owned by the Web Worker:
+The worker should advance `sse:last_event_id` on every event that carries an
+event id, not only `record-changed`:
 
-```
-Tower
-  │
-  └─ GET /api/v4/workspaces/:owner_npub/stream
-       │
-       └─ SSE connection (long-lived, per workspace)
-            │
-            └─ Web Worker (EventSource)
-                 │
-                 ├─ echo suppression
-                 ├─ family routing
-                 ├─ targeted pull for active families
-                 ├─ dirty-flag for inactive families
-                 └─ postMessage status to main thread
-```
+- `connected`
+- `record-changed`
+- `group-changed`
+- `heartbeat`
+- `catch-up-required`
 
-### Event Shape
+On initial connect, `connected.event_id` seeds the stream baseline even if the
+workspace is quiet. That prevents a reconnect from starting with a null cursor.
 
-Tower emits lightweight notification events. These include enough metadata for the worker to decide whether a pull is needed, but do not include the full encrypted payload:
+### Yoke persisted state
 
-```
-id: 1711929600123
-event: record-changed
-data: {"family_hash":"namespace:chat_message","record_id":"abc-123","version":3,"signature_npub":"npub1xyz...","updated_at":"2026-04-01T12:00:00.123Z","record_state":"active"}
-```
+Yoke remains a pull-based reconciler, but it should stay aligned with the same
+family-watermark semantics:
 
-Fields:
+- keep `sync:<family>:at` as the per-family watermark
+- keep `sync:last_at`
+- expose repaired/pruned counts and family watermarks in diagnostics so it can
+  serve as a comparison baseline when Flight Deck claims it needed recovery
 
-| Field | Purpose |
-|---|---|
-| `id` | Monotonic cursor for `Last-Event-ID` replay |
-| `family_hash` | Which sync family changed |
-| `record_id` | Which record (for targeted pull or echo match) |
-| `version` | Record version — worker can compare against local Dexie row and skip pull if already current |
-| `signature_npub` | Who signed the change (for echo suppression) |
-| `updated_at` | Timestamp of the change |
-| `record_state` | `active` or `deleted` — lets worker handle deletes without a pull |
+Yoke does not need an SSE cursor today.
 
-The worker can skip the pull entirely if its local Dexie row for `record_id` already has `version >= event.version`. This avoids unnecessary round-trips for records the client already has (e.g., from a recent sync or optimistic local write).
+---
 
-The event does **not** include encrypted payloads. When a pull is needed, the client fetches the actual record through the existing `GET /api/v4/records` endpoint, which already enforces visibility and group-payload access.
+## Transition Policy
 
-### Additional Event Types
+### 1. Cold start
 
-```
-event: group-changed
-data: {"group_id":"...","group_npub":"npub1...","action":"member_added|member_removed|epoch_rotated"}
+Enter `cold_start` only when at least one of these is true:
 
-event: heartbeat
-data: {"ts":"2026-04-01T12:00:30Z"}
-```
+- the local workspace DB is empty for runtime families
+- no `sync_since:<familyHash>` cursors exist
+- the user explicitly requested a reset/full sync
 
-- `group-changed`: Triggers group refresh so the client picks up new keys/membership before pulling records.
-- `heartbeat`: Tower sends every ~30 seconds to keep the connection alive and let the client detect stale connections.
+Action:
 
-## Authentication
+- perform `full_reconcile`
+- after apply, connect SSE
+- persist `connected.event_id`
 
-### Connection Auth
+### 2. Routine focus resume, short sleep, reconnect, or network blip
 
-NIP-98 is per-request and has a 300-second freshness window. SSE connections are long-lived. The solution uses the existing **workspace session key** infrastructure:
+These cases should **not** imply recovery on their own.
 
-1. Client generates a short-lived **connection token**: a NIP-98-style signed event with:
-   - `url` = the SSE endpoint URL
-   - `method` = `GET`
-   - `created_at` = now
-   - Signed by the workspace session key (already registered with Tower)
-2. Token is passed as a query parameter: `?token=<base64>`
-3. Tower validates the token on connection open using `requireNip98AuthResolved()`, which already resolves workspace session keys to real user npubs.
-4. Tower holds the resolved `userNpub` and `workspaceOwnerNpub` in connection state for the lifetime of the stream.
+Action order:
 
-### Token Refresh
+1. If the existing stream is still healthy, do nothing.
+2. If the stream must reconnect, reconnect with persisted `sse:last_event_id`.
+3. If replay succeeds, process replay-triggered family pulls and return to
+   `live`.
+4. If replay cannot be attempted but family cursors exist, run heartbeat-based
+   stale-family delta catch-up.
 
-The initial NIP-98 token is validated once at connection time. The SSE connection stays open without re-authentication. If the connection drops, the client reconnects with a fresh token.
+No blocking overlay. No full reconcile by age threshold alone.
 
-For long-lived connections (hours), Tower can optionally close the stream after a configurable max lifetime (e.g., 4 hours), forcing a clean reconnect with fresh auth.
+### 3. Worker restart or browser process restart
 
-### Workspace Session Key Dependency
+If the worker restarts but the workspace DB still exists:
 
-This design assumes the workspace session key (`ws_key_npub`) is registered with Tower before SSE connects. The registration flow already exists:
+- reconnect using persisted `sse:last_event_id`
+- if that cursor is missing but family cursors are present, use heartbeat delta
+  catch-up rather than full reconcile
 
-```
-bootstrapWorkspaceSessionKey()
-  → registerWorkspaceKey({ workspace_owner_npub, ws_key_npub })
-  → markWorkspaceKeyRegistered()
-  → workspace key available for NIP-98 signing
-```
+This is the critical distinction between:
 
-SSE connection should only be attempted after `isWorkspaceKeyRegistered()` returns true. If registration fails (old Tower), fall back to poll-based sync.
+- **stream continuity missing**
+- **workspace baseline missing**
 
-## Echo Suppression
+The former does not automatically imply the latter.
 
-### Problem
+### 4. Explicit continuity break
 
-When a client writes a record, the SSE stream will echo that change back. Without suppression, the client would re-pull and re-materialize its own write.
+Enter `recovery_required` only on concrete signals:
 
-### Solution: Write-ID Set
+| Signal | Reason |
+| --- | --- |
+| Tower emits `catch-up-required` | replay cursor is no longer usable |
+| Tower restart / stream epoch mismatch | replay continuity cannot be trusted |
+| local cursor state is corrupted or regresses | client cannot prove incremental safety |
+| repeated targeted integrity repair still fails for the same gap | bounded repair is insufficient |
+| user clicks manual full sync | explicit operator override |
 
-1. When the worker flushes a pending write and gets a success response, it stores the `record_id + version` pair in a short-lived `Map` with a 30-second TTL.
-2. When an SSE event arrives, the worker checks `echoSet.has(recordId + ':' + version)`.
-3. If found → skip. The client already has this data from the optimistic local write.
-4. If not found → process normally (pull the record).
+Action:
 
-```javascript
-// In the worker
-const echoSuppressionSet = new Map(); // key: "recordId:version", value: expiry timestamp
+- record `sync:last_recovery_reason`
+- show recovery UI
+- run `performSync({ forceFull: true })`
+- reconnect SSE and seed the new cursor from `connected.event_id`
 
-function markOwnWrite(recordId, version) {
-  echoSuppressionSet.set(`${recordId}:${version}`, Date.now() + 30_000);
-}
+### 5. Polling fallback
 
-function isOwnEcho(recordId, version) {
-  const key = `${recordId}:${version}`;
-  const expiry = echoSuppressionSet.get(key);
-  if (!expiry) return false;
-  if (Date.now() > expiry) {
-    echoSuppressionSet.delete(key);
-    return false;
-  }
-  echoSuppressionSet.delete(key);
-  return true;
-}
-```
+If SSE cannot reconnect after the configured retry budget:
 
-### Multi-Tab Behavior
+- enter `polling_fallback`
+- continue heartbeat summary checks and stale-family pulls on cadence
+- do not force full reconcile merely because SSE is unavailable
 
-Tab A writes a record. Tab B (same user, same workspace) has a separate worker with a separate echo set. Tab B does **not** have the write in its echo set, so it pulls and materializes the record normally. This is correct — Tab B needs the update.
+Escalate from `polling_fallback` to `recovery_required` only if:
 
-## Client-Side Design
+- heartbeat indicates cursor state is unusable
+- stale-family pulls repeatedly fail
+- an integrity gap persists after targeted repair
 
-### Worker SSE Lifecycle
+---
 
-The Web Worker manages the `EventSource` connection:
+## Bounded Delta Catch-Up Rules
 
-```javascript
-// In sync-worker-runner.js or a new sse-client.js module in the worker
+### Replay-first
 
-let eventSource = null;
-let reconnectTimer = null;
-let lastEventId = null;
+If `sse:last_event_id` exists, Flight Deck reconnects with it first.
 
-function connectSSE(workspaceOwnerNpub, token, backendUrl) {
-  disconnectSSE();
+Expected Tower behavior:
 
-  const url = new URL(`/api/v4/workspaces/${workspaceOwnerNpub}/stream`, backendUrl);
-  url.searchParams.set('token', token);
-  if (lastEventId) url.searchParams.set('last_event_id', lastEventId);
+- replay available: replay missed events, then emit `connected`
+- replay unavailable: emit `catch-up-required`, then `connected`
 
-  eventSource = new EventSource(url.toString());
+Expected Flight Deck behavior:
 
-  eventSource.addEventListener('record-changed', handleRecordChanged);
-  eventSource.addEventListener('group-changed', handleGroupChanged);
-  eventSource.addEventListener('heartbeat', handleHeartbeat);
+- replay success: debounce stale families and pull only affected families
+- replay unavailable: enter `recovery_required`
 
-  eventSource.onerror = () => {
-    disconnectSSE();
-    scheduleReconnect();
-  };
-}
+### Heartbeat-bounded delta
 
-function disconnectSSE() {
-  if (eventSource) {
-    eventSource.close();
-    eventSource = null;
-  }
-}
-```
+If no replay cursor is available but family cursors exist:
 
-### Event Handling and Debounce
+- run `POST /api/v4/records/heartbeat`
+- pull only `stale_families`
+- keep existing `sync_since:<familyHash>` semantics
 
-SSE events arrive individually, but the worker should not pull per-event. Instead, it collects events into a short debounce window and pulls once per affected family.
+This is still bounded catch-up. It is not cold start.
 
-This works because Tower's `GET /api/v4/records` already supports `since` cursor filtering per family. A single call returns all records updated after the cursor — whether 1 record changed or 30. The SSE events are just the **trigger** telling the worker which families to pull. The actual data comes through the existing REST endpoint.
+### No time-based auto-escalation
 
-**Example:** 50 SSE events arrive in 1 second across 3 families (30 chat, 15 tasks, 5 docs). Result: 3 HTTP requests, not 50.
+Remove "older than 10 hours" as a recovery trigger. Long offline duration may
+change the *likelihood* of replay failure, but it is not itself proof that
+continuity is broken.
 
-```javascript
-const DEBOUNCE_MS = 300;
-let debounceTimer = null;
-const staleFamilies = new Set();
+Time should feed observability:
 
-function handleRecordChanged(event) {
-  const data = JSON.parse(event.data);
-  lastEventId = event.lastEventId;
+- `stale_for_ms`
+- `offline_for_ms`
+- `last_event_seen_at`
 
-  // Echo suppression
-  if (isOwnEcho(data.record_id, data.version)) return;
+It should not directly force `full_reconcile`.
 
-  // Collect the stale family, don't pull yet
-  staleFamilies.add(data.family_hash);
+---
 
-  // Reset debounce timer
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(flushStaleFamilies, DEBOUNCE_MS);
-}
+## Linked-Record Integrity Checks
 
-async function flushStaleFamilies() {
-  debounceTimer = null;
-  const families = [...staleFamilies];
-  staleFamilies.clear();
+Recovery mode must not hide missing linked records. It must make them visible
+and repairable.
 
-  if (!families.length) return;
+### Integrity invariants
 
-  // One pull per family — each call uses the existing since cursor
-  // and returns ALL changed records in that family since the cursor.
-  // No need to fetch individual record IDs.
-  await pullRecordsForFamilies(ownerNpub, viewerNpub, families, {
-    workspaceDbKey,
-  });
-}
-```
+After any bounded catch-up or full reconcile, the runtime should verify the
+links touched by that sync batch:
 
-The debounce window (300ms) is short enough to feel instant to the user but long enough to batch bursts. A rapid-fire sequence of 50 events settles into a single batch pull after the last event.
+| Source family | Required linked family | Example |
+| --- | --- | --- |
+| `chat_message` | `channel` | message without channel should not render as healthy |
+| `chat_message` attachment refs | `audio_note` / storage metadata | visible voice-note message with missing note record |
+| `comment` | target family row | comment exists but parent task/doc missing |
+| `task` | parent task / flow / approval refs | task references step context not materialized |
+| `document` / `directory` | parent directory | child appears before parent |
 
-### Family Routing (Section-Aware Pull)
+### Repair policy
 
-When section-scoped subscriptions are implemented (WP4), the debounce handler can route differently based on whether the family is currently active:
+Integrity repair should be narrow and ordered:
 
-```javascript
-async function flushStaleFamilies() {
-  debounceTimer = null;
-  const families = [...staleFamilies];
-  staleFamilies.clear();
+1. detect the missing edge
+2. queue targeted family repair for only the relevant linked family or families
+3. retry once with existing family cursors
+4. if still missing, retry with a family-local force pull
+5. escalate to `recovery_required` only if the same gap survives targeted repair
 
-  const activeFamilies = [];
-  for (const family of families) {
-    if (isActiveSectionFamily(family)) {
-      activeFamilies.push(family);
-    } else {
-      // Inactive section — mark dirty, pull on section switch
-      markFamilyDirty(family);
-    }
-  }
+Examples:
 
-  if (activeFamilies.length) {
-    await pullRecordsForFamilies(ownerNpub, viewerNpub, activeFamilies, {
-      workspaceDbKey,
-    });
-  }
-}
-```
+- missing `audio_note` for a freshly visible message should queue
+  `audio_note` repair, not full workspace sync
+- missing comment target after a comment pull should queue the target family
+  repair before broad recovery
 
-This means navigating to Tasks after being in Chat only pulls task data if it was marked dirty while the user was away. No pull needed if no SSE events arrived for that family.
+### Integrity incidents must be observable
 
-### Why No New Fetch Endpoint is Needed
+Every detected integrity gap should log:
 
-Tower's existing `GET /api/v4/records` already supports everything the SSE client needs:
+- source record id
+- source family
+- missing linked family
+- missing linked record id if known
+- repair attempts
+- final outcome
 
-- `record_family_hash` — scopes to one family per request
-- `since` — returns only records updated after the cursor (ISO timestamp)
-- `limit` / `offset` — pagination for large result sets (default 200, max 1000)
-- Visibility enforcement — owner sees all, non-owner sees group-accessible only
+---
 
-The worker already tracks `sync_since:${familyHash}` per family in Dexie. After a pull, it advances the cursor. The next SSE-triggered pull starts from the new cursor. No record-by-record fetching needed.
+## Observable State and Instrumentation
 
-### Connection Start Semantics
+The runtime should emit structured transition logs rather than only coarse
+status strings.
 
-The SSE stream is **live-only**. It does not replay history on connect.
+### Flight Deck transition log
 
-The client must be caught up before opening the stream. The invariant is:
+Emit a structured entry on every state transition:
 
-```
-1. performSync()      → catch up via REST (pulls all stale families)
-2. connectSSE()       → live updates from this moment forward
-```
-
-A fresh client (first load, new device, cleared cache) does a full `performSync()` first, then opens the stream. The stream starts delivering events from the moment of connection. The client never has to "work through" a backlog of stream history.
-
-The `last_event_id` parameter exists for **reconnection after disconnect** — whether a network blip or 8 hours of sleep. Tower's in-memory ring buffer holds the most recent ~10k events (see Ring Buffer Eviction below). If the client's `Last-Event-ID` is still in the buffer, Tower replays the missed events and the client processes them normally — no full sync needed.
-
-If the client's cursor has been evicted from the buffer (buffer full, or Tower restarted), Tower sends `event: catch-up-required` and the client falls back to `performSync()` before resuming the stream.
-
-### Ring Buffer Eviction
-
-The ring buffer is **size-based, not time-based**. It holds the most recent ~10k events regardless of when they occurred.
-
-Why this matters: a quiet workspace overnight might produce only 5 events over 8 hours. Those 5 events sit comfortably in a 10k-slot buffer. When the user opens their laptop in the morning, the client reconnects with `Last-Event-ID`, Tower replays 5 events, the worker does 2-3 family pulls, and the user is caught up in under a second. A time-based policy (e.g., "discard events older than 5 minutes") would force a full sync for no reason in this scenario.
-
-Eviction rules:
-
-- Buffer is a fixed-size ring (oldest events dropped when full)
-- No time-based expiry
-- Buffer is cleared on Tower restart (unavoidable for in-memory storage)
-- If the requested `Last-Event-ID` has been evicted → send `catch-up-required`
-
-For a workspace with moderate activity (~100 events/hour), a 10k buffer covers roughly 4 days. For a very active workspace (~1000 events/hour), it covers ~10 hours. This means most overnight disconnects reconnect cleanly via replay.
-
-### Catch-Up Sync UI Gate
-
-When the client needs to do a full `performSync()` — initial load, long offline gap with expired cursor, or Tower restart — the app should show a **blocking overlay** so the user does not interact with stale or incomplete state.
-
-The app already tracks sync progress (`syncSession` with phase, `syncProgressPercent()`, `syncProgressLabel()`) and renders a progress bar in the avatar menu. The change is to surface this prominently during catch-up scenarios:
-
-```
-┌──────────────────────────────────┐
-│                                  │
-│       Catching up...             │
-│                                  │
-│   ████████████░░░░░░░  65%       │
-│   Fetching Tasks (4 / 11)        │
-│                                  │
-└──────────────────────────────────┘
-```
-
-**When to show the gate:**
-
-- **Initial load:** First sync after login or workspace switch with no local data. Always show.
-- **Catch-up after `catch-up-required`:** SSE reconnect failed cursor check, falling back to full sync. Show gate.
-- **Short SSE replay:** Reconnect with `Last-Event-ID` that succeeds. No gate — the replay is fast (a few family pulls via debounce) and the user already has recent local data.
-
-**When to dismiss:**
-
-- `performSync()` completes successfully and SSE stream is connected.
-
-**Implementation:** A simple Alpine reactive flag (`catchUpSyncActive`) set by the sync manager when a full catch-up sync begins, cleared when it completes. The overlay reads this flag and renders the existing `syncProgressPercent()` / `syncProgressLabel()` in a centered modal instead of the avatar dropdown.
-
-### Reconnect and Catch-Up
-
-SSE connections will drop (network changes, server restarts, laptop sleep). The reconnect strategy:
-
-1. **Cursor still in buffer:** Reconnect with `Last-Event-ID`. Tower replays missed events, then continues live. Client debounces and pulls affected families. No UI gate needed — local data is recent, replay is fast.
-2. **Cursor evicted or Tower restarted:** Tower sends `catch-up-required`. Client shows the catch-up sync gate, runs a single full `performSync()`, dismisses the gate, then reconnects SSE with no `Last-Event-ID` (starts fresh from now).
-3. **Repeated failures:** Exponential backoff (1s, 2s, 4s, 8s, max 60s). After 5 consecutive failures, fall back to poll-based sync until the next successful connection.
-
-```javascript
-let reconnectAttempts = 0;
-
-function scheduleReconnect() {
-  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60_000);
-  reconnectAttempts++;
-
-  if (reconnectAttempts > 5) {
-    // Fall back to polling
-    postMessage({ type: 'sse-status', status: 'fallback-polling' });
-    startPollFallback();
-    return;
-  }
-
-  reconnectTimer = setTimeout(() => {
-    requestFreshToken().then((token) => {
-      connectSSE(ownerNpub, token, backendUrl);
-    });
-  }, delay);
+```json
+{
+  "from": "live",
+  "to": "delta_catchup",
+  "reason": "visibility_resume_reconnect",
+  "workspace_owner_npub": "...",
+  "sse_last_event_id": 12844,
+  "last_connected_event_id": 12850,
+  "reconnect_attempt": 1,
+  "document_hidden": false,
+  "online": true
 }
 ```
 
-### Visibility Handling
+Minimum fields:
+
+- `from`
+- `to`
+- `reason`
+- workspace owner
+- stream cursor values
+- reconnect attempt count
+- visibility / online state
+- whether recovery UI is shown
 
-When the tab is hidden:
+### Tower stream diagnostics
 
-- Keep the SSE connection open (it is cheap — just a TCP connection receiving small text events).
-- The worker continues receiving events and can batch dirty flags.
-- On `visibilitychange` → visible: process any queued dirty families.
+Tower should log and count:
 
-Closing SSE on tab hide would save a server connection but require a catch-up sync on every tab switch, which defeats the purpose.
+- `stream_connected`
+- `stream_replayed`
+- `stream_replay_unavailable`
+- `stream_catch_up_required`
+- earliest buffer id
+- requested `last_event_id`
+- current `event_id`
+- resolved actor npub and workspace owner
 
-### Aggressive Write Flush
+### Key counters
 
-With inbound sync decoupled from polling, the outbound flush timer can become more aggressive:
+Flight Deck:
 
-| Current | Target |
-|---|---|
-| Flush every 5 seconds | Flush every 2 seconds |
-| Sync couples inbound + outbound | Outbound flush independent of inbound SSE |
+- `sse_reconnect_attempts_total`
+- `sse_replay_success_total`
+- `sse_replay_miss_total`
+- `delta_catchup_runs_total`
+- `full_reconcile_runs_total`
+- `integrity_repair_runs_total`
+- `integrity_repair_escalations_total`
+- `sse_reconnect_caused_by_duplicate_connect_total`
 
-The `FLUSH_INTERVAL_MS` in `sync-worker-runner.js` drops from 5000 to 2000. Writes land on Tower faster, SSE notifies other clients faster, end-to-end latency drops from ~20s (15s poll + 5s flush) to ~3s (2s flush + ~1s SSE delivery).
+Tower:
 
-For even lower latency on explicit user actions, the UI can trigger an immediate flush via `postMessage` to the worker rather than waiting for the next timer tick.
+- `sse_connections_active`
+- `sse_replay_requests_total`
+- `sse_replay_misses_total`
+- `sse_catch_up_required_total`
 
-#### Instant Flush Triggers
+Yoke:
 
-The following user actions should trigger an immediate flush rather than waiting for the 2-second timer:
+- `sync_pruned_total`
+- `sync_repaired_total`
+- per-family watermark age in diagnostics
 
-- **Send chat message** — other participants should see it within ~1s
-- **Create task / create channel / create doc** — collaborators see new items immediately
-- **Task detail back/close with changes** — the back link becomes a "save & back" action. If the detail view has unsaved changes, closing it should save + immediate flush in one step. The user should not need a separate save button — navigating away is the save.
-- **Doc editor back/close with changes** — same contract. Closing or navigating away from a dirty editor triggers save + immediate flush. This replaces reliance on the autosave timer for the critical "I'm done editing" moment.
-- **Any detail view with inline edits** — the general rule is: if a detail pane has pending changes and the user navigates away, treat that navigation as the save intent and flush immediately.
+---
 
-The immediate flush is a `postMessage` to the worker:
+## Recommended Implementation Changes
 
-```javascript
-// Main thread, on save-triggering navigation
-worker.postMessage({ type: 'sync-worker:flush-now' });
-```
+### Flight Deck
 
-The worker responds by running `flushPendingWrites()` immediately instead of waiting for the next timer tick. If the flush is already in progress, the request is queued and runs after the current flush completes.
+1. Make `connectSSEStream()` idempotent. If workspace owner, viewer, backend,
+   and token source are unchanged and the stream is already healthy, do not
+   disconnect/reconnect.
+2. Split "ensure timers/background sync" from "connect stream." Normal route or
+   focus changes should not reopen SSE by default.
+3. Persist `sse:last_event_id` and `sse:last_connected_event_id` in `sync_state`.
+4. Parse `connected.event_id` and use it to seed the cursor.
+5. Advance the cursor for every SSE event type that arrives with an event id.
+6. Replace `lastSuccessAt` with separate inbound/outbound/heartbeat timestamps.
+7. Make `catch-up-required` enter explicit `recovery_required` and run
+   `performSync({ forceFull: true })`.
+8. Remove the 10-hour wall-clock rule as an automatic recovery trigger.
+9. Add targeted linked-record integrity repair before any workspace-wide
+   escalation.
 
-## Tower-Side Design
+### Tower
 
-### New Endpoint
+1. Keep the ring buffer size-based, not time-based.
+2. Keep `catch-up-required` as the authoritative continuity-break signal.
+3. Extend diagnostics around replay success/failure and earliest available
+   buffer id.
+4. Consider adding a `stream_epoch` or equivalent restart marker so clients can
+   distinguish buffer eviction from process restart in logs.
 
-```
-GET /api/v4/workspaces/:owner_npub/stream?token=<base64>&last_event_id=<cursor>
-```
+### Yoke
 
-Response: `text/event-stream` with `Cache-Control: no-cache`, `Connection: keep-alive`.
+1. Keep per-family watermarks aligned with Flight Deck family semantics.
+2. Surface repaired/pruned counts and family watermark age in `status`.
+3. Use Yoke as the manual reconciliation baseline when debugging claims that
+   Flight Deck entered recovery too aggressively.
 
-### Auth Middleware
+---
 
-```typescript
-// In routes/workspaces.ts or a new routes/stream.ts
+## Expected Behavior By Scenario
 
-app.get('/api/v4/workspaces/:owner_npub/stream', async (c) => {
-  const token = c.req.query('token');
-  if (!token) return c.text('Missing token', 401);
+### Mobile or laptop wakes after short sleep
 
-  // Validate NIP-98 token (same as existing auth, but from query param)
-  const userNpub = await resolveNip98Token(token, c.req.url, 'GET');
-  if (!userNpub) return c.text('Invalid token', 401);
+- Flight Deck reconnects with persisted `sse:last_event_id`
+- Tower replays if available
+- worker pulls only affected families
+- no blocking recovery UI
 
-  const ownerNpub = c.req.param('owner_npub');
+### Browser tab resumes after worker restart
 
-  // Verify user has access to this workspace
-  const hasAccess = await checkWorkspaceAccess(userNpub, ownerNpub);
-  if (!hasAccess) return c.text('Forbidden', 403);
+- worker loads persisted stream cursor
+- if absent, heartbeat checks stale families using family cursors
+- no full reconcile unless Tower explicitly says continuity is broken
 
-  // Open SSE stream
-  return streamSSE(c, userNpub, ownerNpub);
-});
-```
+### Tower restarted while client slept
 
-### Change Detection
+- reconnect receives `catch-up-required`
+- Flight Deck records the reason, shows recovery UI, runs `forceFull`
+- new `connected.event_id` becomes the fresh baseline
 
-Tower needs to emit events when records change. Two options:
+### Manual sync from the menu
 
-#### Option A: PostgreSQL LISTEN/NOTIFY
+- always run full reconcile
+- preserve as explicit operator action
 
-```sql
--- Trigger on v4_records insert
-CREATE OR REPLACE FUNCTION notify_record_change() RETURNS trigger AS $$
-BEGIN
-  PERFORM pg_notify('record_changes', json_build_object(
-    'owner_npub', NEW.owner_npub,
-    'family_hash', NEW.record_family_hash,
-    'record_id', NEW.record_id,
-    'version', NEW.version,
-    'signature_npub', NEW.signature_npub,
-    'updated_at', NEW.updated_at
-  )::text);
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+---
 
-CREATE TRIGGER trg_record_change
-  AFTER INSERT ON v4_records
-  FOR EACH ROW EXECUTE FUNCTION notify_record_change();
-```
-
-Tower subscribes to `LISTEN record_changes` on a single persistent connection and fans out to connected SSE clients.
+## Acceptance
 
-**Advantages:**
+This policy is correct when all of the following are true:
 
-- Change detection is authoritative (database level)
-- Works across multiple Tower instances (all listen on same channel)
-- No application-level bookkeeping
+1. Routine focus, wake, and reconnect behavior on mobile and laptop stays in
+   replay or bounded delta catch-up by default.
+2. Full reconcile happens only on cold start, manual full sync, or explicit
+   continuity-break signals.
+3. Missing linked child records trigger targeted repair first, not silent broad
+   recovery.
+4. Logs and counters make it possible to explain exactly why recovery mode was
+   entered for a given session.
+5. Yoke remains a reliable manual reconciliation baseline with comparable
+   per-family watermark semantics.
 
-**Disadvantages:**
-
-- NOTIFY payload size limit (8000 bytes, but our payloads are small)
-- Requires PostgreSQL (already the case)
-
-#### Option B: Application-Level Event Emitter
-
-```typescript
-// In services/records.ts, after successful sync
-import { sseHub } from '../sse-hub';
-
-// After inserting records:
-for (const record of insertedRecords) {
-  sseHub.emit(record.owner_npub, {
-    event: 'record-changed',
-    data: {
-      family_hash: record.record_family_hash,
-      record_id: record.record_id,
-      version: record.version,
-      signature_npub: record.signature_npub,
-      updated_at: record.updated_at,
-    },
-  });
-}
-```
-
-**Advantages:**
-
-- Simpler, no DB trigger setup
-- Easy to add non-record events (group changes, etc.)
-
-**Disadvantages:**
-
-- Only works within a single Tower process
-- If Tower scales to multiple instances, needs Redis pub/sub or similar
-
-#### Recommendation
-
-Start with **Option B** (application-level emitter). Tower currently runs as a single Bun process. If/when it scales to multiple instances, add Redis pub/sub or switch to LISTEN/NOTIFY. The SSE fan-out interface stays the same either way.
-
-AGREED OPTION B is fine for this.
-
-### SSE Hub
-
-```typescript
-// src/sse-hub.ts
-
-type SSEClient = {
-  userNpub: string;
-  ownerNpub: string;
-  controller: ReadableStreamDefaultController;
-  connectedAt: number;
-};
-
-class SSEHub {
-  private clients = new Map<string, Set<SSEClient>>(); // keyed by ownerNpub
-  private eventId = 0;
-
-  addClient(client: SSEClient) {
-    const key = client.ownerNpub;
-    if (!this.clients.has(key)) this.clients.set(key, new Set());
-    this.clients.get(key)!.add(client);
-  }
-
-  removeClient(client: SSEClient) {
-    this.clients.get(client.ownerNpub)?.delete(client);
-  }
-
-  emit(ownerNpub: string, event: { event: string; data: object }) {
-    const clients = this.clients.get(ownerNpub);
-    if (!clients?.size) return;
-
-    this.eventId++;
-    const payload = `id: ${this.eventId}\nevent: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`;
-
-    for (const client of clients) {
-      try {
-        client.controller.enqueue(new TextEncoder().encode(payload));
-      } catch {
-        this.removeClient(client);
-      }
-    }
-  }
-
-  getClientCount(ownerNpub?: string) {
-    if (ownerNpub) return this.clients.get(ownerNpub)?.size ?? 0;
-    let total = 0;
-    for (const set of this.clients.values()) total += set.size;
-    return total;
-  }
-}
-
-export const sseHub = new SSEHub();
-```
-
-### Visibility Filtering
-
-The SSE stream should only emit events the connected user can see:
-
-- **Owner of workspace:** Sees all record changes for that workspace.
-- **Non-owner (collaborator):** Should only see changes to records where they have group access.
-
-For the initial implementation, **emit all workspace events to all connected clients for that workspace**. The client already enforces visibility when it pulls the actual record via `GET /api/v4/records` (which checks group access). A non-owner receiving a notification for a record they can't access will simply get an empty result on pull — harmless.
-
-Future optimization: filter SSE events server-side by checking group membership, but this adds per-event query cost that may not be worth it initially.
-
-### Last-Event-ID Replay
-
-Tower needs to support cursor-based replay for reconnecting clients. The ring buffer is **size-based, not time-based** — it holds the most recent ~10k events regardless of age. This ensures quiet workspaces (e.g., 5 events overnight) can replay cleanly even after hours of client disconnection.
-
-```typescript
-// In-memory ring buffer (size-based eviction, sufficient for single process)
-const EVENT_BUFFER_MAX = 10_000;
-const eventBuffer: { id: number; ownerNpub: string; payload: string }[] = [];
-
-function pushEvent(ownerNpub: string, payload: string, id: number) {
-  eventBuffer.push({ id, ownerNpub, payload });
-  // Size-based eviction — drop oldest when full
-  while (eventBuffer.length > EVENT_BUFFER_MAX) {
-    eventBuffer.shift();
-  }
-}
-
-function canReplay(lastEventId: number): boolean {
-  if (eventBuffer.length === 0) return false;
-  return eventBuffer[0].id <= lastEventId;
-}
-
-function replayFrom(ownerNpub: string, lastEventId: number, controller: ReadableStreamDefaultController) {
-  for (const event of eventBuffer) {
-    if (event.id <= lastEventId) continue;
-    if (event.ownerNpub !== ownerNpub) continue;
-    controller.enqueue(new TextEncoder().encode(event.payload));
-  }
-}
-```
-
-If the requested `lastEventId` has been evicted from the buffer (buffer was full and it was dropped), Tower sends a special event telling the client to do a full catch-up sync:
-
-```
-event: catch-up-required
-data: {"reason":"cursor_evicted"}
-```
-
-Buffer is also cleared on Tower restart, which triggers `catch-up-required` for any reconnecting client.
-
-### Server Heartbeat
-
-Tower sends a heartbeat event every 30 seconds to keep connections alive through proxies and load balancers:
-
-```
-event: heartbeat
-data: {"ts":"2026-04-01T12:00:30Z"}
-```
-
-### Connection Limits
-
-To prevent resource exhaustion:
-
-- Max 10 SSE connections per user across all workspaces
-- Max 50 SSE connections per workspace
-- Max connection lifetime: 4 hours (force reconnect with fresh auth)
-- Idle timeout: 5 minutes without client activity (but heartbeat keeps it alive)
-
-## Integration with Target Architecture
-
-### Relationship to Work Packages
-
-| WP | SSE Impact |
-|---|---|
-| WP1 (Runtime Boundaries) | SSE stream is owned by the worker, not the main thread |
-| WP2 (Web Worker) | SSE client lives in the worker. Worker receives events and decides what to pull |
-| WP3 (Store Split) | No direct impact. SSE feeds the worker, not stores |
-| WP4 (Section-Scoped Subs) | SSE + dirty flags make section scoping more effective. Inactive families are not pulled until navigated to |
-| WP5 (Projections) | Worker can update projection tables on SSE events, not just on poll ticks |
-| WP5.1 (Outbox Contract) | Outbound flush becomes more aggressive. Echo suppression ties into the outbox flow |
-| WP7 (Unread) | Worker can update unread summaries immediately on SSE events instead of on 15s poll ticks |
-
-### What SSE Replaces
-
-| Current | With SSE |
-|---|---|
-| `backgroundSyncTick()` every 15/30s | SSE event triggers targeted pull |
-| `POST /api/v4/records/heartbeat` every tick | Eliminated for connected clients |
-| `getSyncCadenceMs()` fast/idle cadence | Replaced by event-driven wake |
-| Full `performSync()` as primary path | `performSync()` becomes catch-up only (initial load, reconnect, manual refresh) |
-
-### What SSE Does Not Replace
-
-- `performSync()` still exists for initial load, reconnection catch-up, and manual sync button
-- Pending write flush (outbound) stays as-is, just faster
-- Dexie → Alpine liveQuery reactivity is unchanged
-- Group refresh still happens on `group-changed` events or on reconnect
-- Record decryption and materialization still happen in the worker
-
-## Rollout Plan
-
-### Phase 1: Tower SSE Infrastructure
-
-1. Add `sse-hub.ts` with in-memory fan-out and ring buffer
-2. Add `GET /api/v4/workspaces/:owner_npub/stream` endpoint with token auth
-3. Emit `record-changed` events from `syncRecords()` in `services/records.ts`
-4. Emit `group-changed` events from group mutation endpoints
-5. Add server heartbeat (30s)
-6. Add connection limits and max lifetime
-
-### Phase 2: Worker SSE Client
-
-1. Add `EventSource` connection management in the worker
-2. Add echo suppression set
-3. Wire `record-changed` → targeted `pullRecordsForFamilies()`
-4. Wire `group-changed` → `refreshGroups()`
-5. Wire `catch-up-required` → full `performSync()`
-6. Add reconnect with exponential backoff
-7. Add SSE status reporting to main thread
-
-### Phase 3: Replace Poll with SSE
-
-1. When SSE is connected, disable `backgroundSyncTick()` timer
-2. Keep `performSync()` for initial workspace load and manual sync
-3. Reduce flush interval from 5s to 2s
-4. Add immediate flush trigger for explicit user actions
-5. Add fallback: if SSE fails to connect, revert to poll-based sync
-
-### Phase 4: Dirty Flags and Section Routing (with WP4)
-
-1. Track active section families in the worker
-2. On SSE event for inactive family → set dirty flag only
-3. On section switch → pull dirty families
-4. Eliminates unnecessary pulls for sections the user is not viewing
-
-## Failure Modes
-
-| Failure | Behavior |
-|---|---|
-| SSE connection drops | Reconnect with backoff + `Last-Event-ID`. Full sync if cursor expired |
-| Tower restarts | All SSE connections close. Clients reconnect. Ring buffer lost → clients do full sync |
-| Network partition | EventSource fires `onerror`. Backoff reconnect. Fall back to polling after 5 failures |
-| Token expired (4h) | Tower closes stream. Client reconnects with fresh token |
-| Worker crash | Main thread detects. Falls back to main-thread polling. Worker restart reconnects SSE |
-| Malformed SSE event | Skip event, log warning. Do not disconnect |
-
-## Metrics
-
-### Tower-Side
-
-- `sse_connections_active` (gauge, by workspace)
-- `sse_events_emitted` (counter, by event type)
-- `sse_replay_requests` (counter)
-- `sse_replay_cursor_expired` (counter)
-
-### Client-Side
-
-- `sse_connected` (boolean, reported in sync status)
-- `sse_events_received` (counter, by event type)
-- `sse_events_suppressed` (counter, echo suppression hits)
-- `sse_reconnects` (counter)
-- `sse_fallback_to_poll` (counter)
-
-## Resolved Questions
-
-1. **Should SSE events include enough data for the worker to skip the pull entirely for simple updates?** Yes. The `version` field already enables this — the worker can compare against its local Dexie row and skip the pull if it already has the latest version. Target event shape should include a content hash or enough metadata for the worker to make this decision without a round-trip. This is a follow-on optimization after the initial SSE implementation is working.
-
-2. **Should Tower filter SSE events by group visibility?** No, not initially. All workspace events go to all connected workspace clients. The pull endpoint already enforces visibility. A non-owner receiving a notification for a record they can't access gets an empty result on pull — harmless. Revisit if SSE volume becomes a concern.
-
-3. **Should the SSE connection move to a separate Tower service?** No. Tower runs as a single Bun process and users are expected to run their own Tower instance. SSE stays in the same Hono process. See `docs/backlog.md` for the scaling note if this assumption changes.

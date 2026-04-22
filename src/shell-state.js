@@ -111,6 +111,8 @@ export const SHELL_STATE_KEYS = Object.freeze([
   'connectHostUrl',
   'connectHostLabel',
   'connectHostServiceNpub',
+  'connectHostTowerName',
+  'connectHostTowerDescription',
   'connectHostError',
   'connectHostBusy',
   'connectManualUrl',
@@ -148,6 +150,19 @@ export const SHELL_STATE_KEYS = Object.freeze([
   'workspaceSettingsVersion',
   'workspaceSettingsGroupIds',
   'workspaceHarnessUrl',
+  'agentChatTriggerRecordId',
+  'agentChatTriggerVersion',
+  'agentChatTriggerGroupIds',
+  'agentChatTriggerEnabled',
+  'agentChatTriggerTargetGroupId',
+  'agentChatTriggerTargetGroupNpub',
+  'agentChatTriggerUpdatedAt',
+  'agentChatTriggerDiagnostics',
+  'agentChatTriggerDiagnosticsLoading',
+  'agentChatTriggerDiagnosticsError',
+  'agentChatTriggerError',
+  'agentChatTriggerSuccess',
+  '_agentChatTriggerDiagnosticsRequestId',
   'workspaceProfileNameInput',
   'workspaceProfileSlugInput',
   'workspaceProfileDescriptionInput',
@@ -282,6 +297,8 @@ export function createShellState(options = {}) {
     connectHostUrl: '',
     connectHostLabel: '',
     connectHostServiceNpub: '',
+    connectHostTowerName: '',
+    connectHostTowerDescription: '',
     connectHostError: null,
     connectHostBusy: false,
     connectManualUrl: '',
@@ -319,6 +336,19 @@ export function createShellState(options = {}) {
     workspaceSettingsVersion: 0,
     workspaceSettingsGroupIds: [],
     workspaceHarnessUrl: '',
+    agentChatTriggerRecordId: '',
+    agentChatTriggerVersion: 0,
+    agentChatTriggerGroupIds: [],
+    agentChatTriggerEnabled: true,
+    agentChatTriggerTargetGroupId: '',
+    agentChatTriggerTargetGroupNpub: '',
+    agentChatTriggerUpdatedAt: '',
+    agentChatTriggerDiagnostics: [],
+    agentChatTriggerDiagnosticsLoading: false,
+    agentChatTriggerDiagnosticsError: null,
+    agentChatTriggerError: null,
+    agentChatTriggerSuccess: null,
+    _agentChatTriggerDiagnosticsRequestId: 0,
     workspaceProfileNameInput: '',
     workspaceProfileSlugInput: '',
     workspaceProfileDescriptionInput: '',
@@ -378,6 +408,15 @@ export function createShellState(options = {}) {
       if (!this.pendingInviteToken && this.superbasedTokenInput) {
         const config = parseSuperBasedToken(this.superbasedTokenInput);
         if (config.isValid && config.directHttpsUrl) {
+          if (typeof this.addKnownHost === 'function') {
+            this.addKnownHost({
+              url: config.directHttpsUrl,
+              label: config.towerName || config.directHttpsUrl,
+              serviceNpub: config.serviceNpub,
+              towerName: config.towerName,
+              towerDescription: config.towerDescription,
+            });
+          }
           this.backendUrl = normalizeBackendUrl(config.directHttpsUrl);
           const tokenWorkspace = workspaceFromToken(this.superbasedTokenInput);
           if (tokenWorkspace) {
@@ -392,6 +431,9 @@ export function createShellState(options = {}) {
       }
       if (!this.backendUrl) this.backendUrl = guessDefaultBackendUrl();
       if (this.backendUrl) setBaseUrl(this.backendUrl);
+      if (typeof this.refreshKnownHostsMetadata === 'function') {
+        this.refreshKnownHostsMetadata().catch(() => {});
+      }
       await this.hydrateKnownWorkspaceProfiles();
       this.ensureBackgroundSync();
       await this.maybeAutoLogin();
@@ -412,7 +454,7 @@ export function createShellState(options = {}) {
         await this.selectWorkspace(this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub, { refresh: false });
       }
       this.updateWorkspaceBootstrapPrompt();
-      if (this.session?.npub && (!this.backendUrl || !this.selectedWorkspaceKey)) {
+      if (this.session?.npub && (!this.backendUrl || (!this.selectedWorkspaceKey && !this.showWorkspaceBootstrapModal))) {
         this.openConnectModal();
       }
       if (this.selectedWorkspaceKey) {
@@ -470,8 +512,10 @@ export function createShellState(options = {}) {
           case 'chat': return 'chat';
           case 'docs': return 'docs';
           case 'reports': return 'reports';
+          case 'opportunities': return 'opportunities';
           case 'people': return 'people';
           case 'scopes': return 'scopes';
+          case 'live': return 'live';
           case 'settings': return 'settings';
           default: return 'flight-deck';
         }
@@ -499,6 +543,8 @@ export function createShellState(options = {}) {
         if (this.selectedDocCommentId) url.searchParams.set('commentid', this.selectedDocCommentId);
       } else if (this.navSection === 'reports') {
         if (this.selectedReport?.record_id) url.searchParams.set('reportid', this.selectedReport.record_id);
+      } else if (this.navSection === 'opportunities') {
+        if (this.activeOpportunityId) url.searchParams.set('opportunityid', this.activeOpportunityId);
       } else if (this.navSection === 'tasks' || this.navSection === 'calendar') {
         if (this.showBoardDescendantTasks) url.searchParams.set('descendants', '1');
         if (this.navSection === 'tasks' && this.activeTaskId) url.searchParams.set('taskid', this.activeTaskId);
@@ -577,6 +623,12 @@ export function createShellState(options = {}) {
           }
         } else if (route.section === 'reports') {
           this.selectedReportId = route.params.reportid || this.selectedReport?.record_id || null;
+        } else if (route.section === 'opportunities') {
+          if (route.params.opportunityid) {
+            this.openOpportunityDetail(route.params.opportunityid);
+          } else {
+            this.closeOpportunityDetail({ syncRoute: false });
+          }
         } else if (route.section === 'tasks' || route.section === 'calendar') {
           if (!route.params.scopeid && !route.params.groupid) {
             this.selectedBoardId = this.readStoredTaskBoardId() || this.preferredTaskBoardId;
@@ -753,7 +805,7 @@ export function createShellState(options = {}) {
           this.currentWorkspaceOwnerNpub = this.knownWorkspaces[0].workspaceOwnerNpub;
         }
         this.updateWorkspaceBootstrapPrompt();
-        if (!this.backendUrl || !this.selectedWorkspaceKey) {
+        if (!this.backendUrl || (!this.selectedWorkspaceKey && !this.showWorkspaceBootstrapModal)) {
           this.openConnectModal();
         }
       } catch (error) {
@@ -796,7 +848,7 @@ export function createShellState(options = {}) {
           await this.bootstrapSelectedWorkspace({ runAccessPrune: true });
         }
         this.updateWorkspaceBootstrapPrompt();
-        if (!this.backendUrl || !this.selectedWorkspaceKey) {
+        if (!this.backendUrl || (!this.selectedWorkspaceKey && !this.showWorkspaceBootstrapModal)) {
           this.openConnectModal();
         }
         this.ensureBackgroundSync(true);
@@ -852,6 +904,19 @@ export function createShellState(options = {}) {
       this.workspaceSettingsVersion = 0;
       this.workspaceSettingsGroupIds = [];
       this.workspaceHarnessUrl = '';
+      this.agentChatTriggerRecordId = '';
+      this.agentChatTriggerVersion = 0;
+      this.agentChatTriggerGroupIds = [];
+      this.agentChatTriggerEnabled = true;
+      this.agentChatTriggerTargetGroupId = '';
+      this.agentChatTriggerTargetGroupNpub = '';
+      this.agentChatTriggerUpdatedAt = '';
+      this.agentChatTriggerDiagnostics = [];
+      this.agentChatTriggerDiagnosticsLoading = false;
+      this.agentChatTriggerDiagnosticsError = null;
+      this.agentChatTriggerError = null;
+      this.agentChatTriggerSuccess = null;
+      this._agentChatTriggerDiagnosticsRequestId = 0;
       this.revokeWorkspaceAvatarPreviewObjectUrl();
       this.hasBootstrappedUnreadTracking = false;
       this.workspaceProfileNameInput = '';

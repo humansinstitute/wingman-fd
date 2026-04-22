@@ -9,6 +9,7 @@ vi.mock('../src/translators/record-crypto.js', () => ({
 
 import {
   parseFlowReferenceFromText,
+  resolveFlowDispatchAssignee,
   resolveFlowLinkage,
   parseReferencesFromDescription,
 } from '../src/translators/tasks.js';
@@ -150,7 +151,7 @@ describe('resolveFlowLinkage', () => {
     ]));
   });
 
-  it('generates a flow_run_id when flow is resolved from title', () => {
+  it('keeps title-resolved flow linkage as kickoff/reference-only until runtime dispatch', () => {
     const flows = [
       { record_id: 'flow-abc', title: 'Generate Proposal' },
     ];
@@ -162,9 +163,8 @@ describe('resolveFlowLinkage', () => {
     });
 
     expect(result.flow_id).toBe('flow-abc');
-    expect(result.flow_run_id).toBeTruthy();
-    expect(typeof result.flow_run_id).toBe('string');
-    expect(result.flow_step).toBe(1);
+    expect(result.flow_run_id).toBeNull();
+    expect(result.flow_step).toBeNull();
   });
 
   it('does not generate flow_run_id for mention-only references', () => {
@@ -194,5 +194,43 @@ describe('resolveFlowLinkage', () => {
 
     expect(result.flow_id).toBeNull();
     expect(result.references).toEqual([]);
+  });
+});
+
+describe('resolveFlowDispatchAssignee', () => {
+  it('returns the default agent for kickoff tasks', () => {
+    expect(resolveFlowDispatchAssignee({
+      flowId: 'flow-abc',
+      flowRunId: null,
+      defaultAgentNpub: 'npub_agent',
+      botNpub: 'npub_bot',
+    })).toBe('npub_agent');
+  });
+
+  it('falls back to the bot npub when no default agent is configured', () => {
+    expect(resolveFlowDispatchAssignee({
+      flowId: 'flow-abc',
+      flowRunId: null,
+      defaultAgentNpub: '',
+      botNpub: 'npub_bot',
+    })).toBe('npub_bot');
+  });
+
+  it('does not auto-assign tasks that already belong to a flow run', () => {
+    expect(resolveFlowDispatchAssignee({
+      flowId: 'flow-abc',
+      flowRunId: 'run-123',
+      defaultAgentNpub: 'npub_agent',
+      botNpub: 'npub_bot',
+    })).toBeNull();
+  });
+
+  it('does not auto-assign tasks without a resolved flow', () => {
+    expect(resolveFlowDispatchAssignee({
+      flowId: null,
+      flowRunId: null,
+      defaultAgentNpub: 'npub_agent',
+      botNpub: 'npub_bot',
+    })).toBeNull();
   });
 });

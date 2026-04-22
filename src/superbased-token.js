@@ -87,6 +87,8 @@ function normalizeTokenShape(tokenType, rawEvent, values) {
     workspaceNpub,
     workspacePubkeyHex,
     workspaceName: values.workspaceName ?? null,
+    towerName: values.towerName ?? null,
+    towerDescription: values.towerDescription ?? null,
     appNpub,
     appPubkeyHex,
     relayUrl: relayUrls[0] || null,
@@ -117,6 +119,8 @@ export function parseSuperBasedToken(tokenBase64) {
         workspaceOwnerNpub: firstTagValue(tags, ['workspace_owner_npub', 'workspace_owner', 'workspace']),
         workspacePubkeyHex: isHexPubkey(parsed.pubkey) ? parsed.pubkey : null,
         workspaceName: firstTagValue(tags, ['workspace_name']),
+        towerName: firstTagValue(tags, ['tower_name']),
+        towerDescription: firstTagValue(tags, ['tower_description']),
         appNpub: firstTagValue(tags, ['app_npub', 'app']),
         appPubkeyHex: firstTagValue(tags, ['app_pubkey']),
         relayUrls: allTagValues(tags, ['relay']),
@@ -148,6 +152,8 @@ export function parseSuperBasedToken(tokenBase64) {
           workspaceOwnerNpub: firstObjectValue(parsed, ['workspace_owner_npub', 'workspace_npub']),
           workspacePubkeyHex: firstObjectValue(parsed, ['workspace_pubkey']),
           workspaceName: firstObjectValue(parsed, ['workspace_name']),
+          towerName: firstObjectValue(parsed, ['tower_name']),
+          towerDescription: firstObjectValue(parsed, ['tower_description']),
           appNpub: firstObjectValue(parsed, ['app_npub']),
           appPubkeyHex: firstObjectValue(parsed, ['app_pubkey']),
           relayUrls,
@@ -166,6 +172,8 @@ export function parseSuperBasedToken(tokenBase64) {
 export function buildSuperBasedConnectionToken({
   directHttpsUrl,
   serviceNpub,
+  towerName,
+  towerDescription,
   workspaceOwnerNpub,
   appNpub,
   relayUrls = [],
@@ -177,6 +185,8 @@ export function buildSuperBasedConnectionToken({
   };
 
   if (serviceNpub) payload.service_npub = String(serviceNpub).trim();
+  if (towerName) payload.tower_name = String(towerName).trim();
+  if (towerDescription) payload.tower_description = String(towerDescription).trim();
   if (workspaceOwnerNpub) payload.workspace_owner_npub = String(workspaceOwnerNpub).trim();
   if (appNpub) payload.app_npub = String(appNpub).trim();
 

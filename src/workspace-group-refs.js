@@ -33,3 +33,14 @@ export function getWorkspaceSettingsGroupNpub({ memberPrivateGroup = null, curre
     || getPrivateGroupNpub({ memberPrivateGroup, currentWorkspace })
     || null;
 }
+
+export function getWorkspaceAdminGroupRef({ currentWorkspace = null } = {}) {
+  return clean(currentWorkspace?.adminGroupId)
+    || clean(currentWorkspace?.adminGroupNpub)
+    || null;
+}
+
+export function getWorkspaceAdminGroupNpub({ currentWorkspace = null } = {}) {
+  return clean(currentWorkspace?.adminGroupNpub)
+    || null;
+}

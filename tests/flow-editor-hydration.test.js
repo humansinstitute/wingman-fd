@@ -64,7 +64,7 @@ const SAMPLE_FLOW = {
   title: 'Outreach Email',
   description: 'Generate an outreach email for a potential website customer for Off Piste.',
   steps: [
-    { step_number: 1, title: 'Review target site', instruction: 'Look up the prospect website and summarise key points.', approval_mode: 'manual', whitelist_approvers: null, artifacts_expected: [] },
+    { step_number: 1, title: 'Review target site', instruction: 'Look up the prospect website and summarise key points.', goals: 'Look up the prospect website and summarise key points.', approval_mode: 'manual', whitelist_approvers: null, artifacts_expected: [] },
     { step_number: 2, title: 'Generate Email', instruction: 'Draft a personalised outreach email.', approval_mode: 'auto', whitelist_approvers: null, artifacts_expected: [] },
   ],
   next_flow_id: null,
@@ -126,6 +126,13 @@ describe('buildFlowEditorForm', () => {
     expect(form.formScopeId).toBe('board-123');
   });
 
+  it('does not treat system board ids as persisted flow scopes', () => {
+    const flowNoScope = { ...SAMPLE_FLOW, scope_id: null };
+    const form = buildFlowEditorForm(flowNoScope, '__all__');
+
+    expect(form.formScopeId).toBeNull();
+  });
+
   it('prefers flow.scope_id over selectedBoardId', () => {
     const form = buildFlowEditorForm(SAMPLE_FLOW, 'board-other');
 
@@ -145,8 +152,7 @@ describe('buildFlowEditorForm', () => {
 
     expect(step.step_number).toBe(1);
     expect(step.instruction).toBe('Look up the prospect website and summarise key points.');
-    expect(step.approval_mode).toBe('manual');
-    expect(step.whitelist_approvers).toBeNull();
+    expect(step.type).toBe('job_dispatch');
     expect(step.artifacts_expected).toEqual([]);
   });
 
@@ -235,6 +241,7 @@ describe('applyFlows', () => {
 
     expect(store.flows).toHaveLength(1);
     expect(store.flows[0].title).toBe('Outreach Email');
+    expect(store.flows[0].steps[0].type).toBe('job_dispatch');
   });
 
   it('filters out deleted flows', () => {

@@ -19,6 +19,7 @@ const GROUP_BEARING_TABLES = [
   'reports',
   'schedules',
   'audio_notes',
+  'opportunities',
 ];
 
 /**

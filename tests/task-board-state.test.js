@@ -11,6 +11,7 @@ import {
   normalizeScheduleRowGroupRefs,
   normalizeScopeRowGroupRefs,
   dedupeTasksByRecordId,
+  computeParentDisplayState,
   computeBoardColumns,
   computeBoardScopedTasks,
   computeFilteredTasks,
@@ -103,6 +104,42 @@ describe('resolveGroupId', () => {
 
   it('handles empty groups array', () => {
     expect(resolveGroupId('g1', [])).toBe('g1');
+  });
+});
+
+describe('computeParentDisplayState', () => {
+  it('preserves the explicit state for active flow parent tasks', () => {
+    const parent = {
+      record_id: 'task-parent',
+      state: 'in_progress',
+      flow_run_id: 'run-1',
+      parent_task_id: null,
+      tags: 'flow_parent',
+      record_state: 'active',
+    };
+    const subtasks = [
+      { record_id: 'task-child-1', parent_task_id: 'task-parent', state: 'new', flow_run_id: 'run-1', record_state: 'active' },
+      { record_id: 'task-child-2', parent_task_id: 'task-parent', state: 'new', flow_run_id: 'run-1', record_state: 'active' },
+    ];
+
+    expect(computeParentDisplayState(parent, subtasks)).toBe('in_progress');
+  });
+
+  it('derives state from subtasks for non-flow parents', () => {
+    const parent = {
+      record_id: 'task-parent',
+      state: 'in_progress',
+      flow_run_id: null,
+      parent_task_id: null,
+      tags: '',
+      record_state: 'active',
+    };
+    const subtasks = [
+      { record_id: 'task-child-1', parent_task_id: 'task-parent', state: 'done', flow_run_id: null, record_state: 'active' },
+      { record_id: 'task-child-2', parent_task_id: 'task-parent', state: 'new', flow_run_id: null, record_state: 'active' },
+    ];
+
+    expect(computeParentDisplayState(parent, subtasks)).toBe('new');
   });
 });
 

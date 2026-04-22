@@ -1,7 +1,7 @@
 # Wingman Flight Deck As-Built Issues
 
-Status: as-built working note  
-Reviewed against live code on 2026-04-06  
+Status: as-built working note
+Reviewed against live code on 2026-04-08
 Companion docs:
 
 - `docs/asbuilt/architecture.md`
@@ -13,120 +13,138 @@ Companion docs:
 
 ## Scope
 
-This note captures the obvious follow-up issues surfaced while reviewing the current as-built documentation against the live implementation. These are concrete gaps or maintenance problems visible in the repo today, not speculative future cleanup.
+This note captures the obvious follow-up issues surfaced while reviewing the live repository against the refreshed as-built documentation set. These are concrete gaps, inconsistencies, risky technical debt, or stale assumptions visible in the repo today.
 
 ## Issues
 
-### 1. No-worker fallback is incomplete for the fast write path
+### 1. Access pruning coverage still lags the live materialized schema
 
 Evidence:
 
-- `src/sync-manager.js` uses `flushOnly()` in `flushAndBackgroundSync()` for the normal fast push path after local writes.
-- `src/sync-worker-client.js` exports `flushOnly()` and routes it through the worker queue.
-- `src/sync-worker-client.js` local fallback in `invokeLocally()` does not implement the `flushOnly` method at all.
+- `src/access-pruner.js` only scans `channels`, `scopes`, `tasks`, `documents`, `directories`, `reports`, `schedules`, and `audio_notes`.
+- `src/db.js` materializes `flows`, `approvals`, `persons`, and `organisations` as first-class workspace tables.
+- `src/translators/flows.js`, `src/translators/approvals.js`, `src/translators/persons.js`, and `src/translators/organisations.js` all persist local `group_ids`.
 
 Why this matters:
 
-- Browsers or environments where `Worker` startup fails lose the fast outbox path entirely.
-- In those environments the app silently falls back to slower polling-only behavior for writes, even though the UI code assumes the flush-only path exists.
-- This is a real behavior gap, not just an architectural nicety.
+- Non-owner viewers can keep locally cached rows for newer group-scoped families after access is revoked.
+- The repo already treats prune as a cache-cleanup step, so missing family coverage is an obvious consistency gap.
 
 Practical follow-up:
 
-- Add local fallback support for `flushOnly()` or explicitly disable the fast-write assumption when worker startup fails.
-- Test the no-worker path directly so write delivery does not regress unnoticed.
+- Extend prune and stale-group-ref repair coverage to the newer group-bearing families.
+- Add tests that tie prune coverage to the live workspace-table and translator set.
 
-### 2. SSE live-refresh support exists but is dead code, and the as-built docs are not fully aligned about that
+### 2. Flows is a visible product section, but it is still not a first-class route/title target
 
 Evidence:
 
-- `src/worker/sync-worker-runner.js` contains an SSE client for `/api/v4/workspaces/:owner/stream`.
-- `src/sync-worker-client.js` exposes `connectSSE()`, `disconnectSSE()`, and `setSSEStatusCallback()`.
-- Repo-wide search shows no main-thread caller uses those functions.
-- `docs/asbuilt/middleware.md` correctly says the SSE path is implemented but not currently wired.
-- `docs/asbuilt/data model.md` and parts of `docs/asbuilt/architecture.md` still describe SSE refresh as if it is part of the active runtime path.
+- `index.html` renders a visible `Flows` sidebar item and a live `navSection === 'flows'` page.
+- `src/app.js` sets `navSection = 'flows'` in real navigation paths.
+- `src/app.js` `getRoutePath()` has no `flows` case and falls back to `/flight-deck`.
+- `src/route-helpers.js` `KNOWN_PAGES` does not include `flows`.
+- `src/page-title.js` has no `flows` title case, so tab titles fall back to the default branch.
 
 Why this matters:
 
-- The codebase carries non-trivial sync machinery that is not actually activated.
-- Maintainers can easily misread the current freshness model and debug the wrong path.
-- The as-built set should be internally consistent, especially around sync behavior.
+- Browser history, deep-linking, refresh behavior, and tab titles are not aligned with a section that is already live in the UI.
+- Maintainers have to remember that Flows is “real” in the template but still incomplete in the shared routing helpers.
 
 Practical follow-up:
 
-- Either wire the SSE path into the main-thread sync lifecycle or remove/de-scope the dormant SSE protocol until it is truly used.
-- Normalize the as-built docs so they consistently describe heartbeat polling as active and SSE as dormant code.
+- Promote `flows` to a first-class route in both route builders and route parsers.
+- Add a dedicated document-title case so the browser tab reflects the active section.
 
-### 3. Published schema coverage lags the live sync-family registry
+### 3. Workspace session-key bootstrap appears to be present in code but not wired into the live runtime
 
 Evidence:
 
-- `src/sync-families.js` registers `flow`, `approval`, `person`, and `organisation` alongside the older families.
-- `tests/schema-sync.test.js` still expects schema manifests only for the older subset and validates outbound payloads only for that same subset.
-- `docs/asbuilt/data model.md` already notes that the local model has moved ahead of repo-local published-schema coverage.
+- `src/crypto/workspace-keys.js` still contains a full bootstrap/cache/register flow, including `bootstrapWorkspaceSessionKey()`, `setActiveWorkspaceKey()`, and registration helpers.
+- Repo-wide usage in this snapshot shows those bootstrap and activation helpers referenced only inside `src/crypto/workspace-keys.js` itself.
+- Live runtime code only imports the read-side helpers: `src/api.js` and `src/sync-manager.js` read `getActiveWorkspaceKeySecretForAuth()`, while `src/sync-worker-client.js` exports any already-active key to the worker.
 
 Why this matters:
 
-- Newer synced families can drift from published schemas without the repo noticing.
-- Schema compatibility is one of the important cross-app seams in this workspace, so missing validation here is high-value technical debt.
+- The auth layer is built to prefer a registered workspace session key, but this repo snapshot does not show the app actually activating one.
+- That makes the intended auth model easy to misread and suggests the browser may still sign most traffic as the logged-in user instead.
 
 Practical follow-up:
 
-- Publish and validate manifests for `flow`, `approval`, `person`, and `organisation`.
-- Keep schema-sync coverage tied to the actual family registry, not to a hand-maintained older list.
+- Either wire the bootstrap/registration path into the real workspace lifecycle or document that the user-signer path is the only live path today.
+- Add an end-to-end check that proves which signer is actually used for API auth and SSE auth.
 
-### 4. Jobs remains a visible product surface even though the implementation is a stub
+### 4. Worker fallback and flush-cadence comments are stale relative to the implementation
 
 Evidence:
 
-- `index.html` renders a full Jobs section, Jobs modals, and navigation entry when `hasHarnessLink` is true.
-- `src/jobs-manager.js` hardcodes all load/create/edit/dispatch actions to `setJobsUnavailable('Jobs are unavailable in this build.')`.
-- `docs/asbuilt/frontend.md` and `docs/asbuilt/important.md` both describe Jobs as effectively unavailable.
+- `src/worker/sync-worker.js` still says the module is reusable for “the main-thread fallback path when workers are unavailable”.
+- `src/sync-worker-client.js` now throws when a worker cannot be created and explicitly says sync is unavailable until later retry.
+- `src/sync-worker-client.js` comments say the independent flush timer runs every 5 seconds.
+- `src/worker/sync-worker-runner.js` sets `FLUSH_INTERVAL_MS = 2000`.
 
 Why this matters:
 
-- The app exposes a substantial UI surface that looks implemented but cannot actually perform its core actions.
-- This increases user confusion and leaves extra template/store surface area to maintain for a feature that is not live.
+- The live client behavior is now “real worker required”, but parts of the source still describe an older fallback model.
+- Even small comment drift matters here because sync recovery and outbox timing are operational behavior, not cosmetic detail.
 
 Practical follow-up:
 
-- Either hide the Jobs surface until there is a working backend path, or finish the implementation so the UI contract is real.
-- If it remains intentionally unavailable, collapse it to a much smaller explicit placeholder.
+- Update or remove stale comments so the codebase has one clear source of truth for degraded-worker behavior and flush cadence.
+- Keep the as-built docs and source comments aligned whenever sync behavior changes.
 
-### 5. The runtime UI remains tightly coupled to one very large Alpine store and one very large template
+### 5. Jobs remains a sizable dormant stub surface in source
 
 Evidence:
 
-- `src/app.js` is 4,582 lines and still finishes by registering a single `Alpine.store('chat', storeObj)`.
-- `index.html` is 5,953 lines and is tightly bound to `$store.chat.*`.
-- The as-built docs consistently describe the source layout as modular while the runtime state model remains monolithic.
+- `src/jobs-manager.js` still exposes modal/state helpers, but every load/create/edit/dispatch/toggle/delete/stop action resolves to “Jobs are unavailable in this build.”
+- `index.html` still carries a large jobs page and jobs controls, but the nav item is hard-hidden with `x-show="false"` and the section itself is disabled behind `x-if="false && 'jobs-hidden'"`.
+- `src/app.js` still carries jobs state fields inside the root Alpine store.
 
 Why this matters:
 
-- Cross-section changes still concentrate risk in a single store object and a single template surface.
-- The size and coupling now make it harder to reason about ownership boundaries, test smaller UI slices, and make incremental refactors safely.
+- The repo keeps a non-trivial amount of dead-adjacent UI/state surface that is not reachable in the shipped navigation.
+- That increases maintenance cost and makes it harder to tell whether Jobs is a near-term feature, a placeholder, or legacy scaffolding.
 
 Practical follow-up:
 
-- Continue moving domain state and actions behind clearer boundaries instead of extending the root store.
-- Treat future section work as an opportunity to reduce direct `$store.chat` coupling rather than adding to it.
+- Either remove the dormant jobs surface deliberately, or complete the backend/UI contract and make it reachable again.
+- If it must stay parked, keep it isolated and explicitly documented as non-live code.
 
-### 6. Legacy Coworker naming still leaks through live product, auth, and deploy surfaces
+### 6. The shipped UI is still concentrated in one very large Alpine store and one very large template
+
+Evidence:
+
+- `src/app.js` is 4,756 lines and still ends by composing one root `Alpine.store('chat', storeObj)`.
+- `index.html` is 6,021 lines and remains tightly coupled to `$store.chat.*`.
+- The repo has extracted managers and shell helpers, but the runtime state model is still centered on the single root store.
+
+Why this matters:
+
+- Cross-cutting changes still converge on one large state object and one large template.
+- That keeps ownership boundaries fuzzy and raises the regression cost of routine UI work.
+
+Practical follow-up:
+
+- Continue extracting section ownership into smaller runtime boundaries instead of extending the root store/template.
+- Treat future UI work as a chance to reduce direct `$store.chat` coupling.
+
+### 7. Legacy Coworker identifiers still span product, auth, storage, and deploy surfaces
 
 Evidence:
 
 - `package.json` still uses the package name `coworker-fe`.
-- `src/auth/nostr.js` uses `APP_TAG = 'coworker-v4'` and signs login copy as “Authenticate with Coworker”.
-- `src/agent-connect.js` emits `kind: 'coworker_agent_connect'` and notes that another “Coworker/agent session” should use the token.
-- `ecosystem.config.cjs` still contains old Wingman Coworker app names and paths.
-- `src/db.js`, `src/auth/secure-store.js`, and `src/hard-reset.js` still depend on legacy `CoworkerV4*` IndexedDB names.
+- `src/app-identity.js` still reads `VITE_COWORKER_APP_NPUB`.
+- `src/auth/secure-store.js`, `src/db.js`, and `src/hard-reset.js` still depend on `CoworkerV4*` IndexedDB names.
+- `src/auth/nostr.js` still uses `APP_TAG = 'coworker-v4'` and “Authenticate with Coworker”.
+- `src/agent-connect.js` still emits `kind: 'coworker_agent_connect'` and “another Coworker/agent session”.
+- `ecosystem.config.cjs` still contains old coworker paths and labels.
 
 Why this matters:
 
-- Some of these identifiers are compatibility-sensitive, while others are just stale branding or deployment residue.
-- Without a deliberate boundary inventory, maintainers have to guess which names are safe to change and which are contract-critical.
+- Some of these names are compatibility-critical and some are only stale branding or deploy residue, but the repo does not clearly separate the two.
+- That makes future rename work risky because maintainers have to guess which strings are safe to touch.
 
 Practical follow-up:
 
-- Separate compatibility-critical legacy identifiers from renameable operator/product strings.
-- Document that boundary in one place before attempting further naming cleanup.
+- Inventory which legacy identifiers are contract-sensitive versus renameable.
+- Document that boundary before any wider naming cleanup.
