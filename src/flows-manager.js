@@ -28,10 +28,21 @@ import { outboundTask } from './translators/tasks.js';
 import { outboundComment } from './translators/comments.js';
 import { recordFamilyHash } from './translators/chat.js';
 import { toRaw, parseMarkdownBlocks } from './utils/state-helpers.js';
-import { buildFirstStepDescription } from './task-flow-helpers.js';
-import { resolveArtifactRef } from './approval-helpers.js';
+import {
+  buildFlowKickoffTaskRecord,
+  buildFlowKickoffDescription,
+  buildStoredFlowKickoffScopeAssignment,
+  resolveFlowKickoffAssignee,
+} from './task-flow-helpers.js';
+import { normalizeArtifactRef, resolveArtifactRef } from './approval-helpers.js';
 import { commentBelongsToDocBlock } from './doc-comment-anchors.js';
 import { renderMarkdownToHtml } from './markdown.js';
+import {
+  ALL_TASK_BOARD_ID,
+  RECENT_TASK_BOARD_ID,
+  UNSCOPED_TASK_BOARD_ID,
+} from './task-board-state.js';
+import { isTaskUnscoped } from './task-board-scopes.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -49,10 +60,37 @@ export function buildFlowEditorForm(flow, selectedBoardId) {
   return {
     formTitle:      f.title || '',
     formDescription: f.description || '',
-    formSteps:      Array.isArray(f.steps) ? JSON.parse(JSON.stringify(f.steps)) : [],
+    formSteps:      JSON.parse(JSON.stringify(normalizeFlowSteps(f.steps))),
     formNextFlowId: f.next_flow_id || null,
-    formScopeId:    f.scope_id || selectedBoardId || null,
+    formScopeId:    f.scope_id || normalizeStoredFlowScopeId(selectedBoardId),
   };
+}
+
+export function normalizeStoredFlowScopeId(scopeId) {
+  const normalized = String(scopeId || '').trim();
+  if (
+    !normalized
+    || normalized === ALL_TASK_BOARD_ID
+    || normalized === RECENT_TASK_BOARD_ID
+    || normalized === UNSCOPED_TASK_BOARD_ID
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function filterScopedFlowRecords(records, selectedBoardId, scopesMap = new Map()) {
+  const scopeId = String(selectedBoardId || '').trim();
+  const liveRecords = Array.isArray(records)
+    ? records.filter((record) => record?.record_state !== 'deleted')
+    : [];
+  if (!scopeId || scopeId === ALL_TASK_BOARD_ID || scopeId === RECENT_TASK_BOARD_ID) {
+    return liveRecords;
+  }
+  if (scopeId === UNSCOPED_TASK_BOARD_ID) {
+    return liveRecords.filter((record) => isTaskUnscoped(record, scopesMap));
+  }
+  return liveRecords.filter((record) => record?.scope_id === scopeId);
 }
 
 export function pendingApprovals(approvals) {
@@ -101,44 +139,89 @@ export function isApprovalStep(step) {
   return step?.type === 'approval';
 }
 
+function normalizeArtifactsExpected(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeWhitelist(value) {
+  if (!Array.isArray(value)) return null;
+  const next = value.map((item) => String(item || '').trim()).filter(Boolean);
+  return next.length > 0 ? next : null;
+}
+
+function inferStepType(step) {
+  if (step?.type === 'job_dispatch' || step?.type === 'approval') return step.type;
+  if (!step) return 'job_dispatch';
+
+  const hasDispatchFields = [
+    step.job_type,
+    step.goals,
+    step.manager_guidance,
+    step.worker_guidance,
+    step.directory_override,
+  ].some((value) => String(value || '').trim() !== '');
+  if (hasDispatchFields) return 'job_dispatch';
+
+  const mode = step.approver_mode ?? step.approval_mode;
+  if (mode === 'manual' || mode === 'agent') return 'approval';
+  if (step.description || step.brief_template || step.whitelist_approvers || step.approver_whitelist) {
+    return 'approval';
+  }
+  return 'job_dispatch';
+}
+
+function normalizeWorkInstruction(step) {
+  return String(step?.instruction || step?.goals || step?.description || '').trim();
+}
+
+function normalizeLegacyDispatchField(value) {
+  return String(value || '').trim();
+}
+
+function normalizeApprovalDescription(step) {
+  return String(step?.description || step?.instruction || step?.goals || '').trim();
+}
+
 /**
- * Normalize a step to have an explicit `type` field.
- * Legacy steps (no type) are mapped based on approval_mode:
- *   - approval_mode 'auto' → job_dispatch (auto-advance means agent work)
- *   - approval_mode 'manual'|'agent' → approval
- *   - no approval_mode → job_dispatch
+ * Normalize a step into the canonical authored flow shape while accepting
+ * legacy dispatch-specific fields.
  */
 export function normalizeStepType(step) {
   if (!step) return step;
-  if (step.type === 'job_dispatch' || step.type === 'approval') return step;
 
-  // Legacy migration
-  const mode = step.approval_mode;
-  if (mode === 'auto' || !mode) {
+  const type = inferStepType(step);
+  if (type === 'approval') {
     return {
       step_number: step.step_number,
       title: step.title || '',
-      type: 'job_dispatch',
-      job_type: '',
-      goals: step.instruction || '',
-      manager_guidance: '',
-      worker_guidance: '',
-      directory_override: '',
-      artifacts_expected: step.artifacts_expected || [],
+      type: 'approval',
+      description: normalizeApprovalDescription(step),
+      brief_template: String(step.brief_template || '').trim(),
+      approver_mode: (step.approver_mode ?? step.approval_mode) === 'agent' ? 'agent' : 'manual',
+      whitelist_approvers: normalizeWhitelist(step.whitelist_approvers ?? step.approver_whitelist),
+      artifacts_expected: normalizeArtifactsExpected(step.artifacts_expected),
     };
   }
 
-  // manual or agent → approval type
+  const instruction = normalizeWorkInstruction(step);
   return {
     step_number: step.step_number,
     title: step.title || '',
-    type: 'approval',
-    description: step.instruction || '',
-    brief_template: '',
-    approver_mode: mode,
-    whitelist_approvers: step.whitelist_approvers || null,
-    artifacts_expected: step.artifacts_expected || [],
+    type: 'job_dispatch',
+    instruction,
+    job_type: normalizeLegacyDispatchField(step.job_type),
+    goals: normalizeLegacyDispatchField(step.goals) || instruction,
+    manager_guidance: normalizeLegacyDispatchField(step.manager_guidance),
+    worker_guidance: normalizeLegacyDispatchField(step.worker_guidance),
+    directory_override: normalizeLegacyDispatchField(step.directory_override),
+    artifacts_expected: normalizeArtifactsExpected(step.artifacts_expected),
   };
+}
+
+export function normalizeFlowSteps(steps) {
+  return Array.isArray(steps) ? steps.map((step) => normalizeStepType(step)) : [];
 }
 
 /**
@@ -162,11 +245,7 @@ export function defaultStepForType(type, stepNumber) {
     step_number: stepNumber,
     title: '',
     type: 'job_dispatch',
-    job_type: '',
-    goals: '',
-    manager_guidance: '',
-    worker_guidance: '',
-    directory_override: '',
+    instruction: '',
     artifacts_expected: [],
   };
 }
@@ -191,6 +270,33 @@ export function formatTagList(arr) {
   return arr.join(', ');
 }
 
+export function normalizeApproverToken(value) {
+  const token = String(value || '').trim();
+  if (!token) return '';
+  if (token.startsWith('npub1') || token.startsWith('group:')) return token;
+  return '';
+}
+
+export function mergeApproverTokens(existing = [], additions = []) {
+  const unique = [...new Set(
+    [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(additions) ? additions : [])]
+      .map((value) => normalizeApproverToken(value))
+      .filter(Boolean),
+  )];
+  return unique.length > 0 ? unique : null;
+}
+
+export function removeApproverToken(existing = [], target) {
+  const normalizedTarget = normalizeApproverToken(target);
+  if (!normalizedTarget) {
+    return Array.isArray(existing) && existing.length > 0 ? [...existing] : null;
+  }
+  const next = (Array.isArray(existing) ? existing : [])
+    .map((value) => normalizeApproverToken(value))
+    .filter((value) => value && value !== normalizedTarget);
+  return next.length > 0 ? next : null;
+}
+
 // ---------------------------------------------------------------------------
 // Mixin — applied to Alpine store via applyMixins()
 // ---------------------------------------------------------------------------
@@ -201,7 +307,10 @@ export const flowsManagerMixin = {
   applyFlows(flows) {
     const next = (Array.isArray(flows) ? flows : []).filter(
       (f) => f.record_state !== 'deleted',
-    );
+    ).map((flow) => ({
+      ...flow,
+      steps: normalizeFlowSteps(flow.steps),
+    }));
     this.flows = next;
   },
 
@@ -221,26 +330,24 @@ export const flowsManagerMixin = {
   // --- computed helpers ---
 
   get flowsByScope() {
-    const scopeId = this.selectedBoardId;
-    if (!scopeId) return this.flows;
-    return this.flows.filter((f) => f.scope_id === scopeId);
+    return filterScopedFlowRecords(this.flows, this.selectedBoardId, this.scopesMap);
   },
 
   get pendingApprovalsByScope() {
-    const scopeId = this.selectedBoardId;
-    const pending = pendingApprovals(this.approvals);
-    if (!scopeId) return pending;
-    return pending.filter((a) => a.scope_id === scopeId);
+    return filterScopedFlowRecords(pendingApprovals(this.approvals), this.selectedBoardId, this.scopesMap);
   },
 
   get approvalHistory() {
     let list = this.approvals.filter((a) => a.record_state !== 'deleted');
     if (this.approvalHistoryScope === 'scope') {
-      const scopeId = this.selectedBoardId;
-      if (scopeId) list = list.filter((a) => a.scope_id === scopeId);
+      list = filterScopedFlowRecords(list, this.selectedBoardId, this.scopesMap);
     }
     list.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
     return list.slice(0, 100);
+  },
+
+  normalizeStoredFlowScopeId(scopeId) {
+    return normalizeStoredFlowScopeId(scopeId);
   },
 
   get filteredApprovalHistory() {
@@ -250,6 +357,53 @@ export const flowsManagerMixin = {
       (a.title || '').toLowerCase().includes(q) ||
       (a.brief || '').toLowerCase().includes(q),
     );
+  },
+
+  async addFlowStepApprover(step, suggestionOrToken) {
+    if (!step) return false;
+    const token = normalizeApproverToken(
+      typeof suggestionOrToken === 'string'
+        ? suggestionOrToken
+        : suggestionOrToken?.token || suggestionOrToken?.npub,
+    );
+    if (!token) return false;
+
+    const next = mergeApproverTokens(step.whitelist_approvers, [token]);
+    if ((step.whitelist_approvers || []).length === (next || []).length) return false;
+    step.whitelist_approvers = next;
+
+    if (token.startsWith('npub1')) {
+      this.resolveChatProfile?.(token);
+      await this.rememberPeople?.([token], 'flow-approver');
+    }
+    return true;
+  },
+
+  async consumeFlowStepApproverQuery(step, query, suggestion = null) {
+    if (!step) return false;
+
+    const rawTokens = parseTagList(query)
+      .map((value) => normalizeApproverToken(value))
+      .filter(Boolean);
+    if (rawTokens.length > 0) {
+      let added = false;
+      for (const token of rawTokens) {
+        const appended = await this.addFlowStepApprover(step, token);
+        added = appended || added;
+      }
+      return added;
+    }
+
+    if (suggestion?.token || suggestion?.npub) {
+      return this.addFlowStepApprover(step, suggestion);
+    }
+
+    return false;
+  },
+
+  removeFlowStepApprover(step, token) {
+    if (!step) return;
+    step.whitelist_approvers = removeApproverToken(step.whitelist_approvers, token);
   },
 
   // --- approval rendering helpers (used by the detail modal template) ---
@@ -264,7 +418,8 @@ export const flowsManagerMixin = {
       if (!names[taskId]) ids.add(taskId);
     }
     for (const ref of (approval.artifact_refs || [])) {
-      if (ref.record_id && !names[ref.record_id]) ids.add(ref.record_id);
+      const normalized = normalizeArtifactRef(ref);
+      if (normalized.record_id && !names[normalized.record_id]) ids.add(normalized.record_id);
     }
     if (ids.size === 0) return;
 
@@ -296,12 +451,17 @@ export const flowsManagerMixin = {
 
   resolvedArtifacts(approval) {
     return (approval?.artifact_refs || []).map((ref) => {
-      const cached = this.approvalLinkedNames[ref.record_id];
+      const normalized = normalizeArtifactRef(ref);
+      const cached = this.approvalLinkedNames[normalized.record_id];
       if (cached) {
-        const familyType = (ref.record_family_hash || '').split(':').pop();
-        return { ...ref, type: cached.type || familyType || 'unknown', title: cached.title, resolved: true };
+        return {
+          ...normalized,
+          type: cached.type || normalized.type || 'unknown',
+          title: cached.title || normalized.title,
+          resolved: true,
+        };
       }
-      return resolveArtifactRef(ref, this.tasks, this.documents);
+      return resolveArtifactRef(normalized, this.tasks, this.documents);
     });
   },
 
@@ -343,12 +503,18 @@ export const flowsManagerMixin = {
       items.push({ id: taskId, type: 'task', title: cached?.title || taskId.slice(0, 12) + '…' });
     }
     for (const ref of (approval?.artifact_refs || [])) {
-      const familyType = (ref.record_family_hash || '').split(':').pop();
-      const cached = this.approvalLinkedNames[ref.record_id];
-      const type = cached?.type || familyType || 'unknown';
+      const normalized = normalizeArtifactRef(ref);
+      if (!normalized.record_id) continue;
+      const cached = this.approvalLinkedNames[normalized.record_id];
+      const type = cached?.type || normalized.type || 'unknown';
       // Skip artifact refs that duplicate a task_id already listed
-      if (type === 'task' && (approval?.task_ids || []).includes(ref.record_id)) continue;
-      items.push({ id: ref.record_id, type, title: cached?.title || ref.record_id.slice(0, 12) + '…' });
+      if (type === 'task' && (approval?.task_ids || []).includes(normalized.record_id)) continue;
+      items.push({
+        id: normalized.record_id,
+        type,
+        title: cached?.title || normalized.title || normalized.record_id.slice(0, 12) + '…',
+        artifact_key: normalized.artifact_key,
+      });
     }
     return items;
   },
@@ -511,7 +677,7 @@ export const flowsManagerMixin = {
       owner_npub: ownerNpub,
       title,
       description,
-      steps,
+      steps: toRaw(normalizeFlowSteps(steps)),
       next_flow_id,
       scope_id,
       scope_l1_id,
@@ -587,6 +753,7 @@ export const flowsManagerMixin = {
     const updated = toRaw({
       ...flow,
       ...patch,
+      steps: patch.steps !== undefined ? toRaw(normalizeFlowSteps(patch.steps)) : flow.steps,
       group_ids: resolvedGroupIds,
       shares: resolvedShares,
       scope_policy_group_ids: scopePolicyGroupIds,
@@ -654,40 +821,19 @@ export const flowsManagerMixin = {
     if (!flow || !this.session?.npub) return null;
     if (!Array.isArray(flow.steps) || flow.steps.length === 0) return null;
 
-    const firstStep = flow.steps[0];
-    const flowRunId = crypto.randomUUID();
     const taskId = crypto.randomUUID();
     const now = new Date().toISOString();
     const ownerNpub = this.workspaceOwnerNpub;
-
-    const stepDesc = firstStep.goals || firstStep.description || firstStep.instruction || '';
-    const task = {
-      record_id: taskId,
-      owner_npub: ownerNpub,
-      title: firstStep.title || flow.title,
-      description: buildFirstStepDescription(stepDesc, runContext),
-      state: 'ready',
-      priority: 'rock',
-      parent_task_id: null,
-      flow_id: flowId,
-      flow_run_id: flowRunId,
-      flow_step: firstStep.step_number,
-      predecessor_task_ids: null,
-      scope_id: flow.scope_id || null,
-      scope_l1_id: flow.scope_l1_id || null,
-      scope_l2_id: flow.scope_l2_id || null,
-      scope_l3_id: flow.scope_l3_id || null,
-      scope_l4_id: flow.scope_l4_id || null,
-      scope_l5_id: flow.scope_l5_id || null,
-      scope_policy_group_ids: toRaw(flow.scope_policy_group_ids || null),
-      shares: [],
-      group_ids: toRaw(flow.group_ids || []),
-      sync_status: 'pending',
-      record_state: 'active',
-      version: 1,
-      created_at: now,
-      updated_at: now,
-    };
+    const dispatchBotNpub = resolveFlowKickoffAssignee(this.defaultAgentNpub, this.botNpub);
+    const task = buildFlowKickoffTaskRecord({
+      taskId,
+      ownerNpub,
+      flow,
+      description: buildFlowKickoffDescription(flow.description, runContext),
+      createdAt: now,
+      assignedToNpub: dispatchBotNpub,
+      scopeAssignment: buildStoredFlowKickoffScopeAssignment(flow),
+    });
 
     await upsertTask(task);
     this.tasks = [...this.tasks, task];
@@ -705,7 +851,49 @@ export const flowsManagerMixin = {
     });
 
     await this.flushAndBackgroundSync();
-    return { task_id: taskId, flow_run_id: flowRunId };
+    return { task_id: taskId, flow_run_id: null };
+  },
+
+  async startChatThreadFlowDispatch({
+    flowId,
+    resolvedScopeAssignment = null,
+    kickoffDescription = '',
+  } = {}) {
+    const flow = this.flows.find((entry) => entry.record_id === flowId);
+    if (!flow || !this.session?.npub) return null;
+    if (!Array.isArray(flow.steps) || flow.steps.length === 0) return null;
+
+    const taskId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const ownerNpub = this.workspaceOwnerNpub;
+    const dispatchBotNpub = resolveFlowKickoffAssignee(this.defaultAgentNpub, this.botNpub);
+    const task = buildFlowKickoffTaskRecord({
+      taskId,
+      ownerNpub,
+      flow,
+      description: String(kickoffDescription || '').trim(),
+      createdAt: now,
+      assignedToNpub: dispatchBotNpub,
+      scopeAssignment: resolvedScopeAssignment || buildStoredFlowKickoffScopeAssignment(flow),
+    });
+
+    await upsertTask(task);
+    this.tasks = [...this.tasks, task];
+
+    const envelope = await outboundTask({
+      ...task,
+      signature_npub: this.signingNpub,
+      write_group_ref: task.board_group_id || task.group_ids?.[0] || null,
+    });
+
+    await addPendingWrite({
+      record_id: taskId,
+      record_family_hash: envelope.record_family_hash,
+      envelope,
+    });
+
+    await this.flushAndBackgroundSync();
+    return { task_id: taskId, flow_run_id: null };
   },
 
   // --- approval actions ---

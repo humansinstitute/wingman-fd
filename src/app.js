@@ -13,6 +13,7 @@ import { audioRecordingManagerMixin } from './audio-recording-manager.js';
 import { storageImageManagerMixin } from './storage-image-manager.js';
 import { triggersManagerMixin } from './triggers-manager.js';
 import { jobsManagerMixin } from './jobs-manager.js';
+import { liveManagerMixin } from './live-manager.js';
 import { workspaceManagerMixin, guessDefaultBackendUrl } from './workspace-manager.js';
 import { chatMessageManagerMixin } from './chat-message-manager.js';
 import { syncManagerMixin } from './sync-manager.js';
@@ -21,8 +22,14 @@ import { connectSettingsManagerMixin } from './connect-settings-manager.js';
 import { unreadStoreMixin } from './unread-store.js';
 import { flowsManagerMixin } from './flows-manager.js';
 import { personsManagerMixin } from './persons-manager.js';
+import { opportunitiesManagerMixin } from './opportunities-manager.js';
 import { createShellState } from './shell-state.js';
-import { getTaskFlowInfo, buildAttachFlowPatch, buildDetachFlowPatch } from './task-flow-helpers.js';
+import {
+  getTaskFlowInfo,
+  buildAttachFlowPatch,
+  buildDetachFlowPatch,
+  findTaskForFlowRunStep,
+} from './task-flow-helpers.js';
 import {
   buildPredecessorTaskSuggestions,
   describePredecessorRelationship,
@@ -41,6 +48,8 @@ import { buildFlightDeckDocumentTitle } from './page-title.js';
 import { getRunningBuildId } from './version-check.js';
 import { filterDocItemsByScope } from './docs-scope-filter.js';
 import { sectionLiveQueryMixin } from './section-live-queries.js';
+import { applySelectedDocumentUpdate } from './document-selection.js';
+import { createChatThreadFlowDispatchState } from './chat-thread-flow-dispatch.js';
 import {
   CALENDAR_VIEWS,
   buildTaskCalendar,
@@ -121,7 +130,12 @@ import {
 } from './translators/tasks.js';
 import { outboundSchedule } from './translators/schedules.js';
 import { outboundComment } from './translators/comments.js';
-import { recordFamilyHash as taskFamilyHash, parseReferencesFromDescription, resolveFlowLinkage } from './translators/tasks.js';
+import {
+  recordFamilyHash as taskFamilyHash,
+  parseReferencesFromDescription,
+  resolveFlowDispatchAssignee,
+  resolveFlowLinkage,
+} from './translators/tasks.js';
 import {
   isTaskUnscoped,
   matchesTaskBoardScope,
@@ -149,7 +163,7 @@ import {
 } from './crypto/group-keys.js';
 import { getActiveWorkspaceKeyNpub } from './crypto/workspace-keys.js';
 import { findWorkspaceByKey, mergeWorkspaceEntries, workspaceFromToken, findWorkspaceBySlug } from './workspaces.js';
-import { parseRouteLocation } from './route-helpers.js';
+import { buildSectionUrl, parseRouteLocation } from './route-helpers.js';
 import { extractInviteToken } from './invite-link.js';
 import {
   buildStoragePrepareBody,
@@ -233,6 +247,14 @@ export function initApp() {
     },
     settingsTab: 'connection',
     navSection: initialRoute.section,
+    liveSessions: [],
+    liveSelectedSessionId: '',
+    liveDrawerOpen: false,
+    liveNightWatchReports: [],
+    liveNightWatchReportModalOpen: false,
+    liveSelectedNightWatchReportId: '',
+    liveSessionGoalDraft: '',
+    liveSessionNextActionDraft: '',
     calendarViews: CALENDAR_VIEWS,
     calendarView: 'month',
     calendarAnchorDate: getTodayDateKey(),
@@ -250,6 +272,8 @@ export function initApp() {
     connectHostUrl: '',
     connectHostLabel: '',
     connectHostServiceNpub: '',
+    connectHostTowerName: '',
+    connectHostTowerDescription: '',
     connectHostError: null,
     connectHostBusy: false,
     connectManualUrl: '',
@@ -344,6 +368,7 @@ export function initApp() {
     showFlowStartConfirm: false,
     flowStartTarget: null,
     flowStartContext: '',
+    ...createChatThreadFlowDispatchState(),
     showFlowPicker: false,
     showApprovalDetail: false,
     activeApprovalId: null,
@@ -369,6 +394,7 @@ export function initApp() {
     recordVersionSelectedIndex: -1,
     persons: [],
     organisations: [],
+    opportunities: [],
     peopleSubTab: 'people',
     editingPersonId: null,
     editingOrgId: null,
@@ -385,6 +411,16 @@ export function initApp() {
     orgFormPositioning: '',
     orgFormTags: '',
     orgFormContacts: [],
+    activeOpportunityId: null,
+    opportunityComments: [],
+    opportunityFilter: '',
+    showOpportunityEditor: false,
+    editingOpportunity: null,
+    newOpportunityCommentBody: '',
+    opportunityPersonQuery: '',
+    opportunityOrganisationQuery: '',
+    opportunityTaskQuery: '',
+    opportunityResponsibleQuery: '',
     linkPickerOpen: false,
     linkPickerTarget: null,
     linkPickerRole: '',
@@ -562,6 +598,19 @@ export function initApp() {
     workspaceSettingsVersion: 0,
     workspaceSettingsGroupIds: [],
     workspaceHarnessUrl: '',
+    agentChatTriggerRecordId: '',
+    agentChatTriggerVersion: 0,
+    agentChatTriggerGroupIds: [],
+    agentChatTriggerEnabled: true,
+    agentChatTriggerTargetGroupId: '',
+    agentChatTriggerTargetGroupNpub: '',
+    agentChatTriggerUpdatedAt: '',
+    agentChatTriggerDiagnostics: [],
+    agentChatTriggerDiagnosticsLoading: false,
+    agentChatTriggerDiagnosticsError: null,
+    agentChatTriggerError: null,
+    agentChatTriggerSuccess: null,
+    _agentChatTriggerDiagnosticsRequestId: 0,
     workspaceProfileNameInput: '',
     workspaceProfileSlugInput: '',
     workspaceProfileDescriptionInput: '',
@@ -665,6 +714,9 @@ export function initApp() {
     messageAudioDrafts: [],
     messageImageUploadCount: 0,
     mainFeedVisibleCount: 80,
+    chatFeedNearTop: false,
+    selectedChannelUnreadCutoff: null,
+    selectedChannelUnreadChannelId: null,
     syncing: false,
     isLoggingIn: false,
     error: null,
@@ -1185,7 +1237,7 @@ export function initApp() {
         await this.selectWorkspace(this.selectedWorkspaceKey || this.currentWorkspaceOwnerNpub, { refresh: false });
       }
       this.updateWorkspaceBootstrapPrompt();
-      if (this.session?.npub && (!this.backendUrl || !this.selectedWorkspaceKey)) {
+      if (this.session?.npub && (!this.backendUrl || (!this.selectedWorkspaceKey && !this.showWorkspaceBootstrapModal))) {
         this.openConnectModal();
       }
       if (this.selectedWorkspaceKey) {
@@ -1343,6 +1395,7 @@ export function initApp() {
           case 'chat': return 'chat';
           case 'docs': return 'docs';
           case 'reports': return 'reports';
+          case 'opportunities': return 'opportunities';
           case 'people': return 'people';
           case 'scopes': return 'scopes';
           case 'settings': return 'settings';
@@ -1375,6 +1428,8 @@ export function initApp() {
         if (this.selectedDocCommentId) url.searchParams.set('commentid', this.selectedDocCommentId);
       } else if (this.navSection === 'reports') {
         if (this.selectedReport?.record_id) url.searchParams.set('reportid', this.selectedReport.record_id);
+      } else if (this.navSection === 'opportunities') {
+        if (this.activeOpportunityId) url.searchParams.set('opportunityid', this.activeOpportunityId);
       } else if (this.navSection === 'tasks' || this.navSection === 'calendar') {
         if (this.showBoardDescendantTasks) url.searchParams.set('descendants', '1');
         if (this.navSection === 'tasks' && this.activeTaskId) url.searchParams.set('taskid', this.activeTaskId);
@@ -1461,6 +1516,12 @@ export function initApp() {
           }
         } else if (route.section === 'reports') {
           this.selectedReportId = route.params.reportid || this.selectedReport?.record_id || null;
+        } else if (route.section === 'opportunities') {
+          if (route.params.opportunityid) {
+            this.openOpportunityDetail(route.params.opportunityid);
+          } else {
+            this.closeOpportunityDetail({ syncRoute: false });
+          }
         } else if (route.section === 'tasks' || route.section === 'calendar') {
           // Scope already restored above; apply task/calendar-specific params
           if (!route.params.scopeid && !route.params.groupid) {
@@ -1562,7 +1623,7 @@ export function initApp() {
           this.currentWorkspaceOwnerNpub = this.knownWorkspaces[0].workspaceOwnerNpub;
         }
         this.updateWorkspaceBootstrapPrompt();
-        if (!this.backendUrl || !this.selectedWorkspaceKey) {
+        if (!this.backendUrl || (!this.selectedWorkspaceKey && !this.showWorkspaceBootstrapModal)) {
           this.openConnectModal();
         }
       } catch (error) {
@@ -1607,7 +1668,7 @@ export function initApp() {
           await this.bootstrapSelectedWorkspace({ runAccessPrune: true });
         }
         this.updateWorkspaceBootstrapPrompt();
-        if (!this.backendUrl || !this.selectedWorkspaceKey) {
+        if (!this.backendUrl || (!this.selectedWorkspaceKey && !this.showWorkspaceBootstrapModal)) {
           this.openConnectModal();
         }
         this.ensureBackgroundSync(true);
@@ -1663,6 +1724,19 @@ export function initApp() {
       this.workspaceSettingsVersion = 0;
       this.workspaceSettingsGroupIds = [];
       this.workspaceHarnessUrl = '';
+      this.agentChatTriggerRecordId = '';
+      this.agentChatTriggerVersion = 0;
+      this.agentChatTriggerGroupIds = [];
+      this.agentChatTriggerEnabled = true;
+      this.agentChatTriggerTargetGroupId = '';
+      this.agentChatTriggerTargetGroupNpub = '';
+      this.agentChatTriggerUpdatedAt = '';
+      this.agentChatTriggerDiagnostics = [];
+      this.agentChatTriggerDiagnosticsLoading = false;
+      this.agentChatTriggerDiagnosticsError = null;
+      this.agentChatTriggerError = null;
+      this.agentChatTriggerSuccess = null;
+      this._agentChatTriggerDiagnosticsRequestId = 0;
       this.revokeWorkspaceAvatarPreviewObjectUrl();
       this.hasBootstrappedUnreadTracking = false;
       this.workspaceProfileNameInput = '';
@@ -1752,6 +1826,12 @@ export function initApp() {
       if (activeSection !== 'status') {
         this.statusRecentChanges = [];
       }
+      if (activeSection !== 'opportunities') {
+        this.opportunityComments = [];
+        this.showOpportunityEditor = false;
+        this.editingOpportunity = null;
+        this.activeOpportunityId = null;
+      }
     },
 
     navigateTo(section, options = {}) {
@@ -1832,14 +1912,7 @@ export function initApp() {
     },
 
     applySelectedDocument(document = null) {
-      const recordId = String(this.selectedDocId || '').trim();
-      if (!recordId) return;
-      const nextDocuments = this.documents.filter((item) => item?.record_id !== recordId);
-      if (document && document.record_state !== 'deleted') {
-        nextDocuments.push(document);
-      }
-      this.applyDocuments(nextDocuments);
-      this.loadDocEditorFromSelection();
+      applySelectedDocumentUpdate(this, document);
     },
 
     async applyReports(reports = []) {
@@ -2367,7 +2440,7 @@ export function initApp() {
       this.mobileNavOpen = false;
       this.startWorkspaceLiveQueries();
       if (item.channelId) {
-        await this.selectChannel(item.channelId, { scrollToLatest: false });
+        await this.selectChannel(item.channelId);
       }
       if (item.threadId) {
         this.openThread(item.threadId, { scrollToLatest: false });
@@ -2429,24 +2502,27 @@ export function initApp() {
         normalizedTasks.push(normalized);
       }
       const dedupedTasks = dedupeTasksByRecordId(normalizedTasks);
-      if (!sameListBySignature(this.tasks, dedupedTasks, (task) => [
+      const hydratedTasks = typeof this.hydrateTasksWithOpportunityLinks === 'function'
+        ? this.hydrateTasksWithOpportunityLinks(dedupedTasks)
+        : dedupedTasks;
+      if (!sameListBySignature(this.tasks, hydratedTasks, (task) => [
         String(task?.record_id || ''),
         String(task?.updated_at || ''),
         String(task?.version ?? ''),
         String(task?.record_state || ''),
         String(task?.state || ''),
       ].join('|'))) {
-        this.tasks = dedupedTasks;
+        this.tasks = hydratedTasks;
       }
       // Resolve assignee profiles for display but do NOT write back to
       // Dexie (address book) from a liveQuery handler — that creates a
       // reactive cascade.  Profile resolution is fire-and-forget here.
-      const assignedNpubs = [...new Set(dedupedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
+      const assignedNpubs = [...new Set(hydratedTasks.map((task) => task.assigned_to_npub).filter(Boolean))];
       for (const npub of assignedNpubs) {
         this.resolveChatProfile(npub);
       }
       this.selectedTaskIds = this.selectedTaskIds.filter((taskId) =>
-        dedupedTasks.some((task) => task.record_id === taskId && task.record_state !== 'deleted' && !this.isParentTask(taskId))
+        hydratedTasks.some((task) => task.record_id === taskId && task.record_state !== 'deleted' && !this.isParentTask(taskId))
       );
       this.normalizeTaskFilterTags();
       this.updatePageTitle();
@@ -2807,6 +2883,12 @@ export function initApp() {
         references: [],
         flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
       });
+      const dispatchAssigneeNpub = resolveFlowDispatchAssignee({
+        flowId: flowLinkage.flow_id,
+        flowRunId: flowLinkage.flow_run_id,
+        defaultAgentNpub: this.defaultAgentNpub,
+        botNpub: this.botNpub,
+      });
 
       const localRow = {
         record_id: recordId,
@@ -2817,7 +2899,7 @@ export function initApp() {
         priority: 'sand',
         parent_task_id: null,
         ...assignment,
-        assigned_to_npub: null,
+        assigned_to_npub: dispatchAssigneeNpub,
         scheduled_for: null,
         tags: '',
         predecessor_task_ids: null,
@@ -3256,6 +3338,17 @@ export function initApp() {
       );
     },
 
+    findEditingTaskFlowRunStepTask(flowRunId, stepNumber) {
+      return findTaskForFlowRunStep(this.tasks, flowRunId, stepNumber);
+    },
+
+    openEditingTaskFlowRunStepTask(flowRunId, stepNumber) {
+      const task = this.findEditingTaskFlowRunStepTask(flowRunId, stepNumber);
+      if (task?.record_id) {
+        this.openTaskDetail(task.record_id);
+      }
+    },
+
     async attachFlowToEditingTask(flowId) {
       if (!this.editingTask) return;
       const patch = buildAttachFlowPatch(flowId, this.editingTask.references || []);
@@ -3395,14 +3488,21 @@ export function initApp() {
 
     buildTaskUrl(taskId) {
       if (typeof window === 'undefined') return '';
-      const url = new URL(window.location.href);
-      url.pathname = '/tasks';
-      url.search = '';
       const task = this.tasks.find((item) => item.record_id === taskId);
       const scopeId = task?.scope_id ?? task?.scope_l5_id ?? task?.scope_l4_id ?? task?.scope_l3_id ?? task?.scope_l2_id ?? task?.scope_l1_id ?? this.selectedBoardId ?? null;
-      if (scopeId) url.searchParams.set('scopeid', scopeId);
-      if (taskId) url.searchParams.set('taskid', taskId);
-      return url.toString();
+      const currentRoute = parseRouteLocation(window.location.href);
+      const workspaceSlug = this.currentWorkspaceSlug || currentRoute.workspaceSlug || null;
+      const workspaceKey = this.currentWorkspaceKey || currentRoute.params?.workspacekey || null;
+      const href = buildSectionUrl({
+        workspaceSlug,
+        section: 'tasks',
+        scopeid: scopeId,
+        params: {
+          taskid: taskId,
+          workspacekey: workspaceKey,
+        },
+      });
+      return new URL(href, window.location.origin).toString();
     },
 
     async copyTaskLink(taskId) {
@@ -4181,7 +4281,7 @@ export function initApp() {
       // Parse type prefix: @scope:, @task:, @doc:
       let typeFilter = null;
       let query = rawQuery;
-      const prefixMatch = rawQuery.match(/^(scope|task|doc|person|flow):/i);
+      const prefixMatch = rawQuery.match(/^(scope|task|doc|person|flow|opportunity):/i);
       if (prefixMatch) {
         typeFilter = prefixMatch[1].toLowerCase();
         query = rawQuery.slice(prefixMatch[0].length);
@@ -4243,6 +4343,24 @@ export function initApp() {
           if (flow.record_state === 'deleted') continue;
           if (!needle || (flow.title || '').toLowerCase().includes(needle)) {
             results.push({ type: 'flow', id: flow.record_id, label: flow.title || 'Untitled', sublabel: 'Flow' });
+          }
+        }
+      }
+
+      if (!typeFilter || typeFilter === 'opportunity') {
+        for (const opportunity of this.opportunities) {
+          if (opportunity.record_state === 'deleted') continue;
+          if (
+            !needle
+            || String(opportunity.title || '').toLowerCase().includes(needle)
+            || String(opportunity.opportunity_type || '').toLowerCase().includes(needle)
+          ) {
+            results.push({
+              type: 'opportunity',
+              id: opportunity.record_id,
+              label: opportunity.title || 'Untitled',
+              sublabel: 'Opportunity',
+            });
           }
         }
       }
@@ -4387,6 +4505,11 @@ export function initApp() {
           this.editingFlowId = id;
           this.showFlowEditor = true;
         });
+      } else if (type === 'opportunity') {
+        this.navSection = 'opportunities';
+        this.mobileNavOpen = false;
+        this.startWorkspaceLiveQueries();
+        this.$nextTick(() => this.openOpportunityDetail(id));
       } else if (type === 'person') {
         this.navSection = 'people';
         this.mobileNavOpen = false;
@@ -4747,12 +4870,14 @@ export function initApp() {
     docsManagerMixin,
     triggersManagerMixin,
     jobsManagerMixin,
+    liveManagerMixin,
     audioRecordingManagerMixin,
     storageImageManagerMixin,
     sectionLiveQueryMixin,
     unreadStoreMixin,
     flowsManagerMixin,
     personsManagerMixin,
+    opportunitiesManagerMixin,
   );
 
   Alpine.store('chat', storeObj);

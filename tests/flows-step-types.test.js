@@ -8,6 +8,9 @@ import {
   isApprovalStep,
   parseTagList,
   formatTagList,
+  normalizeApproverToken,
+  mergeApproverTokens,
+  removeApproverToken,
 } from '../src/flows-manager.js';
 
 // ---------------------------------------------------------------------------
@@ -15,9 +18,20 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('normalizeStepType', () => {
-  it('passes through explicit job_dispatch type', () => {
-    const step = { step_number: 1, title: 'Deploy', type: 'job_dispatch', job_type: 'code' };
-    expect(normalizeStepType(step).type).toBe('job_dispatch');
+  it('normalizes explicit job_dispatch steps to the canonical work-step shape', () => {
+    const step = { step_number: 1, title: 'Deploy', type: 'job_dispatch', job_type: 'code', goals: 'Ship it' };
+    expect(normalizeStepType(step)).toEqual({
+      step_number: 1,
+      title: 'Deploy',
+      type: 'job_dispatch',
+      instruction: 'Ship it',
+      job_type: 'code',
+      goals: 'Ship it',
+      manager_guidance: '',
+      worker_guidance: '',
+      directory_override: '',
+      artifacts_expected: [],
+    });
   });
 
   it('passes through explicit approval type', () => {
@@ -51,7 +65,46 @@ describe('normalizeStepType', () => {
     };
     const normalized = normalizeStepType(legacy);
     expect(normalized.type).toBe('job_dispatch');
-    expect(normalized.goals).toBe('Run automatically');
+    expect(normalized.instruction).toBe('Run automatically');
+  });
+
+  it('treats untyped dispatch-configured legacy steps as work steps', () => {
+    const legacy = {
+      step_number: 1,
+      title: 'Dispatch',
+      approval_mode: 'manual',
+      goals: 'Still a work step',
+      manager_guidance: 'Legacy manager text',
+    };
+    const normalized = normalizeStepType(legacy);
+    expect(normalized.type).toBe('job_dispatch');
+    expect(normalized.instruction).toBe('Still a work step');
+    expect(normalized.manager_guidance).toBe('Legacy manager text');
+  });
+
+  it('preserves legacy dispatch metadata when normalizing work steps', () => {
+    const legacy = {
+      step_number: 2,
+      title: 'Research',
+      job_type: 'research',
+      goals: 'Find targets',
+      manager_guidance: 'Prioritize high-fit accounts',
+      worker_guidance: 'Save results to CSV',
+      directory_override: '/tmp/research',
+      artifacts_expected: ['csv'],
+    };
+    expect(normalizeStepType(legacy)).toEqual({
+      step_number: 2,
+      title: 'Research',
+      type: 'job_dispatch',
+      instruction: 'Find targets',
+      job_type: 'research',
+      goals: 'Find targets',
+      manager_guidance: 'Prioritize high-fit accounts',
+      worker_guidance: 'Save results to CSV',
+      directory_override: '/tmp/research',
+      artifacts_expected: ['csv'],
+    });
   });
 
   it('defaults untyped step without approval_mode to job_dispatch', () => {
@@ -66,11 +119,7 @@ describe('defaultStepForType', () => {
     expect(step.step_number).toBe(3);
     expect(step.type).toBe('job_dispatch');
     expect(step.title).toBe('');
-    expect(step.job_type).toBe('');
-    expect(step.goals).toBe('');
-    expect(step.manager_guidance).toBe('');
-    expect(step.worker_guidance).toBe('');
-    expect(step.directory_override).toBe('');
+    expect(step.instruction).toBe('');
     expect(step.artifacts_expected).toEqual([]);
   });
 
@@ -135,6 +184,25 @@ describe('formatTagList', () => {
   });
 });
 
+describe('approver token helpers', () => {
+  it('normalizes supported approver token types', () => {
+    expect(normalizeApproverToken(' npub1pete ')).toBe('npub1pete');
+    expect(normalizeApproverToken(' group:management ')).toBe('group:management');
+    expect(normalizeApproverToken('pete')).toBe('');
+  });
+
+  it('merges approver tokens uniquely', () => {
+    expect(mergeApproverTokens(['npub1pete'], ['group:management', 'npub1pete']))
+      .toEqual(['npub1pete', 'group:management']);
+  });
+
+  it('removes approver tokens and returns null when empty', () => {
+    expect(removeApproverToken(['npub1pete', 'group:management'], 'npub1pete'))
+      .toEqual(['group:management']);
+    expect(removeApproverToken(['npub1pete'], 'npub1pete')).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // buildFlowEditorForm with typed steps
 // ---------------------------------------------------------------------------
@@ -158,7 +226,8 @@ describe('buildFlowEditorForm — typed steps', () => {
     expect(form.formSteps[1].type).toBe('approval');
 
     // Verify deep copy — mutating form should not mutate original
-    form.formSteps[0].goals = 'Changed';
+    expect(form.formSteps[0].instruction).toBe('Find stuff');
+    form.formSteps[0].instruction = 'Changed';
     expect(flow.steps[0].goals).toBe('Find stuff');
   });
 });
@@ -214,6 +283,8 @@ function createStore(overrides = {}) {
     session: { npub: 'npub_viewer' },
     workspaceOwnerNpub: 'npub_owner',
     signingNpub: 'npub_viewer',
+    defaultAgentNpub: 'npub_agent',
+    botNpub: 'npub_bot',
     selectedBoardId: null,
     flows: [],
     approvals: [],
@@ -232,7 +303,7 @@ function createStore(overrides = {}) {
 }
 
 describe('flowsManagerMixin — startFlowRun', () => {
-  it('creates a task linked to the first step of the flow', async () => {
+  it('creates a kickoff task for Wingmen flow dispatch', async () => {
     const store = createStore({
       flows: [
         {
@@ -258,18 +329,41 @@ describe('flowsManagerMixin — startFlowRun', () => {
 
     expect(result).toBeTruthy();
     expect(result.task_id).toBeTruthy();
-    expect(result.flow_run_id).toBeTruthy();
+    expect(result.flow_run_id).toBeNull();
 
     // Task should be in the store
     expect(store.tasks).toHaveLength(1);
     const task = store.tasks[0];
     expect(task.flow_id).toBe('flow-1');
-    expect(task.flow_run_id).toBe(result.flow_run_id);
-    expect(task.flow_step).toBe(1);
-    expect(task.title).toBe('Research');
-    expect(task.state).toBe('ready');
+    expect(task.flow_run_id).toBeNull();
+    expect(task.flow_step).toBeNull();
+    expect(task.title).toBe('Outreach Pipeline');
+    expect(task.state).toBe('new');
+    expect(task.assigned_to_npub).toBe('npub_agent');
+    expect(task.tags).toContain('flow_kickoff');
+    expect(task.references).toEqual([{ type: 'flow', id: 'flow-1' }]);
     // Inherits scope from the flow
     expect(task.scope_id).toBe('scope-1');
+  });
+
+  it('falls back to botNpub when no default agent is configured', async () => {
+    const store = createStore({
+      defaultAgentNpub: '',
+      botNpub: 'npub_fallback_bot',
+      flows: [
+        {
+          record_id: 'flow-1',
+          owner_npub: 'npub_owner',
+          title: 'Fallback Flow',
+          steps: [{ step_number: 1, title: 'Research', type: 'job_dispatch', job_type: 'research', goals: 'Find targets' }],
+          group_ids: [],
+        },
+      ],
+    });
+
+    await store.startFlowRun('flow-1');
+
+    expect(store.tasks[0].assigned_to_npub).toBe('npub_fallback_bot');
   });
 
   it('returns null when flow has no steps', async () => {
@@ -319,5 +413,58 @@ describe('flowsManagerMixin — startFlowRun', () => {
 
     await store.startFlowRun('flow-1');
     expect(store.flushAndBackgroundSync).toHaveBeenCalled();
+  });
+
+  it('creates a chat-origin kickoff task with the provided scope assignment', async () => {
+    const store = createStore({
+      flows: [
+        {
+          record_id: 'flow-1',
+          owner_npub: 'npub_owner',
+          title: 'Chat Dispatch Flow',
+          steps: [{ step_number: 1, title: 'Research', type: 'job_dispatch', goals: 'Review the thread' }],
+          scope_id: 'scope-flow',
+          scope_l1_id: 'scope-flow',
+          scope_policy_group_ids: ['g-flow'],
+          group_ids: ['g-flow'],
+        },
+      ],
+    });
+
+    const result = await store.startChatThreadFlowDispatch({
+      flowId: 'flow-1',
+      resolvedScopeAssignment: {
+        scope_id: 'scope-channel',
+        scope_l1_id: 'scope-channel',
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        scope_policy_group_ids: ['g-channel'],
+        group_ids: ['g-channel'],
+        shares: [{ type: 'group', group_npub: 'g-channel' }],
+        write_group_ref: 'g-channel',
+      },
+      kickoffDescription: '## Dispatch Request\n- dispatch_type: flow',
+    });
+
+    expect(result).toBeTruthy();
+    expect(result.flow_run_id).toBeNull();
+    expect(store.tasks).toHaveLength(1);
+    expect(store.tasks[0]).toMatchObject({
+      title: 'Chat Dispatch Flow',
+      flow_id: 'flow-1',
+      flow_run_id: null,
+      flow_step: null,
+      state: 'new',
+      assigned_to_npub: 'npub_agent',
+      scope_id: 'scope-channel',
+      scope_policy_group_ids: ['g-channel'],
+      group_ids: ['g-channel'],
+      board_group_id: 'g-channel',
+    });
+    expect(store.tasks[0].description).toContain('## Dispatch Request');
+    expect(store.tasks[0].tags).toContain('flow_kickoff');
+    expect(store.tasks[0].references).toEqual([{ type: 'flow', id: 'flow-1' }]);
   });
 });

@@ -5,7 +5,6 @@
  * (the Alpine store) and should be spread into the store definition via applyMixins.
  */
 
-import Alpine from 'alpinejs';
 import {
   getMessagesByChannel,
   getMessageById,
@@ -26,9 +25,28 @@ import {
   resolveVisibleThreadReplyCount,
   sortMessagesByUpdatedAt,
 } from './chat-order.js';
+import {
+  buildChatThreadFlowDispatchPreview,
+  createChatThreadFlowDispatchState,
+  getChatThreadFlowDispatchScopeSourceLabel,
+  normalizeChatThreadFlowDispatchScopeAssignment,
+  resolveChatThreadFlowDispatchScope,
+  resolveChatThreadFlowDispatchThread,
+} from './chat-thread-flow-dispatch.js';
+import { buildStoredFlowKickoffScopeAssignment } from './task-flow-helpers.js';
+import { UNSCOPED_TASK_BOARD_ID } from './task-board-state.js';
 import { sameListBySignature } from './utils/state-helpers.js';
 
 const chatDerivedCache = new WeakMap();
+
+function scheduleUiNextTick(callback) {
+  const nextTick = globalThis.Alpine?.nextTick;
+  if (typeof nextTick === 'function') {
+    nextTick(callback);
+    return;
+  }
+  queueMicrotask(callback);
+}
 
 function getChatDerivedState(store) {
   const messages = Array.isArray(store?.messages) ? store.messages : [];
@@ -125,6 +143,10 @@ export const chatMessageManagerMixin = {
     return this.hiddenMainFeedCount > 0;
   },
 
+  get showMainFeedLoadMoreControl() {
+    return this.hasMoreMainFeedMessages;
+  },
+
   get threadMessages() {
     return getChatDerivedState(this).threadMessages;
   },
@@ -145,11 +167,37 @@ export const chatMessageManagerMixin = {
     return this.hiddenThreadReplyCount > 0;
   },
 
+  get chatThreadFlowDispatchSelectedFlow() {
+    return this.flows.find((flow) => flow.record_id === this.chatThreadFlowDispatchSelectedFlowId) ?? null;
+  },
+
+  get chatThreadFlowDispatchSourceChannel() {
+    const channelId = this.chatThreadFlowDispatchSource?.channelId || null;
+    return this.channels.find((channel) => channel.record_id === channelId) ?? null;
+  },
+
+  get chatThreadFlowDispatchResolvedScopeLabel() {
+    if (!this.chatThreadFlowDispatchResolvedScopeId) return 'No scope';
+    return this.getTaskBoardOptionLabel(this.chatThreadFlowDispatchResolvedScopeId) || this.chatThreadFlowDispatchResolvedScopeId;
+  },
+
+  get chatThreadFlowDispatchScopeSourceLabel() {
+    return getChatThreadFlowDispatchScopeSourceLabel(this.chatThreadFlowDispatchScopeSource);
+  },
+
+  get chatThreadFlowDispatchCanSubmit() {
+    if (this.chatThreadFlowDispatchLoading || this.chatThreadFlowDispatchSubmitting) return false;
+    if (!this.chatThreadFlowDispatchSelectedFlowId) return false;
+    if (!this.chatThreadFlowDispatchSource?.channelId) return false;
+    if (this.chatThreadFlowDispatchMessages.length === 0) return false;
+    return String(this.chatThreadFlowDispatchPreview || '').trim().length > 0;
+  },
+
   // --- scroll anchoring ---
 
   scheduleChatFeedScrollToBottom(retries = 3) {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
-    Alpine.nextTick(() => {
+    scheduleUiNextTick(() => {
       if (this.chatFeedScrollFrame) window.cancelAnimationFrame(this.chatFeedScrollFrame);
       this.chatFeedScrollFrame = window.requestAnimationFrame(() => {
         this.chatFeedScrollFrame = null;
@@ -160,13 +208,14 @@ export const chatMessageManagerMixin = {
           return;
         }
         feed.scrollTop = feed.scrollHeight;
+        this.updateChatFeedLoadMoreVisibility(feed);
       });
     });
   },
 
   scheduleThreadRepliesScrollToBottom() {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
-    Alpine.nextTick(() => {
+    scheduleUiNextTick(() => {
       if (this.threadRepliesScrollFrame) window.cancelAnimationFrame(this.threadRepliesScrollFrame);
       this.threadRepliesScrollFrame = window.requestAnimationFrame(() => {
         this.threadRepliesScrollFrame = null;
@@ -195,11 +244,19 @@ export const chatMessageManagerMixin = {
 
   scheduleComposerAutosize(context) {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
-    Alpine.nextTick(() => {
+    scheduleUiNextTick(() => {
       const textarea = document.querySelector(`[data-chat-composer="${context}"]`);
       if (!textarea) return;
       this.autosizeComposer(textarea);
     });
+  },
+
+  updateChatFeedLoadMoreVisibility(feed) {
+    const nextFeed = feed && typeof feed.scrollTop === 'number'
+      ? feed
+      : (typeof document !== 'undefined' ? document.querySelector('[data-chat-feed]') : null);
+    if (!nextFeed) return;
+    this.chatFeedNearTop = nextFeed.scrollTop <= 96;
   },
 
   // --- messages ---
@@ -251,7 +308,10 @@ export const chatMessageManagerMixin = {
     const shouldScrollThreadToLatest = options.scrollThreadToLatest === true || this.pendingThreadScrollToLatest || threadRepliesAnchor?.atBottom;
 
     if (shouldScrollChatToLatest) this.scheduleChatFeedScrollToBottom();
-    else if (chatFeedAnchor) this.restoreScrollAnchor(chatFeedAnchor);
+    else if (chatFeedAnchor) {
+      this.restoreScrollAnchor(chatFeedAnchor);
+      this.updateChatFeedLoadMoreVisibility();
+    }
 
     if (shouldScrollThreadToLatest) this.scheduleThreadRepliesScrollToBottom();
     else if (threadRepliesAnchor) this.restoreScrollAnchor(threadRepliesAnchor);
@@ -342,6 +402,7 @@ export const chatMessageManagerMixin = {
     });
     this.mainFeedVisibleCount += this.MAIN_FEED_PAGE_SIZE;
     this.restoreScrollAnchor(anchor);
+    this.updateChatFeedLoadMoreVisibility();
   },
 
   getThreadParentMessage() {
@@ -381,7 +442,7 @@ export const chatMessageManagerMixin = {
 
   scheduleChatPreviewMeasurement() {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
-    Alpine.nextTick(() => {
+    scheduleUiNextTick(() => {
       if (this.chatPreviewMeasureFrame) window.cancelAnimationFrame(this.chatPreviewMeasureFrame);
       this.chatPreviewMeasureFrame = window.requestAnimationFrame(() => {
         this.chatPreviewMeasureFrame = null;
@@ -719,6 +780,166 @@ export const chatMessageManagerMixin = {
       this.messageActionsMenuId = null;
     } else {
       this.messageActionsMenuId = recordId;
+    }
+  },
+
+  async openChatThreadFlowDispatch(recordId, sourceSurface = 'main_feed') {
+    this.closeMessageActionsMenu();
+    Object.assign(this, createChatThreadFlowDispatchState());
+    this.showChatThreadFlowDispatchModal = true;
+    this.chatThreadFlowDispatchLoading = true;
+
+    try {
+      const resolved = this.resolveDispatchThread(recordId);
+      if (!resolved) {
+        throw new Error('Unable to resolve the selected chat thread.');
+      }
+      const sourceChannel = resolved.sourceChannel || this.selectedChannel;
+      if (!sourceChannel?.record_id) {
+        throw new Error('Unable to resolve the source channel for this thread.');
+      }
+
+      this.chatThreadFlowDispatchSource = {
+        channelId: sourceChannel.record_id,
+        clickedMessageId: resolved.clickedMessage.record_id,
+        threadRootMessageId: resolved.threadRootMessage.record_id,
+        sourceSurface,
+        dispatchedAt: new Date().toISOString(),
+      };
+      this.chatThreadFlowDispatchMessages = resolved.threadMessages;
+      this.chatThreadFlowDispatchError = null;
+      this.syncChatThreadFlowDispatchScopeResolution();
+    } catch (error) {
+      this.chatThreadFlowDispatchError = error?.message || 'Unable to prepare chat thread dispatch.';
+    } finally {
+      this.chatThreadFlowDispatchLoading = false;
+    }
+  },
+
+  closeChatThreadFlowDispatch() {
+    Object.assign(this, createChatThreadFlowDispatchState());
+  },
+
+  resolveDispatchThread(recordId) {
+    const resolved = resolveChatThreadFlowDispatchThread(this.messages, recordId);
+    if (!resolved) return null;
+    return {
+      ...resolved,
+      sourceChannel: this.channels.find((channel) => channel.record_id === resolved.clickedMessage.channel_id) || this.selectedChannel || null,
+    };
+  },
+
+  syncChatThreadFlowDispatchScopeResolution() {
+    const flow = this.chatThreadFlowDispatchSelectedFlow;
+    const sourceChannel = this.chatThreadFlowDispatchSourceChannel;
+    const flowScopeId = flow?.scope_id ?? null;
+    const channelScopeId = sourceChannel?.scope_id ?? null;
+    const { resolvedScopeId, scopeSource } = resolveChatThreadFlowDispatchScope({
+      manualScopeId: this.chatThreadFlowDispatchManualScopeId,
+      flowScopeId,
+      channelScopeId,
+    });
+
+    let assignment = null;
+    if (scopeSource === 'flow') {
+      assignment = buildStoredFlowKickoffScopeAssignment(flow);
+    } else if (scopeSource === 'override' || scopeSource === 'channel') {
+      assignment = normalizeChatThreadFlowDispatchScopeAssignment(
+        this.buildTaskBoardAssignment(resolvedScopeId, null),
+      );
+    } else {
+      assignment = normalizeChatThreadFlowDispatchScopeAssignment(
+        this.buildTaskBoardAssignment(UNSCOPED_TASK_BOARD_ID, null),
+      );
+    }
+
+    this.chatThreadFlowDispatchResolvedScopeId = resolvedScopeId;
+    this.chatThreadFlowDispatchScopeSource = scopeSource;
+    this.chatThreadFlowDispatchResolvedScopeAssignment = assignment;
+    return assignment;
+  },
+
+  handleChatThreadFlowDispatchInputsChanged() {
+    this.syncChatThreadFlowDispatchScopeResolution();
+    if (this.chatThreadFlowDispatchDirty) {
+      this.chatThreadFlowDispatchPreviewStale = true;
+      return;
+    }
+    this.regenerateChatThreadFlowDispatchPreview();
+  },
+
+  regenerateChatThreadFlowDispatchPreview() {
+    const source = this.chatThreadFlowDispatchSource;
+    const flow = this.chatThreadFlowDispatchSelectedFlow;
+    this.syncChatThreadFlowDispatchScopeResolution();
+
+    if (!source?.channelId || !flow?.record_id || this.chatThreadFlowDispatchMessages.length === 0) {
+      this.chatThreadFlowDispatchPreview = '';
+      this.chatThreadFlowDispatchDirty = false;
+      this.chatThreadFlowDispatchPreviewStale = false;
+      return '';
+    }
+
+    const preview = buildChatThreadFlowDispatchPreview({
+      channelId: source.channelId,
+      channelScopeId: this.chatThreadFlowDispatchSourceChannel?.scope_id ?? null,
+      clickedMessageId: source.clickedMessageId,
+      dispatchedAt: source.dispatchedAt || new Date().toISOString(),
+      flowId: flow.record_id,
+      flowScopeId: flow.scope_id ?? null,
+      flowTitle: flow.title || 'Untitled flow',
+      launchNotes: this.chatThreadFlowDispatchLaunchNotes,
+      messages: this.chatThreadFlowDispatchMessages,
+      resolvedScopeId: this.chatThreadFlowDispatchResolvedScopeId,
+      scopeSource: this.chatThreadFlowDispatchScopeSource,
+      senderLabelResolver: (message) => this.getSenderName?.(message?.sender_npub) || message?.sender_npub || 'Unknown sender',
+      sourceSurface: source.sourceSurface || 'main_feed',
+      threadRootMessageId: source.threadRootMessageId,
+      workspaceOwnerNpub: this.workspaceOwnerNpub,
+    }).description;
+
+    this.chatThreadFlowDispatchPreview = preview;
+    this.chatThreadFlowDispatchDirty = false;
+    this.chatThreadFlowDispatchPreviewStale = false;
+    return preview;
+  },
+
+  markChatThreadFlowDispatchPreviewEdited() {
+    this.chatThreadFlowDispatchDirty = true;
+  },
+
+  async submitChatThreadFlowDispatch() {
+    this.chatThreadFlowDispatchError = null;
+    if (!this.chatThreadFlowDispatchCanSubmit) {
+      this.chatThreadFlowDispatchError = 'Select a flow and confirm the preview before dispatching.';
+      return null;
+    }
+
+    const source = this.chatThreadFlowDispatchSource;
+    this.chatThreadFlowDispatchSubmitting = true;
+    try {
+      const result = await this.startChatThreadFlowDispatch({
+        flowId: this.chatThreadFlowDispatchSelectedFlowId,
+        resolvedScopeId: this.chatThreadFlowDispatchResolvedScopeId,
+        resolvedScopeAssignment: this.chatThreadFlowDispatchResolvedScopeAssignment,
+        scopeSource: this.chatThreadFlowDispatchScopeSource,
+        channelId: source.channelId,
+        clickedMessageId: source.clickedMessageId,
+        threadRootMessageId: source.threadRootMessageId,
+        sourceSurface: source.sourceSurface,
+        launchNotes: this.chatThreadFlowDispatchLaunchNotes,
+        kickoffDescription: String(this.chatThreadFlowDispatchPreview || '').trim(),
+      });
+      if (!result) {
+        throw new Error('Failed to create the kickoff task for this flow dispatch.');
+      }
+      this.closeChatThreadFlowDispatch();
+      return result;
+    } catch (error) {
+      this.chatThreadFlowDispatchError = error?.message || 'Failed to create the kickoff task for this flow dispatch.';
+      return null;
+    } finally {
+      this.chatThreadFlowDispatchSubmitting = false;
     }
   },
 
