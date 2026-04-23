@@ -72,10 +72,25 @@ function groupSignature(group) {
   ].join('|');
 }
 
+function normalizeGroupMemberNpubs(entries = []) {
+  return [...new Set((entries || [])
+    .map((entry) => {
+      if (typeof entry === 'string') return entry.trim();
+      if (entry && typeof entry === 'object') {
+        return String(entry.member_npub || entry.npub || '').trim();
+      }
+      return String(entry || '').trim();
+    })
+    .filter(Boolean))];
+}
+
 /**
  * Normalize a raw group object from the API into a consistent shape.
  */
 export function mapGroupEntry(group) {
+  const rawMembers = Array.isArray(group.members)
+    ? group.members
+    : (Array.isArray(group.member_npubs) ? group.member_npubs : []);
   return {
     group_id: group.id ?? group.group_id,
     group_npub: group.group_npub ?? group.group_id ?? group.id,
@@ -84,7 +99,7 @@ export function mapGroupEntry(group) {
     name: group.name,
     group_kind: group.group_kind || 'shared',
     private_member_npub: group.private_member_npub ?? null,
-    member_npubs: [...(group.members ?? group.member_npubs ?? [])].map(String),
+    member_npubs: normalizeGroupMemberNpubs(rawMembers),
   };
 }
 

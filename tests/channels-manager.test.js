@@ -83,6 +83,16 @@ describe('channels-manager pure utilities', () => {
       const result = mapGroupEntry({ id: 'g8', owner_npub: 'o', name: 'Z', members: [123, 'npub1x'] });
       expect(result.member_npubs).toEqual(['123', 'npub1x']);
     });
+
+    it('extracts member_npub when members are objects', () => {
+      const result = mapGroupEntry({
+        id: 'g9',
+        owner_npub: 'o',
+        name: 'Z',
+        members: [{ member_npub: 'npub1a' }, { member_npub: 'npub1b' }],
+      });
+      expect(result.member_npubs).toEqual(['npub1a', 'npub1b']);
+    });
   });
 
   // --- mapCreatedGroup ---
