@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   resolveGroupId,
   getScopeAncestorPath,
@@ -23,6 +23,15 @@ import {
   TASK_BOARD_STORAGE_KEY_SUFFIX,
   WEEKDAY_OPTIONS,
 } from '../src/task-board-state.js';
+import {
+  cacheGroupKey,
+  clearGroupKeyCache,
+  createGroupIdentity,
+} from '../src/crypto/group-keys.js';
+
+afterEach(() => {
+  clearGroupKeyCache();
+});
 
 // --- test fixtures ---
 const groups = [
@@ -549,6 +558,34 @@ describe('dedupeTasksByRecordId', () => {
 
     expect(deduped).toHaveLength(2);
     expect(deduped.find((task) => task.record_id === 'task-1')?.version).toBe(3);
+  });
+});
+
+describe('task board write groups', () => {
+  it('uses the loaded scope group as the board write group for multi-group scopes', () => {
+    const identity = createGroupIdentity();
+    cacheGroupKey({
+      group_id: 'g-external',
+      group_npub: identity.npub,
+      key_version: 1,
+      nsec: identity.nsec,
+    });
+
+    const scope = {
+      record_id: 'scope-1',
+      level: 'l1',
+      group_ids: ['g-private', 'g-shared', 'g-external'],
+    };
+    const store = {
+      scopesMap: new Map([[scope.record_id, scope]]),
+      groups: [],
+      getScopeShareGroupIds(item) { return item.group_ids || []; },
+      resolveGroupId(value) { return value; },
+    };
+
+    const assignment = taskBoardStateMixin.buildTaskBoardAssignment.call(store, scope.record_id);
+    expect(assignment.board_group_id).toBe('g-external');
+    expect(assignment.group_ids).toEqual(['g-private', 'g-shared', 'g-external']);
   });
 });
 

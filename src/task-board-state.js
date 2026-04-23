@@ -39,6 +39,7 @@ import {
   isActiveFlowParentTask,
 } from './task-flow-helpers.js';
 import { toRaw } from './utils/state-helpers.js';
+import { hasGroupKey } from './crypto/group-keys.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -736,7 +737,8 @@ export const taskBoardStateMixin = {
     if (scopeId === ALL_TASK_BOARD_ID || scopeId === RECENT_TASK_BOARD_ID || scopeId === UNSCOPED_TASK_BOARD_ID) return this.getWorkspaceSettingsGroupRef();
     const scope = this.scopesMap.get(scopeId);
     if (!scope) return null;
-    return this.getScopeShareGroupIds(scope)[0] || null;
+    const groupIds = this.getScopeShareGroupIds(scope);
+    return groupIds.find((groupId) => hasGroupKey(groupId)) || groupIds[0] || null;
   },
 
   buildTaskBoardAssignment(scopeId, fallbackTask = null) {
@@ -783,7 +785,10 @@ export const taskBoardStateMixin = {
     const { explicitShares } = separateScopeShares(toRaw(fallbackTask?.shares ?? []), fromGroupIds);
     const rebuilt = rebuildAccessForScope(explicitShares, scope, this.groups);
     const groupIds = rebuilt.group_ids.map((id) => this.resolveGroupId(id)).filter(Boolean);
-    const boardGroupId = groupIds.includes(fallbackTask?.board_group_id) ? fallbackTask.board_group_id : (groupIds[0] || null);
+    const loadedGroupId = groupIds.find((groupId) => hasGroupKey(groupId)) || null;
+    const boardGroupId = groupIds.includes(fallbackTask?.board_group_id) && hasGroupKey(fallbackTask?.board_group_id)
+      ? fallbackTask.board_group_id
+      : (loadedGroupId || groupIds[0] || null);
 
     return {
       ...buildScopeTags(scope),

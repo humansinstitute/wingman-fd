@@ -149,9 +149,8 @@ export function getPreferredDocWriteGroupRef(item = null, options = {}) {
   const explicitWriteGroupId = String(item?.write_group_id || '').trim() || null;
   const scopePolicyGroupIds = normalizeGroupIds(item?.scope_policy_group_ids || []);
   for (const groupId of scopePolicyGroupIds) {
-    if (groupIds.includes(groupId)) return groupId;
+    if (groupIds.includes(groupId) && hasKey(groupId)) return groupId;
   }
-  if (scopePolicyGroupIds.length > 0) return scopePolicyGroupIds[0];
 
   const loadedWritableGroupIds = getWriteableShareGroupIds(shares)
     .filter((groupId) => groupIds.includes(groupId) && hasKey(groupId));
@@ -162,6 +161,7 @@ export function getPreferredDocWriteGroupRef(item = null, options = {}) {
   for (const groupId of groupIds) {
     if (hasKey(groupId)) return groupId;
   }
+  if (scopePolicyGroupIds.length > 0) return scopePolicyGroupIds[0];
   if (explicitWriteGroupId && groupIds.includes(explicitWriteGroupId)) return explicitWriteGroupId;
 
   const writeableGroupIds = getWriteableShareGroupIds(shares);
@@ -922,7 +922,9 @@ export const docsManagerMixin = {
 
   getMissingDocGroupRefs(record) {
     const normalized = this.normalizeDocumentRowGroupRefs(record);
-    return normalizeGroupIds(normalized?.group_ids || []).filter((groupId) => !hasGroupKey(groupId));
+    const groupIds = normalizeGroupIds(normalized?.group_ids || []);
+    if (groupIds.some((groupId) => hasGroupKey(groupId))) return [];
+    return groupIds;
   },
 
   async ensureDocGroupKeysLoaded(record) {

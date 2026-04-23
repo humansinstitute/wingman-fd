@@ -277,7 +277,7 @@ describe('docs-manager pure utilities', () => {
       expect(result).toBe('g-scope');
     });
 
-    it('keeps the scope policy group as canonical even when another writable group is loaded', () => {
+    it('uses the loaded scope group when the first policy group is not keyed for this actor', () => {
       const result = getPreferredDocWriteGroupRef({
         group_ids: ['g-scope', 'g-direct'],
         scope_policy_group_ids: ['g-scope'],
@@ -288,7 +288,7 @@ describe('docs-manager pure utilities', () => {
       }, {
         hasKey: (groupId) => groupId === 'g-direct',
       });
-      expect(result).toBe('g-scope');
+      expect(result).toBe('g-direct');
     });
   });
 });
