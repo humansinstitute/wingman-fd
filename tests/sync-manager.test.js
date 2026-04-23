@@ -960,10 +960,51 @@ describe('record status modal', () => {
     });
     expect(removeRecordStatusPendingWrite).toHaveBeenCalledWith(11);
     expect(removeRecordStatusPendingWrite).toHaveBeenCalledWith(12);
-    expect(store.recordStatusNotice).toContain('cleared 2 stale pending writes');
+    expect(store.recordStatusNotice).toContain('cleared accepted pending writes');
     expect(store.recordStatusNotice).toContain('Recreated 1 local comment');
     expect(store.recordStatusLocalPresent).toBe(true);
     expect(store.documents[0].version).toBe(1);
+  });
+
+  it('does not mark local record synced when Tower rejects the force-submit target', async () => {
+    syncRecords.mockResolvedValueOnce({
+      synced: 0,
+      created: 0,
+      updated: 0,
+      rejected: [{ record_id: 'doc-1', code: 'write_group_forbidden', reason: 'writer is not a member of write group' }],
+    });
+    const getRecordStatusPendingWrites = vi.fn().mockResolvedValue([
+      { row_id: 11, record_id: 'doc-1', record_family_hash: getSyncFamilyHash('document'), created_at: '2026-03-28T10:00:00.000Z', envelope: { version: 4 } },
+    ]);
+    const removeRecordStatusPendingWrite = vi.fn().mockResolvedValue(undefined);
+    const markRecordStatusLocalRecordSynced = vi.fn().mockResolvedValue(undefined);
+    const { fn, store } = bindMethod('forcePushRecordStatusTarget', {
+      session: { npub: 'npub1me' },
+      recordStatusFamilyId: 'document',
+      recordStatusTargetId: 'doc-1',
+      recordStatusTargetLabel: 'Doc One',
+      recordStatusLocalPresent: true,
+      documents: [{ record_id: 'doc-1', owner_npub: 'npub1owner', group_ids: ['group-1'], shares: ['group-1'], version: 2, sync_status: 'pending' }],
+      recordStatusTowerVersionCount: 1,
+      getRecordStatusPendingWrites,
+      getRecordStatusRelatedComments: vi.fn().mockResolvedValue([]),
+      removeRecordStatusPendingWrite,
+      buildRecordStatusEnvelope: vi.fn().mockResolvedValue({
+        record_id: 'doc-1',
+        record_family_hash: getSyncFamilyHash('document'),
+        version: 2,
+        previous_version: 1,
+      }),
+      markRecordStatusLocalRecordSynced,
+      markRecordStatusCommentsSynced: vi.fn().mockResolvedValue(undefined),
+      checkRecordStatusOnTower: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await fn();
+
+    expect(markRecordStatusLocalRecordSynced).not.toHaveBeenCalled();
+    expect(removeRecordStatusPendingWrite).not.toHaveBeenCalled();
+    expect(store.recordStatusError).toContain('Force submit rejected');
   });
 
   it('force-pushes scoped tasks using recovered scope groups and persists the repaired assignment locally', async () => {

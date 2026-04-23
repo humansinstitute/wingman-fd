@@ -184,17 +184,23 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       );
     }
 
-    // Handle Tower rejections — remove rejected pending writes so they
-    // don't block every future sync cycle. Log them for diagnosis.
+    // Keep rejected writes pending so local unsynced changes are never
+    // dropped silently. They can be retried or handled explicitly.
     const rejectedIds = new Set();
+    let hasUnscopedRejection = false;
     if (Array.isArray(result?.rejected) && result.rejected.length > 0) {
       for (const rej of result.rejected) {
-        if (rej.record_id) rejectedIds.add(rej.record_id);
+        if (rej.record_id) {
+          rejectedIds.add(rej.record_id);
+        } else {
+          hasUnscopedRejection = true;
+        }
       }
-      flightDeckLog('warn', 'sync', 'Tower rejected records in batch — clearing stale pending writes', {
+      flightDeckLog('warn', 'sync', 'Tower rejected records in batch — keeping rejected writes pending', {
         ownerNpub,
         rejectedCount: result.rejected.length,
         acceptedCount: (result.synced ?? 0),
+        hasUnscopedRejection,
         rejected: result.rejected,
       });
     }
@@ -210,12 +216,19 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       });
     }
 
+    let removedInBatch = 0;
     for (const pw of batch) {
-      // Keep deferred pending writes for retry on next cycle
+      // Keep deferred pending writes for retry on next cycle.
       if (deferredIds.has(pw.record_id)) continue;
+      // Keep explicitly rejected writes pending to avoid local data loss.
+      if (rejectedIds.has(pw.record_id)) continue;
+      // If Tower returned an unscoped rejection, keep the whole batch pending
+      // because we cannot safely map acceptance per record.
+      if (hasUnscopedRejection) continue;
       await removePendingWrite(pw.row_id);
+      removedInBatch++;
     }
-    pushed += batch.length - rejectedIds.size - deferredIds.size;
+    pushed += removedInBatch;
     if (onProgress) onProgress({ phase: 'pushing', pushed, pushTotal: pending.length });
     flightDeckLog('info', 'sync', 'pending write batch flushed', {
       ownerNpub,
@@ -245,6 +258,18 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
   openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
   const forceFull = options.forceFull === true;
   const totalFamilies = families.length;
+  const pendingWrites = await getPendingWrites();
+  const pendingVersionByRecordId = new Map();
+  for (const pendingWrite of pendingWrites) {
+    const recordId = String(pendingWrite?.record_id ?? pendingWrite?.envelope?.record_id ?? '').trim();
+    if (!recordId) continue;
+    const pendingVersion = Number(pendingWrite?.envelope?.version ?? 0) || 0;
+    if (pendingVersion <= 0) continue;
+    const existingPendingVersion = pendingVersionByRecordId.get(recordId) || 0;
+    if (pendingVersion > existingPendingVersion) {
+      pendingVersionByRecordId.set(recordId, pendingVersion);
+    }
+  }
 
   if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies, currentFamily: null, pulled: 0 });
 
@@ -296,6 +321,18 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
 
     for (const record of records) {
       try {
+        const recordId = String(record?.record_id || '').trim();
+        const inboundVersion = Number(record?.version ?? 0) || 0;
+        const pendingVersion = pendingVersionByRecordId.get(recordId) || 0;
+        if (pendingVersion > 0 && inboundVersion > 0 && inboundVersion <= pendingVersion) {
+          flightDeckLog('debug', 'sync', 'skipping inbound record older/equal to local pending write', {
+            family,
+            recordId,
+            inboundVersion,
+            pendingVersion,
+          });
+          continue;
+        }
         await materializeRecordForFamily(family, record);
         appliedCount++;
         if ((record.updated_at ?? '') > latestApplied) latestApplied = record.updated_at ?? '';

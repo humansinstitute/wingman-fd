@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getSyncFamilyHash } from '../src/sync-families.js';
 
 const state = {
   pending: [],
@@ -104,6 +105,74 @@ describe('sync worker pending write batching', () => {
     expect(updates.length).toBeGreaterThanOrEqual(3);
     expect(updates[0]).toMatchObject({ phase: 'pushing', pushed: 0, pushTotal: 30 });
     expect(updates[updates.length - 1]).toMatchObject({ phase: 'pushing', pushed: 30, pushTotal: 30 });
+  });
+
+  it('keeps rejected pending writes queued and removes only accepted rows', async () => {
+    state.pending = [
+      { row_id: 1, record_id: 'doc-1', envelope: { record_id: 'doc-1' } },
+      { row_id: 2, record_id: 'doc-2', envelope: { record_id: 'doc-2' } },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords.mockImplementationOnce(async ({ records }) => {
+      state.syncCalls.push(records.map((record) => record.record_id));
+      return {
+        synced: 1,
+        created: 0,
+        updated: 1,
+        rejected: [{ record_id: 'doc-1', code: 'write_forbidden' }],
+      };
+    });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+    const result = await flushPendingWrites('npub-owner');
+
+    expect(result).toEqual({ pushed: 1 });
+    expect(state.removed).toEqual([2]);
+  });
+
+  it('skips inbound apply when local pending version is newer/equal', async () => {
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'doc-1',
+        record_family_hash: getSyncFamilyHash('document'),
+        envelope: { record_id: 'doc-1', version: 2 },
+      },
+    ];
+
+    const inboundDocument = vi.fn(async (record) => ({
+      record_id: record.record_id,
+      owner_npub: 'npub-owner',
+      title: 'remote',
+      content: 'remote',
+      sync_status: 'synced',
+      version: record.version,
+      updated_at: record.updated_at,
+    }));
+    vi.doMock('../src/translators/docs.js', () => ({
+      inboundDocument,
+      inboundDirectory: vi.fn(async () => ({})),
+    }));
+
+    const { fetchRecords } = await import('../src/api.js');
+    fetchRecords.mockImplementation(async ({ record_family_hash }) => {
+      if (record_family_hash !== getSyncFamilyHash('document')) return { records: [] };
+      return {
+        records: [{
+          record_id: 'doc-1',
+          record_family_hash: getSyncFamilyHash('document'),
+          owner_npub: 'npub-owner',
+          version: 2,
+          updated_at: '2026-04-23T00:00:00.000Z',
+        }],
+      };
+    });
+
+    const { pullRecordsForFamilies } = await import('../src/worker/sync-worker.js');
+    await pullRecordsForFamilies('npub-owner', 'npub-owner', [getSyncFamilyHash('document')]);
+
+    expect(inboundDocument).not.toHaveBeenCalled();
   });
 
   it('emits progress callbacks during pull', async () => {

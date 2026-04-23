@@ -796,12 +796,38 @@ export const syncManagerMixin = {
         commentEnvelopes.push(await this.buildRecordStatusCommentEnvelope(comment, { targetGroupIds }));
       }
 
-      await syncRecords({
+      const syncResult = await syncRecords({
         owner_npub: this.workspaceOwnerNpub,
         records: [envelope, ...commentEnvelopes],
       });
+
+      const rejected = Array.isArray(syncResult?.rejected) ? syncResult.rejected : [];
+      const deferredIds = new Set(Array.isArray(syncResult?.deferred) ? syncResult.deferred : []);
+      const rejectedIds = new Set(rejected.map((entry) => String(entry?.record_id || '').trim()).filter(Boolean));
+      const hasUnscopedRejection = rejected.some((entry) => !String(entry?.record_id || '').trim());
+
+      const recordIds = [recordId, ...relatedComments.map((comment) => String(comment?.record_id || '').trim()).filter(Boolean)];
+      const failedRecordIds = recordIds.filter((id) => rejectedIds.has(id) || deferredIds.has(id));
+      const targetRejected = rejectedIds.has(recordId);
+      const targetDeferred = deferredIds.has(recordId);
+
       for (const row of pendingWrites) {
+        const pendingRecordId = String(row?.record_id || '').trim();
+        if (!pendingRecordId) continue;
+        if (hasUnscopedRejection) continue;
+        if (rejectedIds.has(pendingRecordId)) continue;
+        if (deferredIds.has(pendingRecordId)) continue;
         if (row?.row_id != null) await this.removeRecordStatusPendingWrite(row.row_id);
+      }
+
+      if (targetRejected || targetDeferred || hasUnscopedRejection) {
+        const firstRejected = rejected.find((entry) => String(entry?.record_id || '').trim() === recordId) || rejected[0] || null;
+        const code = String(firstRejected?.code || '').trim();
+        const reason = String(firstRejected?.reason || '').trim() || String(firstRejected?.message || '').trim();
+        const detail = targetDeferred
+          ? 'group key for the selected write group is not loaded yet'
+          : reason || code || (hasUnscopedRejection ? 'Tower rejected the sync batch without record-level details' : 'Tower rejected this write');
+        throw new Error(`Force submit rejected for ${familyLabel} ${recordId}: ${detail}.`);
       }
 
       await this.markRecordStatusLocalRecordSynced(familyId, localRecord, { version: submittedVersion });
@@ -811,9 +837,12 @@ export const syncManagerMixin = {
         const commentSuffix = relatedComments.length > 0
           ? ` Recreated ${relatedComments.length} local ${relatedComments.length === 1 ? 'comment' : 'comments'} too.`
           : '';
+        const failureSuffix = failedRecordIds.length > 0
+          ? ` ${failedRecordIds.length} related ${failedRecordIds.length === 1 ? 'record was' : 'records were'} not accepted and left pending.`
+          : '';
         this.recordStatusNotice = pendingWrites.length > 0
-          ? `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion} and cleared ${pendingWrites.length} stale pending ${pendingWrites.length === 1 ? 'write' : 'writes'}.${commentSuffix}`
-          : `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion}.${commentSuffix}`;
+          ? `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion} and cleared accepted pending writes.${commentSuffix}${failureSuffix}`
+          : `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion}.${commentSuffix}${failureSuffix}`;
       }
     } catch (error) {
       this.recordStatusError = error?.message || 'Failed to force push this record to Tower.';
