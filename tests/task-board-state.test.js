@@ -116,6 +116,34 @@ describe('resolveGroupId', () => {
   });
 });
 
+describe('getPreferredChannelWriteGroup', () => {
+  it('resolves historical channel group_npub refs to durable group_id refs', () => {
+    const store = {
+      groups,
+      resolveGroupId(ref) {
+        return resolveGroupId(ref, this.groups);
+      },
+    };
+
+    expect(taskBoardStateMixin.getPreferredChannelWriteGroup.call(store, {
+      group_ids: ['npub1grp1'],
+    })).toBe('g1');
+  });
+
+  it('keeps unresolved historical channel refs as compatibility fallback', () => {
+    const store = {
+      groups: [],
+      resolveGroupId(ref) {
+        return resolveGroupId(ref, this.groups);
+      },
+    };
+
+    expect(taskBoardStateMixin.getPreferredChannelWriteGroup.call(store, {
+      group_ids: ['npub1legacy'],
+    })).toBe('npub1legacy');
+  });
+});
+
 describe('computeParentDisplayState', () => {
   it('preserves the explicit state for active flow parent tasks', () => {
     const parent = {

@@ -6585,7 +6585,7 @@
                   <select class="new-channel-select" x-model="$store.chat.newChannelGroupId">
                     <option value="">Select a group...</option>
                     <template x-for="g in $store.chat.groups" :key="g.group_id">
-                      <option :value="g.group_npub || g.group_id" x-text="g.name"></option>
+                      <option :value="g.group_id || g.group_npub" x-text="g.name"></option>
                     </template>
                   </select>
                 </div>

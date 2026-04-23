@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   buildDurableWriteGroupFields,
@@ -7,6 +7,15 @@ import {
   requireGroupIdRef,
   resolveGroupIdRef,
 } from '../src/translators/group-refs.js';
+import {
+  cacheGroupKey,
+  clearCryptoContext,
+  createGroupIdentity,
+} from '../src/crypto/group-keys.js';
+
+afterEach(() => {
+  clearCryptoContext();
+});
 
 describe('group ref helpers', () => {
   it('detects UUID group refs', () => {
@@ -23,6 +32,20 @@ describe('group ref helpers', () => {
   it('serializes non-UUID refs into write_group_npub', () => {
     expect(buildWriteGroupFields('npub1grouprefexample')).toEqual({
       write_group_npub: 'npub1grouprefexample',
+    });
+  });
+
+  it('prefers loaded durable groupId for legacy group npub write refs', () => {
+    const groupIdentity = createGroupIdentity();
+    cacheGroupKey({
+      group_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+      group_npub: groupIdentity.npub,
+      key_version: 1,
+      nsec: groupIdentity.nsec,
+    });
+
+    expect(buildWriteGroupFields(groupIdentity.npub)).toEqual({
+      write_group_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
     });
   });
 

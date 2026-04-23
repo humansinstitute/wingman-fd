@@ -1065,7 +1065,7 @@ export const taskBoardStateMixin = {
     const groups = Array.isArray(channel?.group_ids)
       ? channel.group_ids.map((value) => String(value || '').trim()).filter(Boolean)
       : [];
-    return groups[0] || null;
+    return this.resolveGroupId(groups[0]) || groups[0] || null;
   },
 
   get activeTaskDetail() {

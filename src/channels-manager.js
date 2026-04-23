@@ -574,11 +574,12 @@ export const channelsManagerMixin = {
   async createNamedChannel() {
     const ownerNpub = this.workspaceOwnerNpub;
     const title = this.newChannelName.trim();
-    const groupId = this.newChannelGroupId;
+    const selectedGroupRef = this.newChannelGroupId;
+    const groupId = this.resolveGroupId(selectedGroupRef);
     if (!ownerNpub || !title || !groupId) return;
 
     try {
-      const group = this.groups.find(g => (g.group_id || g.group_npub) === groupId || g.group_npub === groupId);
+      const group = this.groups.find(g => g.group_id === groupId || g.group_npub === selectedGroupRef || g.group_npub === groupId);
       const participants = group?.member_npubs ?? [ownerNpub];
 
       const channelId = crypto.randomUUID();

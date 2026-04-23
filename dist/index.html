@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-BXXsve5P.js"></script>
+  <script type="module" crossorigin src="/assets/index-C5kVMzGr.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-cRk5noqB.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -6587,7 +6587,7 @@
                   <select class="new-channel-select" x-model="$store.chat.newChannelGroupId">
                     <option value="">Select a group...</option>
                     <template x-for="g in $store.chat.groups" :key="g.group_id">
-                      <option :value="g.group_npub || g.group_id" x-text="g.name"></option>
+                      <option :value="g.group_id || g.group_npub" x-text="g.name"></option>
                     </template>
                   </select>
                 </div>
