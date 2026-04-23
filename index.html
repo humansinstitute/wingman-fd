@@ -6710,6 +6710,14 @@
                     <strong x-text="$store.chat.recordStatusWriteGroupRef ? ($store.chat.recordStatusWriteGroupKeyLoaded ? 'Loaded' : 'Missing') : 'Not needed'"></strong>
                   </div>
                   <div class="record-status-metric">
+                    <span class="record-status-label">Delivery groups</span>
+                    <strong x-text="$store.chat.recordStatusDeliveryGroupSummary || 'None'"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Delivery keys</span>
+                    <strong x-text="$store.chat.recordStatusDeliveryGroupKeySummary || 'None'"></strong>
+                  </div>
+                  <div class="record-status-metric">
                     <span class="record-status-label">Pending writes</span>
                     <strong x-text="$store.chat.recordStatusPendingWriteCount"></strong>
                   </div>

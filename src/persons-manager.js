@@ -12,6 +12,7 @@ import {
 import { outboundPerson } from './translators/persons.js';
 import { outboundOrganisation } from './translators/organisations.js';
 import { toRaw } from './utils/state-helpers.js';
+import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
 
 export const personsManagerMixin = {
   applyPersons(persons) {
@@ -110,7 +111,7 @@ export const personsManagerMixin = {
       ...updated,
       previous_version: person.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
 
     await addPendingWrite({
@@ -143,7 +144,7 @@ export const personsManagerMixin = {
       ...updated,
       previous_version: person.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: person.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, person),
     });
 
     await addPendingWrite({
@@ -232,7 +233,7 @@ export const personsManagerMixin = {
       ...updated,
       previous_version: org.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
 
     await addPendingWrite({
@@ -265,7 +266,7 @@ export const personsManagerMixin = {
       ...updated,
       previous_version: org.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: org.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, org),
     });
 
     await addPendingWrite({

@@ -64,6 +64,62 @@ function sameShallowArray(a, b) {
   return true;
 }
 
+function normalizeResolvedGroupRefs(groupRefs = [], resolveGroupId = (value) => String(value || '').trim() || null) {
+  const seen = new Set();
+  const result = [];
+  for (const raw of groupRefs || []) {
+    const resolved = resolveGroupId(raw) || String(raw || '').trim() || null;
+    if (!resolved || seen.has(resolved)) continue;
+    seen.add(resolved);
+    result.push(resolved);
+  }
+  return result;
+}
+
+function getShareWriteGroupIds(shares = []) {
+  return (shares || [])
+    .filter((share) => share?.access === 'write')
+    .map((share) => share.type === 'person'
+      ? (share.via_group_id || share.group_id || share.via_group_npub || share.group_npub)
+      : (share.group_id || share.group_npub))
+    .filter(Boolean);
+}
+
+export function selectPreferredWritableGroupRef(input = {}) {
+  const resolveGroupId = typeof input.resolveGroupId === 'function'
+    ? input.resolveGroupId
+    : (value) => String(value || '').trim() || null;
+  const hasKey = typeof input.hasKey === 'function' ? input.hasKey : hasGroupKey;
+  const deliveryGroupIds = normalizeResolvedGroupRefs(input.groupIds || [], resolveGroupId);
+  const scopePolicyGroupIds = normalizeResolvedGroupRefs(input.scopePolicyGroupIds || [], resolveGroupId);
+  const writeShareGroupIds = normalizeResolvedGroupRefs(getShareWriteGroupIds(input.shares || []), resolveGroupId);
+  const explicitWriteGroupId = normalizeResolvedGroupRefs([input.writeGroupId], resolveGroupId)[0] || null;
+  const boardGroupId = normalizeResolvedGroupRefs([input.boardGroupId], resolveGroupId)[0] || null;
+  const deliverySet = new Set(deliveryGroupIds);
+
+  const candidates = [
+    explicitWriteGroupId,
+    boardGroupId,
+    ...scopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...writeShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...deliveryGroupIds,
+  ].filter(Boolean);
+
+  for (const groupId of normalizeResolvedGroupRefs(candidates, resolveGroupId)) {
+    if (hasKey(groupId)) return groupId;
+  }
+
+  return normalizeResolvedGroupRefs([
+    explicitWriteGroupId,
+    boardGroupId,
+    ...writeShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...scopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...deliveryGroupIds,
+    ...scopePolicyGroupIds,
+    ...writeShareGroupIds,
+  ], resolveGroupId)[0] || null;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -785,10 +841,13 @@ export const taskBoardStateMixin = {
     const { explicitShares } = separateScopeShares(toRaw(fallbackTask?.shares ?? []), fromGroupIds);
     const rebuilt = rebuildAccessForScope(explicitShares, scope, this.groups);
     const groupIds = rebuilt.group_ids.map((id) => this.resolveGroupId(id)).filter(Boolean);
-    const loadedGroupId = groupIds.find((groupId) => hasGroupKey(groupId)) || null;
-    const boardGroupId = groupIds.includes(fallbackTask?.board_group_id) && hasGroupKey(fallbackTask?.board_group_id)
-      ? fallbackTask.board_group_id
-      : (loadedGroupId || groupIds[0] || null);
+    const boardGroupId = selectPreferredWritableGroupRef({
+      boardGroupId: fallbackTask?.board_group_id,
+      groupIds,
+      scopePolicyGroupIds: groupIds,
+      shares: rebuilt.shares,
+      resolveGroupId: (groupId) => this.resolveGroupId(groupId),
+    });
 
     return {
       ...buildScopeTags(scope),
@@ -1062,10 +1121,25 @@ export const taskBoardStateMixin = {
   },
 
   getPreferredChannelWriteGroup(channel) {
-    const groups = Array.isArray(channel?.group_ids)
-      ? channel.group_ids.map((value) => String(value || '').trim()).filter(Boolean)
-      : [];
-    return this.resolveGroupId(groups[0]) || groups[0] || null;
+    return selectPreferredWritableGroupRef({
+      writeGroupId: channel?.write_group_id,
+      boardGroupId: channel?.board_group_id,
+      groupIds: channel?.group_ids || [],
+      scopePolicyGroupIds: channel?.scope_policy_group_ids || [],
+      shares: channel?.shares || [],
+      resolveGroupId: (groupId) => this.resolveGroupId(groupId),
+    });
+  },
+
+  getPreferredRecordWriteGroup(record = null) {
+    return selectPreferredWritableGroupRef({
+      writeGroupId: record?.write_group_id,
+      boardGroupId: record?.board_group_id,
+      groupIds: record?.group_ids || [],
+      scopePolicyGroupIds: record?.scope_policy_group_ids || [],
+      shares: record?.shares || [],
+      resolveGroupId: (groupId) => this.resolveGroupId(groupId),
+    });
   },
 
   get activeTaskDetail() {

@@ -54,6 +54,7 @@ import { outboundOpportunity } from './translators/opportunities.js';
 import { decryptRecordPayload } from './translators/record-crypto.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import { outboundComment } from './translators/comments.js';
+import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
 
 // ---------------------------------------------------------------------------
 // Mixin — methods and getters that use `this` (the Alpine store)
@@ -219,13 +220,37 @@ export const syncManagerMixin = {
   getRecordStatusWriteGroupRefFromRecord(localRecord, familyId) {
     if (!localRecord) return '';
     if (familyId === 'task') {
-      return String(localRecord.board_group_id || localRecord.group_ids?.[0] || '').trim();
+      const preferred = getPreferredRecordWriteGroupForStore(this, localRecord)
+        || localRecord.board_group_id
+        || localRecord.group_ids?.[0]
+        || '';
+      return String(preferred || '').trim();
     }
     if (familyId === 'chat_message') {
       const channel = this.getRecordStatusChannelForRecord(localRecord, familyId);
-      return String(channel?.group_ids?.[0] || '').trim();
+      const preferred = typeof this.getPreferredChannelWriteGroup === 'function'
+        ? this.getPreferredChannelWriteGroup(channel)
+        : (channel?.group_ids?.[0] || '');
+      return String(preferred || '').trim();
     }
-    return String(localRecord.group_ids?.[0] || '').trim();
+    const preferred = getPreferredRecordWriteGroupForStore(this, localRecord)
+      || localRecord.group_ids?.[0]
+      || '';
+    return String(preferred || '').trim();
+  },
+
+  getRecordStatusDeliveryGroupRefsFromRecord(localRecord, familyId) {
+    if (!localRecord) return [];
+    const source = familyId === 'chat_message'
+      ? this.getRecordStatusChannelForRecord(localRecord, familyId)
+      : localRecord;
+    const refs = Array.isArray(source?.group_ids) ? source.group_ids : [];
+    const resolveGroup = (groupRef) => (
+      typeof this.resolveGroupId === 'function'
+        ? this.resolveGroupId(groupRef)
+        : String(groupRef || '').trim() || null
+    );
+    return [...new Set(refs.map((groupRef) => resolveGroup(groupRef)).filter(Boolean))];
   },
 
   resolveRecordStatusTaskScopeRef(localRecord) {
@@ -309,12 +334,26 @@ export const syncManagerMixin = {
     };
   },
 
+  describeRecordStatusDeliveryGroups(groupRefs = []) {
+    const groups = groupRefs.map((groupRef) => this.describeRecordStatusGroup(groupRef)).filter((entry) => entry.ref);
+    if (groups.length === 0) {
+      return { summary: '', keySummary: '' };
+    }
+    const labels = groups.map((group) => group.label || group.ref);
+    const loadedCount = groups.filter((group) => group.keyLoaded).length;
+    return {
+      summary: labels.length <= 3 ? labels.join(', ') : `${labels.slice(0, 3).join(', ')} +${labels.length - 3} more`,
+      keySummary: `${loadedCount}/${groups.length} loaded`,
+    };
+  },
+
   async refreshRecordStatusLocalContext() {
     const familyId = String(this.recordStatusFamilyId || '').trim();
     const recordId = String(this.recordStatusTargetId || '').trim();
     const rawLocalRecord = this.getLocalStatusRecord(familyId, recordId);
     const localRecord = this.buildRecordStatusLocalRecord(rawLocalRecord, familyId, { bootstrap: true });
     const groupInfo = this.describeRecordStatusGroup(this.getRecordStatusWriteGroupRefFromRecord(localRecord, familyId));
+    const deliveryInfo = this.describeRecordStatusDeliveryGroups(this.getRecordStatusDeliveryGroupRefsFromRecord(localRecord, familyId));
     const pendingWrites = await this.getRecordStatusPendingWrites();
     const familyHash = getSyncFamily(familyId)?.hash;
 
@@ -324,8 +363,10 @@ export const syncManagerMixin = {
     this.recordStatusWriteGroupRef = groupInfo.ref;
     this.recordStatusWriteGroupLabel = groupInfo.label;
     this.recordStatusWriteGroupKeyLoaded = groupInfo.keyLoaded;
+    this.recordStatusDeliveryGroupSummary = deliveryInfo.summary;
+    this.recordStatusDeliveryGroupKeySummary = deliveryInfo.keySummary;
     this.recordStatusPendingWriteCount = pendingWrites.filter((row) => row.record_id === recordId && row.record_family_hash === familyHash).length;
-    return { localRecord, rawLocalRecord, groupInfo };
+    return { localRecord, rawLocalRecord, groupInfo, deliveryInfo };
   },
 
   canForcePushRecordStatusTarget() {
@@ -362,23 +403,24 @@ export const syncManagerMixin = {
 
     if (familyId === 'task') {
       const candidateGroupIds = Array.isArray(effectiveLocalRecord.group_ids) ? effectiveLocalRecord.group_ids : [];
-      const loadedGroupIds = candidateGroupIds.filter((groupId) => hasGroupKey(groupId));
-      const nextGroupIds = loadedGroupIds.length > 0 ? loadedGroupIds : candidateGroupIds;
-      const nextShares = loadedGroupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
-        ? this.buildScopeDefaultShares(loadedGroupIds)
-        : (effectiveLocalRecord.shares || []);
-      const writeGroupNpub = nextGroupIds[0] || effectiveLocalRecord.board_group_id || null;
-      if (!writeGroupNpub) throw new Error('Task is missing a writable group.');
+      const nextGroupIds = candidateGroupIds;
+      const nextShares = effectiveLocalRecord.shares || [];
+      const writeGroupRef = getPreferredRecordWriteGroupForStore(this, {
+        ...effectiveLocalRecord,
+        group_ids: nextGroupIds,
+        board_group_id: effectiveLocalRecord.board_group_id || nextGroupIds[0] || null,
+      });
+      if (!writeGroupRef) throw new Error('Task is missing a writable group.');
       return outboundTask({
         ...effectiveLocalRecord,
         owner_npub: ownerNpub,
-        board_group_id: writeGroupNpub,
+        board_group_id: writeGroupRef,
         group_ids: nextGroupIds,
         shares: nextShares,
         version,
         previous_version: previousVersion,
         signature_npub: signatureNpub,
-        write_group_ref: isOwnerWrite ? null : writeGroupNpub,
+        write_group_ref: isOwnerWrite ? null : writeGroupRef,
       });
     }
 
@@ -645,6 +687,8 @@ export const syncManagerMixin = {
     this.recordStatusWriteGroupRef = '';
     this.recordStatusWriteGroupLabel = '';
     this.recordStatusWriteGroupKeyLoaded = false;
+    this.recordStatusDeliveryGroupSummary = '';
+    this.recordStatusDeliveryGroupKeySummary = '';
   },
 
   async checkRecordStatusOnTower() {

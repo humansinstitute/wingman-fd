@@ -650,6 +650,8 @@ export function initApp() {
     recordStatusWriteGroupRef: '',
     recordStatusWriteGroupLabel: '',
     recordStatusWriteGroupKeyLoaded: false,
+    recordStatusDeliveryGroupSummary: '',
+    recordStatusDeliveryGroupKeySummary: '',
     syncQuarantine: [],
     syncQuarantineBusy: false,
     syncQuarantineError: null,
@@ -2727,7 +2729,16 @@ export function initApp() {
       }
       this.error = null;
       const ownerNpub = this.workspaceOwnerNpub;
-      const groupId = this.resolveGroupId(this.newScheduleAssignedGroupId || this.selectedBoardWriteGroup || this.groups[0]?.group_id || this.groups[0]?.group_npub);
+      const defaultScheduleGroupRef = this.getPreferredRecordWriteGroup({
+        group_ids: (this.currentWorkspaceContentGroups || []).map((group) => group.group_id || group.group_npub).filter(Boolean),
+      });
+      const groupId = this.resolveGroupId(
+        this.newScheduleAssignedGroupId
+        || this.selectedBoardWriteGroup
+        || defaultScheduleGroupRef
+        || this.groups[0]?.group_id
+        || this.groups[0]?.group_npub,
+      );
       if (!groupId) {
         this.error = 'Select a group for the schedule.';
         return;
@@ -2816,7 +2827,11 @@ export function initApp() {
         sync_status: 'pending',
         updated_at: new Date().toISOString(),
       });
-      const writeGroupId = updated.assigned_group_id || updated.group_ids?.[0] || current.group_ids?.[0] || null;
+      const writeGroupId = this.getPreferredRecordWriteGroup(updated)
+        || updated.assigned_group_id
+        || updated.group_ids?.[0]
+        || current.group_ids?.[0]
+        || null;
       if (!writeGroupId) {
         this.error = 'Schedule is missing a writable group.';
         return;
@@ -2879,7 +2894,7 @@ export function initApp() {
           ...updated,
           previous_version: schedule.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: updated.group_ids?.[0] || null,
+          write_group_ref: this.getPreferredRecordWriteGroup(updated),
         });
         await addPendingWrite({
           record_id: updated.record_id,
@@ -2952,7 +2967,7 @@ export function initApp() {
       const envelope = await outboundTask({
         ...localRow,
         signature_npub: this.signingNpub,
-        write_group_ref: localRow.board_group_id || localRow.group_ids?.[0] || null,
+        write_group_ref: this.getPreferredRecordWriteGroup(localRow),
       });
       await addPendingWrite({
         record_id: recordId,
@@ -2968,7 +2983,7 @@ export function initApp() {
         ...updatedTask,
         previous_version: previousTask?.version ?? 0,
         signature_npub: this.signingNpub,
-        write_group_ref: updatedTask.board_group_id || updatedTask.group_ids?.[0] || null,
+        write_group_ref: this.getPreferredRecordWriteGroup(updatedTask),
       });
       await addPendingWrite({
         record_id: updatedTask.record_id,
@@ -3110,7 +3125,7 @@ export function initApp() {
       const envelope = await outboundTask({
         ...localRow,
         signature_npub: this.signingNpub,
-        write_group_ref: localRow.board_group_id || localRow.group_ids?.[0] || null,
+        write_group_ref: this.getPreferredRecordWriteGroup(localRow),
       });
       await addPendingWrite({
         record_id: recordId,
@@ -3216,7 +3231,7 @@ export function initApp() {
           }
           return {
             scope_policy_group_ids: this.getResolvedScopePolicyGroupIds(draft.scope_id),
-            board_group_id: draft.board_group_id || draft.group_ids?.[0] || null,
+            board_group_id: this.getPreferredRecordWriteGroup(draft),
           };
         })()
         : {
@@ -3307,7 +3322,7 @@ export function initApp() {
         previous_version: task.version ?? 1,
         signature_npub: this.signingNpub,
         record_state: 'deleted',
-        write_group_ref: updated.board_group_id || updated.group_ids?.[0] || null,
+        write_group_ref: this.getPreferredRecordWriteGroup(updated),
       });
       await addPendingWrite({
         record_id: task.record_id,
@@ -3603,7 +3618,7 @@ export function initApp() {
         target_record_id: recordId,
         target_record_family_hash: recordFamilyHash('comment'),
         target_group_ids: toRaw(task?.group_ids ?? []),
-        write_group_ref: task?.board_group_id || task?.group_ids?.[0] || null,
+        write_group_ref: this.getPreferredRecordWriteGroup(task),
       });
 
       const localRow = {
@@ -3631,7 +3646,7 @@ export function initApp() {
         ...localRow,
         target_group_ids: toRaw(task?.group_ids ?? []),
         signature_npub: this.signingNpub,
-        write_group_ref: task?.board_group_id || task?.group_ids?.[0] || null,
+        write_group_ref: this.getPreferredRecordWriteGroup(task),
       });
       await addPendingWrite({
         record_id: recordId,
@@ -3926,7 +3941,7 @@ export function initApp() {
             previous_version: item.version ?? 1,
             record_state: 'deleted',
             signature_npub: this.signingNpub,
-            write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+            write_group_ref: this.getPreferredRecordWriteGroup(updated),
           }),
         });
       }
@@ -4024,7 +4039,7 @@ export function initApp() {
           ...subUpdated,
           previous_version: sub.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: subUpdated.board_group_id || subUpdated.group_ids?.[0] || null,
+          write_group_ref: this.getPreferredRecordWriteGroup(subUpdated),
         });
         await addPendingWrite({
           record_id: sub.record_id,
@@ -4037,7 +4052,7 @@ export function initApp() {
         ...updated,
         previous_version: task.version ?? 1,
         signature_npub: this.signingNpub,
-        write_group_ref: updated.board_group_id || updated.group_ids?.[0] || null,
+        write_group_ref: this.getPreferredRecordWriteGroup(updated),
       });
       await addPendingWrite({
         record_id: taskId,
@@ -4241,7 +4256,7 @@ export function initApp() {
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+          write_group_ref: this.getPreferredRecordWriteGroup(updated),
         })
         : await outboundDocument({
           record_id: updated.record_id,
@@ -4261,7 +4276,7 @@ export function initApp() {
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+          write_group_ref: this.getPreferredRecordWriteGroup(updated),
         });
 
       await addPendingWrite({
@@ -4613,7 +4628,7 @@ export function initApp() {
             signature_npub: this.signingNpub,
             shares,
             group_ids: updated.group_ids,
-            write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+            write_group_ref: this.getPreferredRecordWriteGroup(updated),
           }),
         });
       }
@@ -4646,7 +4661,7 @@ export function initApp() {
             signature_npub: this.signingNpub,
             shares,
             group_ids: updated.group_ids,
-            write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+            write_group_ref: this.getPreferredRecordWriteGroup(updated),
           }),
         });
       }

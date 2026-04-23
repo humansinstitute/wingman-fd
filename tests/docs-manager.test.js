@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   normalizeDocShare,
   normalizeDocAccessRow,
@@ -10,8 +10,17 @@ import {
   getStoredDocShares,
   getExplicitDocShares,
 } from '../src/docs-manager.js';
+import {
+  cacheGroupKey,
+  clearGroupKeyCache,
+  createGroupIdentity,
+} from '../src/crypto/group-keys.js';
 
 describe('docs-manager pure utilities', () => {
+  afterEach(() => {
+    clearGroupKeyCache();
+  });
+
   // --- normalizeDocShare ---
   describe('normalizeDocShare', () => {
     it('returns null for falsy input', () => {
@@ -289,6 +298,26 @@ describe('docs-manager pure utilities', () => {
         hasKey: (groupId) => groupId === 'g-direct',
       });
       expect(result).toBe('g-direct');
+    });
+
+    it('uses the loaded actor group by default without an explicit hasKey option', () => {
+      const identity = createGroupIdentity();
+      cacheGroupKey({
+        group_id: 'g-actor',
+        group_npub: 'npub1actor_group',
+        nsec: identity.nsec,
+      });
+
+      const result = getPreferredDocWriteGroupRef({
+        group_ids: ['g-other', 'g-actor'],
+        scope_policy_group_ids: ['g-other', 'g-actor'],
+        shares: [
+          { type: 'group', group_id: 'g-other', access: 'write' },
+          { type: 'group', group_id: 'g-actor', access: 'write' },
+        ],
+      });
+
+      expect(result).toBe('g-actor');
     });
   });
 });

@@ -15,6 +15,7 @@ import {
   computeBoardColumns,
   computeBoardScopedTasks,
   computeFilteredTasks,
+  selectPreferredWritableGroupRef,
   taskBoardStateMixin,
   UNSCOPED_TASK_BOARD_ID,
   ALL_TASK_BOARD_ID,
@@ -141,6 +142,47 @@ describe('getPreferredChannelWriteGroup', () => {
     expect(taskBoardStateMixin.getPreferredChannelWriteGroup.call(store, {
       group_ids: ['npub1legacy'],
     })).toBe('npub1legacy');
+  });
+
+  it('selects the loaded actor group instead of the first delivery group', () => {
+    const identity = createGroupIdentity();
+    cacheGroupKey({
+      group_id: 'g2',
+      group_npub: 'npub1grp2',
+      nsec: identity.nsec,
+    });
+    const store = {
+      groups,
+      resolveGroupId(ref) {
+        return resolveGroupId(ref, this.groups);
+      },
+    };
+
+    expect(taskBoardStateMixin.getPreferredChannelWriteGroup.call(store, {
+      group_ids: ['g1', 'g2'],
+    })).toBe('g2');
+  });
+});
+
+describe('selectPreferredWritableGroupRef', () => {
+  it('keeps full delivery separate from loaded write authority selection', () => {
+    const identity = createGroupIdentity();
+    cacheGroupKey({
+      group_id: 'g3',
+      group_npub: 'npub1grp3',
+      nsec: identity.nsec,
+    });
+
+    expect(selectPreferredWritableGroupRef({
+      boardGroupId: 'g1',
+      groupIds: ['g1', 'g2', 'g3'],
+      scopePolicyGroupIds: ['g1', 'g2', 'g3'],
+      shares: [
+        { type: 'group', group_id: 'g1', access: 'write' },
+        { type: 'group', group_id: 'g2', access: 'write' },
+        { type: 'group', group_id: 'g3', access: 'write' },
+      ],
+    })).toBe('g3');
   });
 });
 

@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-Dzyuks0F.js"></script>
+  <script type="module" crossorigin src="/assets/index-B5hjr52N.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-cRk5noqB.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -6710,6 +6710,14 @@
                   <div class="record-status-metric">
                     <span class="record-status-label">Group key</span>
                     <strong x-text="$store.chat.recordStatusWriteGroupRef ? ($store.chat.recordStatusWriteGroupKeyLoaded ? 'Loaded' : 'Missing') : 'Not needed'"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Delivery groups</span>
+                    <strong x-text="$store.chat.recordStatusDeliveryGroupSummary || 'None'"></strong>
+                  </div>
+                  <div class="record-status-metric">
+                    <span class="record-status-label">Delivery keys</span>
+                    <strong x-text="$store.chat.recordStatusDeliveryGroupKeySummary || 'None'"></strong>
                   </div>
                   <div class="record-status-metric">
                     <span class="record-status-label">Pending writes</span>

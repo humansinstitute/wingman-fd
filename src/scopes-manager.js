@@ -50,6 +50,7 @@ import {
   sameScopePolicyGroupIds,
   shouldRefreshScopedPolicy,
 } from './scope-policy-helpers.js';
+import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -574,7 +575,7 @@ export const scopesManagerMixin = {
       group_ids: updated.group_ids,
       previous_version: doc.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -681,7 +682,7 @@ export const scopesManagerMixin = {
       ...updated,
       previous_version: ch.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -713,7 +714,7 @@ export const scopesManagerMixin = {
       version: row.version ?? 1,
       previous_version: previous?.version ?? 0,
       signature_npub: this.signingNpub,
-      write_group_ref: row.write_group_id || row.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, row),
     });
     await addPendingWrite({
       record_id: row.record_id,
@@ -786,7 +787,7 @@ export const scopesManagerMixin = {
     const envelope = await outboundScope({
       ...localRow,
       signature_npub: this.signingNpub,
-      write_group_ref: localRow.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, localRow),
     });
     await addPendingWrite({
       record_id: recordId,
@@ -886,7 +887,7 @@ export const scopesManagerMixin = {
       ...updated,
       previous_version: scope.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -972,7 +973,7 @@ export const scopesManagerMixin = {
       ...updated,
       previous_version: task.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.board_group_id || updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1017,7 +1018,7 @@ export const scopesManagerMixin = {
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1061,7 +1062,7 @@ export const scopesManagerMixin = {
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1147,7 +1148,7 @@ export const scopesManagerMixin = {
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1192,7 +1193,7 @@ export const scopesManagerMixin = {
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1296,7 +1297,7 @@ export const scopesManagerMixin = {
       ...updated,
       previous_version: flow.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1327,7 +1328,7 @@ export const scopesManagerMixin = {
       ...updated,
       previous_version: approval.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1354,7 +1355,7 @@ export const scopesManagerMixin = {
       ...updated,
       previous_version: channel.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1389,7 +1390,7 @@ export const scopesManagerMixin = {
       },
       previous_version: report.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1525,7 +1526,7 @@ export const scopesManagerMixin = {
       previous_version: scope.version ?? 1,
       signature_npub: this.signingNpub,
       record_state: 'deleted',
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
     await addPendingWrite({
       record_id: scopeId,

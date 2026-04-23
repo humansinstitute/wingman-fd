@@ -29,6 +29,7 @@ import { inboundDocument } from './translators/docs.js';
 import { renderMarkdownToHtml, hydrateStorageImageMarkup } from './markdown.js';
 import { normalizeGroupIds } from './scope-delivery.js';
 import { hasGroupKey } from './crypto/group-keys.js';
+import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
 import { diffLines } from 'diff';
 
 // ---------------------------------------------------------------------------
@@ -139,7 +140,7 @@ export function getWriteableShareGroupIds(shares = []) {
 export function getPreferredDocWriteGroupRef(item = null, options = {}) {
   const hasKey = typeof options?.hasKey === 'function'
     ? options.hasKey
-    : () => false;
+    : hasGroupKey;
   const shares = getStoredDocShares(item);
   const groupIds = normalizeGroupIds(
     Array.isArray(item?.group_ids) && item.group_ids.length > 0
@@ -1326,7 +1327,7 @@ export const docsManagerMixin = {
           shares: row.shares,
           group_ids: row.group_ids,
           signature_npub: this.signingNpub,
-          write_group_ref: row.write_group_id || row.group_ids?.[0] || null,
+          write_group_ref: getPreferredRecordWriteGroupForStore(this, row),
         }),
       });
     } catch (error) {
@@ -1397,7 +1398,7 @@ export const docsManagerMixin = {
           shares: row.shares,
           group_ids: row.group_ids,
           signature_npub: this.signingNpub,
-          write_group_ref: row.write_group_id || row.group_ids?.[0] || null,
+          write_group_ref: getPreferredRecordWriteGroupForStore(this, row),
         }),
       });
     } catch (error) {
@@ -1483,7 +1484,7 @@ export const docsManagerMixin = {
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+          write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
         }),
       });
     } catch (error) {
@@ -1578,7 +1579,7 @@ export const docsManagerMixin = {
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+          write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
         }),
       });
 

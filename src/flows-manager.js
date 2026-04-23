@@ -37,6 +37,7 @@ import {
 import { normalizeArtifactRef, resolveArtifactRef } from './approval-helpers.js';
 import { commentBelongsToDocBlock } from './doc-comment-anchors.js';
 import { renderMarkdownToHtml } from './markdown.js';
+import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
 import {
   ALL_TASK_BOARD_ID,
   RECENT_TASK_BOARD_ID,
@@ -635,7 +636,7 @@ export const flowsManagerMixin = {
       ...localRow,
       target_group_ids: toRaw(record.group_ids ?? []),
       signature_npub: this.signingNpub,
-      write_group_ref: record.board_group_id || record.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, record),
     });
     await addPendingWrite({
       record_id: commentId,
@@ -701,7 +702,7 @@ export const flowsManagerMixin = {
     const envelope = await outboundFlow({
       ...localRow,
       signature_npub: this.signingNpub,
-      write_group_ref: write_group_ref || resolvedGroupIds?.[0] || null,
+      write_group_ref: write_group_ref || getPreferredRecordWriteGroupForStore(this, localRow),
     });
 
     await addPendingWrite({
@@ -769,7 +770,7 @@ export const flowsManagerMixin = {
       ...updated,
       previous_version: flow.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
 
     await addPendingWrite({
@@ -802,7 +803,7 @@ export const flowsManagerMixin = {
       ...updated,
       previous_version: flow.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: flow.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, flow),
     });
 
     await addPendingWrite({
@@ -841,7 +842,7 @@ export const flowsManagerMixin = {
     const envelope = await outboundTask({
       ...task,
       signature_npub: this.signingNpub,
-      write_group_ref: task.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, task),
     });
 
     await addPendingWrite({
@@ -893,7 +894,7 @@ export const flowsManagerMixin = {
     const envelope = await outboundTask({
       ...task,
       signature_npub: this.signingNpub,
-      write_group_ref: task.board_group_id || task.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, task),
     });
 
     await addPendingWrite({
@@ -989,7 +990,7 @@ export const flowsManagerMixin = {
     const taskEnvelope = await outboundTask({
       ...revisionTask,
       signature_npub: this.signingNpub,
-      write_group_ref: revisionTask.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, revisionTask),
     });
 
     await addPendingWrite({
@@ -1058,7 +1059,7 @@ export const flowsManagerMixin = {
       ...updated,
       previous_version: approval.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: updated.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
     });
 
     await addPendingWrite({
@@ -1138,7 +1139,7 @@ export const flowsManagerMixin = {
     const envelope = await outboundApproval({
       ...localRow,
       signature_npub: this.signingNpub,
-      write_group_ref: write_group_ref || resolvedGroupIds?.[0] || null,
+      write_group_ref: write_group_ref || getPreferredRecordWriteGroupForStore(this, localRow),
     });
 
     await addPendingWrite({

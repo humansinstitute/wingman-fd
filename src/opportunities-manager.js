@@ -20,6 +20,7 @@ import {
   resolveFlowLinkage,
 } from './translators/tasks.js';
 import { toRaw } from './utils/state-helpers.js';
+import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
 
 const FORECAST_TERMINAL_STAGES = new Set(['won', 'lost', 'abandoned']);
 const INTEGER_FORMATTER = new Intl.NumberFormat();
@@ -650,7 +651,9 @@ export const opportunitiesManagerMixin = {
   },
 
   async queueOpportunityWrite(updatedOpportunity, previousOpportunity = null) {
-    const writeGroupRef = updatedOpportunity.group_ids?.[0] || this.getWorkspaceSettingsGroupRef?.() || null;
+    const writeGroupRef = getPreferredRecordWriteGroupForStore(this, updatedOpportunity)
+      || this.getWorkspaceSettingsGroupRef?.()
+      || null;
     const envelope = await outboundOpportunity({
       ...updatedOpportunity,
       previous_version: previousOpportunity?.version ?? 0,
@@ -669,7 +672,7 @@ export const opportunitiesManagerMixin = {
       ...updatedTask,
       previous_version: previousTask?.version ?? 0,
       signature_npub: this.signingNpub,
-      write_group_ref: updatedTask.board_group_id || updatedTask.group_ids?.[0] || null,
+      write_group_ref: getPreferredRecordWriteGroupForStore(this, updatedTask),
     });
     await addPendingWrite({
       record_id: updatedTask.record_id,
@@ -739,7 +742,9 @@ export const opportunitiesManagerMixin = {
       }
     }
     if (groupIds.length === 0) {
-      const writeGroupRef = this.getWorkspaceSettingsGroupRef?.() || existing?.group_ids?.[0] || null;
+      const writeGroupRef = (existing ? getPreferredRecordWriteGroupForStore(this, existing) : null)
+        || this.getWorkspaceSettingsGroupRef?.()
+        || null;
       groupIds = writeGroupRef ? [writeGroupRef] : (existing?.group_ids || []);
       shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
         ? this.buildScopeDefaultShares(groupIds)
