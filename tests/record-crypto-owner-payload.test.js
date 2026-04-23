@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { localEncryptForNpub } from '@superbased/core';
+import { localEncryptForNpub } from '@superbased/core/client';
 import { clearCryptoContext, setActiveSessionNpub } from '../src/crypto/group-keys.js';
 import {
   clearActiveWorkspaceKey,

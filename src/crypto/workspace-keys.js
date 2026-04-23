@@ -24,8 +24,8 @@ import {
   isActiveWorkspaceUserKeyRegistered,
   markActiveWorkspaceUserKeyRegistered,
   setActiveWorkspaceUserKey,
-} from '@superbased/browser';
-import { bytesToHex, decodeNsec, generateLocalIdentity } from '@superbased/core';
+} from '@superbased/browser/workspace-keys';
+import { bytesToHex, decodeNsec, generateLocalIdentity } from '@superbased/core/client';
 import { personalEncryptForNpub, personalDecryptFromNpub } from '../auth/nostr.js';
 import { getSharedDb } from '../db.js';
 import { flightDeckLog } from '../logging.js';

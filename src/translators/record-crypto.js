@@ -1,7 +1,7 @@
 import {
   decryptOwnerPayloadJsonWithActiveWorkspaceUserKey,
   encryptOwnerPayloadWithActiveWorkspaceUserKey,
-} from '@superbased/browser';
+} from '@superbased/browser/workspace-keys';
 import { personalDecryptFromNpub, personalEncryptForNpub } from '../auth/nostr.js';
 import {
   decryptPayloadForGroup,
