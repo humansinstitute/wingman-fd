@@ -10,7 +10,8 @@ describe('Agent Chat UX rendering hooks', () => {
     expect(html).toContain('agent-chat-trigger-summary-card');
     expect(html).toContain('agentChatTriggerValidationHeadline()');
     expect(html).toContain('Passive inspection for any saved workspace Agent Chat record');
-    expect(html).toContain('Refresh Passive Diagnostics');
+    expect(html).toContain('Run Current-Actor Check');
+    expect(html).toContain('signed-in actor');
     expect(html).not.toContain('Save Agent Chat Rule');
     expect(html).not.toContain('Enable Agent Chat routing for this workspace');
   });
@@ -20,6 +21,7 @@ describe('Agent Chat UX rendering hooks', () => {
     expect(html).toContain('agentChatDiagnosticsScopeNote');
     expect(html).toContain('agent-chat-trigger-operator-card');
     expect(html).toContain('Passive Diagnostics');
+    expect(html).toContain('Tower only exposes wrapped-key inspection for the signed-in actor');
   });
 
   it('does not render Agent Chat reply cues in chat', () => {

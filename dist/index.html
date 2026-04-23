@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-C4SPKu8l.js"></script>
+  <script type="module" crossorigin src="/assets/index-BLD8FNSz.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-DnRrAchU.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -1898,8 +1898,8 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen(msg.record_id)" x-cloak x-transition>
-                        <button type="button" @click="$store.chat.openChatThreadFlowDispatch(msg.record_id, 'main_feed')">Dispatch to flow</button>
-                        <button type="button" @click="$store.chat.inspectMessageSyncStatus(msg.record_id)">Check sync status</button>
+                        <button type="button" :data-record-id="msg.record_id" data-source-surface="main_feed" data-chat-thread-flow-dispatch="true">Dispatch to flow</button>
+                        <button type="button" @click.stop.prevent="$store.chat.inspectMessageSyncStatus(msg.record_id)">Check sync status</button>
                       </div>
                     </div>
                     <span
@@ -2027,8 +2027,8 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen($store.chat.getThreadParentMessage()?.record_id)" x-cloak x-transition>
-                        <button type="button" @click="$store.chat.openChatThreadFlowDispatch($store.chat.getThreadParentMessage()?.record_id, 'thread_parent')">Dispatch to flow</button>
-                        <button type="button" @click="$store.chat.inspectMessageSyncStatus($store.chat.getThreadParentMessage()?.record_id)">Check sync status</button>
+                        <button type="button" :data-record-id="$store.chat.getThreadParentMessage()?.record_id || ''" data-source-surface="thread_parent" data-chat-thread-flow-dispatch="true">Dispatch to flow</button>
+                        <button type="button" @click.stop.prevent="$store.chat.inspectMessageSyncStatus($store.chat.getThreadParentMessage()?.record_id)">Check sync status</button>
                       </div>
                     </div>
                     <span
@@ -2079,8 +2079,8 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen(reply.record_id)" x-cloak x-transition>
-                        <button type="button" @click="$store.chat.openChatThreadFlowDispatch(reply.record_id, 'thread_reply')">Dispatch to flow</button>
-                        <button type="button" @click="$store.chat.inspectMessageSyncStatus(reply.record_id)">Check sync status</button>
+                        <button type="button" :data-record-id="reply.record_id" data-source-surface="thread_reply" data-chat-thread-flow-dispatch="true">Dispatch to flow</button>
+                        <button type="button" @click.stop.prevent="$store.chat.inspectMessageSyncStatus(reply.record_id)">Check sync status</button>
                       </div>
                     </div>
                     <span
@@ -2868,14 +2868,8 @@
                 <button type="button" class="btn-cancel" :disabled="$store.chat.docScopeModalSubmitting" @click="$store.chat.closeDocScopeModal()">Cancel</button>
                 <button
                   type="button"
-                  class="btn-cancel"
-                  :disabled="$store.chat.docScopeModalSubmitting || ($store.chat.docScopeTargetType === 'bulk-documents' ? !$store.chat.activeDocScopeTargets.some(item => item.scope_id) : !$store.chat.activeDocScopeTarget?.scope_id)"
-                  @click="$store.chat.docScopeModalSelectedId = null"
-                >Remove scope</button>
-                <button
-                  type="button"
                   class="btn-confirm"
-                  :disabled="$store.chat.docScopeModalSubmitting || !$store.chat.docScopeModalHasChanges"
+                  :disabled="$store.chat.docScopeModalSubmitting || !$store.chat.docScopeModalSelectedId || !$store.chat.docScopeModalHasChanges"
                   @click="$store.chat.saveDocScopeModal()"
                   x-text="$store.chat.docScopeModalSubmitting ? 'Saving…' : 'Save scope'"
                 ></button>
@@ -2988,9 +2982,55 @@
                 x-model="$store.chat.newDocModalTitle"
                 @keydown.enter.prevent="$store.chat.confirmNewDocModal()"
               />
+              <div class="doc-scope-modal-current">
+                <span class="docs-field-label">Scope</span>
+                <template x-if="$store.chat.newDocModalSelectedScope">
+                  <div class="doc-scope-modal-selection">
+                    <span
+                      class="doc-scope-pill"
+                      :class="`doc-scope-pill-${$store.chat.newDocModalSelectedScope.level || 'none'}`"
+                      :title="$store.chat.newDocModalScopeLabel"
+                      x-text="$store.chat.newDocModalSelectedScope.title"
+                    ></span>
+                    <small x-text="$store.chat.newDocModalScopeLabel"></small>
+                  </div>
+                </template>
+                <p class="docs-browser-empty" x-show="!$store.chat.newDocModalSelectedScope">Select a scope before creating this record.</p>
+              </div>
+              <input
+                class="docs-share-input"
+                type="text"
+                placeholder="Search scopes"
+                x-model="$store.chat.scopePickerQuery"
+                @keydown.escape="$store.chat.closeNewDocModal()"
+              />
+              <div class="scope-picker-results doc-scope-modal-results">
+                <template x-for="[levelKey, levelScopes] in Object.entries($store.chat.scopePickerResults)" :key="levelKey">
+                  <template x-if="levelScopes.length > 0">
+                    <div class="scope-picker-group">
+                      <div class="scope-picker-group-label" x-text="levelKey.toUpperCase()"></div>
+                      <template x-for="item in levelScopes" :key="item.record_id">
+                        <button
+                          type="button"
+                          class="scope-picker-option"
+                          :class="{ 'scope-picker-option-selected': $store.chat.newDocModalScopeId === item.record_id }"
+                          @click="$store.chat.selectNewDocModalScope(item.record_id)"
+                        >
+                          <span class="scope-level-badge" :data-level="levelKey" x-text="levelKey.toUpperCase()"></span>
+                          <span x-text="item.title"></span>
+                          <span class="scope-picker-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </template>
+                </template>
+                <div class="scope-picker-empty" x-show="$store.chat.scopePickerFlat.length === 0">
+                  <p>No scopes found. <a href="/scopes" @click.prevent="$store.chat.navigateTo('scopes')">Create scopes</a> first.</p>
+                </div>
+              </div>
               <div class="new-doc-modal-actions">
                 <button type="button" class="btn-cancel" :disabled="$store.chat.newDocModalSubmitting" @click="$store.chat.closeNewDocModal()">Cancel</button>
-                <button type="button" class="btn-confirm" :disabled="$store.chat.newDocModalSubmitting" @click="$store.chat.confirmNewDocModal()" x-text="$store.chat.newDocModalSubmitting ? 'Creating…' : 'Create'"></button>
+                <button type="button" class="btn-confirm" :disabled="$store.chat.newDocModalSubmitting || !$store.chat.newDocModalTitle.trim() || !$store.chat.newDocModalScopeId" @click="$store.chat.confirmNewDocModal()" x-text="$store.chat.newDocModalSubmitting ? 'Creating…' : 'Create'"></button>
               </div>
             </div>
           </div>
@@ -4463,181 +4503,186 @@
               </div>
             </div>
 
-            <div
-              class="flow-start-confirm-overlay"
-              x-show="$store.chat.showChatThreadFlowDispatchModal"
-              x-transition.opacity
-              @click.self="$store.chat.closeChatThreadFlowDispatch()"
-              x-cloak
-            >
-              <div class="flow-start-confirm-panel chat-thread-flow-dispatch-panel" data-testid="chat-thread-flow-dispatch-modal">
-                <div class="chat-thread-flow-dispatch-header">
-                  <div>
-                    <h3>Dispatch Chat Thread To Flow</h3>
-                    <p>Promote the canonical thread into a normal kickoff task for Wingmen flow dispatch.</p>
-                  </div>
-                  <button
-                    type="button"
-                    class="modal-close"
-                    aria-label="Close dispatch to flow dialog"
-                    @click="$store.chat.closeChatThreadFlowDispatch()"
-                  >&times;</button>
-                </div>
-
-                <div class="chat-thread-flow-dispatch-body">
-                  <template x-if="$store.chat.chatThreadFlowDispatchLoading">
-                    <p class="chat-thread-flow-dispatch-status" aria-live="polite">Resolving canonical thread…</p>
-                  </template>
-
-                  <template x-if="!$store.chat.chatThreadFlowDispatchLoading">
-                    <div class="chat-thread-flow-dispatch-content">
-                      <div class="chat-thread-flow-dispatch-grid">
-                        <label class="chat-thread-flow-dispatch-field">
-                          <span class="task-field-label">Flow</span>
-                          <select
-                            x-model="$store.chat.chatThreadFlowDispatchSelectedFlowId"
-                            @change="$store.chat.chatThreadFlowDispatchSelectedFlowId = $event.target.value || null; $store.chat.handleChatThreadFlowDispatchInputsChanged()"
-                            aria-label="Select flow for chat thread dispatch"
-                            data-testid="chat-thread-flow-dispatch-flow-select"
-                          >
-                            <option value="">Select a flow…</option>
-                            <template x-for="flow in $store.chat.flows.filter(entry => entry.record_state !== 'deleted')" :key="flow.record_id">
-                              <option :value="flow.record_id" x-text="flow.title || 'Untitled flow'"></option>
-                            </template>
-                          </select>
-                        </label>
-
-                        <label class="chat-thread-flow-dispatch-field">
-                          <span class="task-field-label">Manual scope override</span>
-                          <select
-                            x-model="$store.chat.chatThreadFlowDispatchManualScopeId"
-                            @change="$store.chat.chatThreadFlowDispatchManualScopeId = $event.target.value || null; $store.chat.handleChatThreadFlowDispatchInputsChanged()"
-                            aria-label="Override scope for chat thread dispatch"
-                            data-testid="chat-thread-flow-dispatch-scope-select"
-                          >
-                            <option value="">Use automatic resolution</option>
-                            <template x-for="scope in $store.chat.scopes.filter(entry => entry.record_state !== 'deleted')" :key="scope.record_id">
-                              <option :value="scope.record_id" x-text="$store.chat.getTaskBoardOptionLabel(scope.record_id)"></option>
-                            </template>
-                          </select>
-                        </label>
-                      </div>
-
-                      <div class="chat-thread-flow-dispatch-resolution">
-                        <div class="chat-thread-flow-dispatch-resolution-card">
-                          <span class="chat-thread-flow-dispatch-resolution-label">Resolved scope</span>
-                          <strong x-text="$store.chat.chatThreadFlowDispatchResolvedScopeLabel"></strong>
-                          <small x-text="$store.chat.chatThreadFlowDispatchScopeSourceLabel"></small>
-                        </div>
-                        <div class="chat-thread-flow-dispatch-resolution-card">
-                          <span class="chat-thread-flow-dispatch-resolution-label">Source channel</span>
-                          <strong x-text="$store.chat.getChannelLabel($store.chat.chatThreadFlowDispatchSourceChannel) || 'Unknown channel'"></strong>
-                          <small x-text="$store.chat.chatThreadFlowDispatchSource?.sourceSurface || 'main_feed'"></small>
-                        </div>
-                      </div>
-
-                      <div class="chat-thread-flow-dispatch-provenance">
-                        <h4>Source Provenance</h4>
-                        <dl class="chat-thread-flow-dispatch-provenance-list">
-                          <div>
-                            <dt>Clicked message</dt>
-                            <dd x-text="$store.chat.chatThreadFlowDispatchSource?.clickedMessageId || '—'"></dd>
-                          </div>
-                          <div>
-                            <dt>Canonical thread</dt>
-                            <dd x-text="$store.chat.chatThreadFlowDispatchSource?.threadRootMessageId || '—'"></dd>
-                          </div>
-                          <div>
-                            <dt>Thread messages</dt>
-                            <dd x-text="$store.chat.chatThreadFlowDispatchMessages.length"></dd>
-                          </div>
-                          <div>
-                            <dt>Selected flow</dt>
-                            <dd x-text="$store.chat.chatThreadFlowDispatchSelectedFlow?.title || 'Not selected'"></dd>
-                          </div>
-                          <div>
-                            <dt>Resolved scope</dt>
-                            <dd x-text="$store.chat.chatThreadFlowDispatchResolvedScopeLabel"></dd>
-                          </div>
-                        </dl>
-                      </div>
-
-                      <label class="chat-thread-flow-dispatch-field">
-                        <span class="task-field-label">Launch notes</span>
-                        <textarea
-                          x-model="$store.chat.chatThreadFlowDispatchLaunchNotes"
-                          @input="$store.chat.handleChatThreadFlowDispatchInputsChanged()"
-                          rows="4"
-                          placeholder="Add operator guidance before creating the kickoff task..."
-                          class="flow-start-context-input chat-thread-flow-dispatch-notes"
-                          aria-label="Launch notes for chat thread dispatch"
-                          data-testid="chat-thread-flow-dispatch-launch-notes"
-                        ></textarea>
-                      </label>
-
-                      <div class="chat-thread-flow-dispatch-preview-header">
-                        <div>
-                          <h4>Kickoff Preview</h4>
-                          <p>This preview becomes the kickoff task description consumed by Wingmen flow dispatch.</p>
-                        </div>
-                        <button
-                          type="button"
-                          class="btn-secondary"
-                          x-show="$store.chat.chatThreadFlowDispatchDirty || $store.chat.chatThreadFlowDispatchPreviewStale"
-                          @click="$store.chat.regenerateChatThreadFlowDispatchPreview()"
-                          aria-label="Regenerate kickoff preview"
-                          data-testid="chat-thread-flow-dispatch-regenerate"
-                        >Regenerate preview</button>
-                      </div>
-
-                      <p
-                        class="chat-thread-flow-dispatch-warning"
-                        x-show="$store.chat.chatThreadFlowDispatchPreviewStale"
-                        aria-live="polite"
-                      >
-                        Flow, scope, or launch notes changed after manual preview edits. Regenerate the preview if you want the text to match the latest metadata.
-                      </p>
-
-                      <textarea
-                        x-model="$store.chat.chatThreadFlowDispatchPreview"
-                        @input="$store.chat.markChatThreadFlowDispatchPreviewEdited()"
-                        rows="16"
-                        class="flow-start-context-input chat-thread-flow-dispatch-preview"
-                        aria-label="Kickoff description preview"
-                        data-testid="chat-thread-flow-dispatch-preview"
-                      ></textarea>
-
-                      <p
-                        class="chat-thread-flow-dispatch-status chat-thread-flow-dispatch-error"
-                        x-show="$store.chat.chatThreadFlowDispatchError"
-                        x-text="$store.chat.chatThreadFlowDispatchError"
-                        aria-live="polite"
-                      ></p>
-                    </div>
-                  </template>
-                </div>
-
-                <div class="flow-start-confirm-actions chat-thread-flow-dispatch-actions">
-                  <button
-                    type="button"
-                    class="btn-primary"
-                    @click="$store.chat.submitChatThreadFlowDispatch()"
-                    :disabled="!$store.chat.chatThreadFlowDispatchCanSubmit"
-                    aria-label="Create kickoff task from chat thread"
-                    data-testid="chat-thread-flow-dispatch-submit"
-                  >Dispatch to flow</button>
-                  <button
-                    type="button"
-                    class="btn-secondary"
-                    @click="$store.chat.closeChatThreadFlowDispatch()"
-                    aria-label="Cancel chat thread flow dispatch"
-                  >Cancel</button>
-                </div>
-              </div>
-            </div>
-
           </div>
         </template>
+
+        <div
+          class="flow-start-confirm-overlay"
+          x-show="$store.chat.showChatThreadFlowDispatchModal"
+          x-transition.opacity
+          @click.self="$store.chat.handleChatThreadFlowDispatchOverlayClick()"
+          x-cloak
+        >
+          <div class="flow-start-confirm-panel chat-thread-flow-dispatch-panel" data-testid="chat-thread-flow-dispatch-modal">
+            <div class="chat-thread-flow-dispatch-header">
+              <div>
+                <h3>Dispatch Chat Thread To Flow</h3>
+                <p>Promote the canonical thread into a normal kickoff task for Wingmen flow dispatch.</p>
+              </div>
+              <button
+                type="button"
+                class="modal-close"
+                aria-label="Close dispatch to flow dialog"
+                @click="$store.chat.closeChatThreadFlowDispatch()"
+              >&times;</button>
+            </div>
+
+            <div class="chat-thread-flow-dispatch-body">
+              <template x-if="$store.chat.chatThreadFlowDispatchLoading">
+                <p class="chat-thread-flow-dispatch-status" aria-live="polite">Resolving canonical thread…</p>
+              </template>
+
+              <template x-if="!$store.chat.chatThreadFlowDispatchLoading">
+                <div class="chat-thread-flow-dispatch-content">
+                  <div class="chat-thread-flow-dispatch-grid">
+                    <label class="chat-thread-flow-dispatch-field">
+                      <span class="task-field-label">Flow</span>
+                      <select
+                        x-model="$store.chat.chatThreadFlowDispatchSelectedFlowId"
+                        @change="$store.chat.chatThreadFlowDispatchSelectedFlowId = $event.target.value || null; $store.chat.handleChatThreadFlowDispatchInputsChanged()"
+                        aria-label="Select flow for chat thread dispatch"
+                        data-testid="chat-thread-flow-dispatch-flow-select"
+                      >
+                        <option value="">Select a flow…</option>
+                        <template x-for="flow in $store.chat.flows.filter(entry => entry.record_state !== 'deleted')" :key="flow.record_id">
+                          <option :value="flow.record_id" x-text="flow.title || 'Untitled flow'"></option>
+                        </template>
+                      </select>
+                    </label>
+
+                    <label class="chat-thread-flow-dispatch-field">
+                      <span class="task-field-label">Manual scope override</span>
+                      <select
+                        x-model="$store.chat.chatThreadFlowDispatchManualScopeId"
+                        @change="$store.chat.chatThreadFlowDispatchManualScopeId = $event.target.value || null; $store.chat.handleChatThreadFlowDispatchInputsChanged()"
+                        aria-label="Override scope for chat thread dispatch"
+                        data-testid="chat-thread-flow-dispatch-scope-select"
+                      >
+                        <option value="">Use automatic resolution</option>
+                        <template x-for="scope in $store.chat.scopes.filter(entry => entry.record_state !== 'deleted')" :key="scope.record_id">
+                          <option :value="scope.record_id" x-text="$store.chat.getTaskBoardOptionLabel(scope.record_id)"></option>
+                        </template>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div class="chat-thread-flow-dispatch-resolution">
+                    <div class="chat-thread-flow-dispatch-resolution-card">
+                      <span class="chat-thread-flow-dispatch-resolution-label">Resolved scope</span>
+                      <strong x-text="$store.chat.chatThreadFlowDispatchResolvedScopeLabel"></strong>
+                      <small x-text="$store.chat.chatThreadFlowDispatchScopeSourceLabel"></small>
+                    </div>
+                    <div class="chat-thread-flow-dispatch-resolution-card">
+                      <span class="chat-thread-flow-dispatch-resolution-label">Source channel</span>
+                      <strong x-text="$store.chat.getChannelLabel($store.chat.chatThreadFlowDispatchSourceChannel) || 'Unknown channel'"></strong>
+                      <small x-text="$store.chat.chatThreadFlowDispatchSource?.sourceSurface || 'main_feed'"></small>
+                    </div>
+                  </div>
+
+                  <div class="chat-thread-flow-dispatch-provenance">
+                    <h4>Source Provenance</h4>
+                    <dl class="chat-thread-flow-dispatch-provenance-list">
+                      <div>
+                        <dt>Clicked message</dt>
+                        <dd x-text="$store.chat.chatThreadFlowDispatchSource?.clickedMessageId || '—'"></dd>
+                      </div>
+                      <div>
+                        <dt>Canonical thread</dt>
+                        <dd x-text="$store.chat.chatThreadFlowDispatchSource?.threadRootMessageId || '—'"></dd>
+                      </div>
+                      <div>
+                        <dt>Thread messages</dt>
+                        <dd x-text="$store.chat.chatThreadFlowDispatchMessages.length"></dd>
+                      </div>
+                      <div>
+                        <dt>Source surface</dt>
+                        <dd x-text="$store.chat.chatThreadFlowDispatchSource?.sourceSurface || '—'"></dd>
+                      </div>
+                      <div>
+                        <dt>Selected flow</dt>
+                        <dd x-text="$store.chat.chatThreadFlowDispatchSelectedFlow?.title || 'Not selected'"></dd>
+                      </div>
+                      <div>
+                        <dt>Resolved scope</dt>
+                        <dd x-text="$store.chat.chatThreadFlowDispatchResolvedScopeLabel"></dd>
+                      </div>
+                    </dl>
+                  </div>
+
+                  <label class="chat-thread-flow-dispatch-field">
+                    <span class="task-field-label">Launch notes</span>
+                    <textarea
+                      x-model="$store.chat.chatThreadFlowDispatchLaunchNotes"
+                      @input="$store.chat.handleChatThreadFlowDispatchInputsChanged()"
+                      rows="4"
+                      placeholder="Add operator guidance before creating the kickoff task..."
+                      class="flow-start-context-input chat-thread-flow-dispatch-notes"
+                      aria-label="Launch notes for chat thread dispatch"
+                      data-testid="chat-thread-flow-dispatch-launch-notes"
+                    ></textarea>
+                  </label>
+
+                  <div class="chat-thread-flow-dispatch-preview-header">
+                    <div>
+                      <h4>Kickoff Preview</h4>
+                      <p>This preview becomes the kickoff task description consumed by Wingmen flow dispatch.</p>
+                    </div>
+                    <button
+                      type="button"
+                      class="btn-secondary"
+                      x-show="$store.chat.chatThreadFlowDispatchDirty || $store.chat.chatThreadFlowDispatchPreviewStale"
+                      @click="$store.chat.regenerateChatThreadFlowDispatchPreview()"
+                      aria-label="Regenerate kickoff preview"
+                      data-testid="chat-thread-flow-dispatch-regenerate"
+                    >Regenerate preview</button>
+                  </div>
+
+                  <p
+                    class="chat-thread-flow-dispatch-warning"
+                    x-show="$store.chat.chatThreadFlowDispatchPreviewStale"
+                    data-testid="chat-thread-flow-dispatch-stale-warning"
+                    aria-live="polite"
+                  >
+                    Flow, scope, or launch notes changed after manual preview edits. Regenerate the preview if you want the text to match the latest metadata.
+                  </p>
+
+                  <textarea
+                    x-model="$store.chat.chatThreadFlowDispatchPreview"
+                    @input="$store.chat.markChatThreadFlowDispatchPreviewEdited()"
+                    rows="16"
+                    class="flow-start-context-input chat-thread-flow-dispatch-preview"
+                    aria-label="Kickoff description preview"
+                    data-testid="chat-thread-flow-dispatch-preview"
+                  ></textarea>
+
+                  <p
+                    class="chat-thread-flow-dispatch-status chat-thread-flow-dispatch-error"
+                    x-show="$store.chat.chatThreadFlowDispatchError"
+                    x-text="$store.chat.chatThreadFlowDispatchError"
+                    aria-live="polite"
+                  ></p>
+                </div>
+              </template>
+            </div>
+
+            <div class="flow-start-confirm-actions chat-thread-flow-dispatch-actions">
+              <button
+                type="button"
+                class="btn-primary"
+                @click="$store.chat.submitChatThreadFlowDispatch()"
+                :disabled="!$store.chat.chatThreadFlowDispatchCanSubmit"
+                aria-label="Create kickoff task from chat thread"
+                data-testid="chat-thread-flow-dispatch-submit"
+              >Dispatch to flow</button>
+              <button
+                type="button"
+                class="btn-secondary"
+                @click="$store.chat.closeChatThreadFlowDispatch()"
+                aria-label="Cancel chat thread flow dispatch"
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
 
         <!-- Approval detail modal (global — reachable from status and flows sections) -->
         <div class="approval-detail-overlay" x-show="$store.chat.showApprovalDetail" x-transition.opacity @click.self="$store.chat.showApprovalDetail = false; $store.chat.approvalPreviewExpanded = false" x-cloak
@@ -5875,7 +5920,7 @@
             <div class="settings-panel-header">
               <div>
                 <h2>Agent Chat</h2>
-                <p>Passive inspection for any saved workspace Agent Chat record. Flight Deck no longer acts as the required control plane for local Agent Chat routing.</p>
+                <p>Passive inspection for any saved workspace Agent Chat record. Flight Deck no longer acts as the runtime control plane for local Agent Chat routing, and Tower only exposes wrapped-key inspection for the signed-in actor.</p>
               </div>
               <span
                 class="agent-chat-trigger-status"
@@ -5897,12 +5942,12 @@
                 <article class="agent-chat-trigger-summary-item">
                   <span class="agent-chat-trigger-summary-label">Workspace record</span>
                   <strong x-text="$store.chat.agentChatTriggerStatusLabel()"></strong>
-                  <small x-text="$store.chat.agentChatTriggerConfigured ? ($store.chat.agentChatTriggerEnabled ? 'Shown for compatibility and passive diagnostics only.' : 'Shown for compatibility only; the saved record itself is paused.') : 'No workspace Agent Chat record is saved here, which does not block normal local routing.'"></small>
+                  <small x-text="$store.chat.agentChatTriggerConfigured ? ($store.chat.agentChatTriggerEnabled ? 'Shown for compatibility and current-actor diagnostics only.' : 'Shown for compatibility only; the saved record itself is paused.') : 'No workspace Agent Chat record is saved here, which does not block normal local routing.'"></small>
                 </article>
                 <article class="agent-chat-trigger-summary-item">
                   <span class="agent-chat-trigger-summary-label">Scope</span>
-                  <strong>Passive diagnostics</strong>
-                  <small>Wingmen owns local agent registration and routing. Flight Deck only inspects any saved workspace record here.</small>
+                  <strong>Passive compatibility</strong>
+                  <small>Wingmen owns local agent registration and routing. Flight Deck only inspects any saved workspace record and the signed-in actor here.</small>
                 </article>
                 <article class="agent-chat-trigger-summary-item">
                   <span class="agent-chat-trigger-summary-label">Target group</span>
@@ -5942,7 +5987,7 @@
               <div class="agent-chat-trigger-diagnostics-header">
                 <div>
                   <h3>Passive Diagnostics</h3>
-                  <p>Use these checks to inspect any saved workspace record and local key readiness. They do not act as the authoritative runtime control plane.</p>
+                  <p>Use these checks to inspect the saved workspace record, configured bot membership, and the signed-in actor's readable wrapped keys. They do not act as the runtime control plane.</p>
                 </div>
               </div>
 
@@ -5961,7 +6006,7 @@
                   class="btn-cancel"
                   @click="$store.chat.refreshAgentChatTriggerDiagnostics()"
                   :disabled="!$store.chat.agentChatTriggerConfigured || $store.chat.agentChatTriggerDiagnosticsLoading || !$store.chat.agentChatTriggerTargetGroup"
-                  x-text="$store.chat.agentChatTriggerDiagnosticsLoading ? 'Refreshing...' : 'Refresh Passive Diagnostics'"
+                  x-text="$store.chat.agentChatTriggerDiagnosticsLoading ? 'Running...' : 'Run Current-Actor Check'"
                 ></button>
               </div>
 
@@ -5989,21 +6034,21 @@
                 class="settings-field-help"
                 x-show="!$store.chat.agentChatTriggerDiagnosticsLoading && $store.chat.agentChatTriggerTargetGroup && $store.chat.agentChatOperatorWarnings.length === 0"
               >
-                Flight Deck is not seeing saved-record, membership, or wrapped-key problems for the current compatibility view.
+                Flight Deck is not seeing saved-record, membership, or current-actor wrapped-key problems for the current compatibility view.
               </p>
 
               <p class="error-text" x-show="$store.chat.agentChatTriggerDiagnosticsError" x-text="$store.chat.agentChatTriggerDiagnosticsError"></p>
-              <p class="settings-field-help" x-show="$store.chat.agentChatTriggerDiagnosticsLoading">Inspecting saved-record members...</p>
+              <p class="settings-field-help" x-show="$store.chat.agentChatTriggerDiagnosticsLoading">Inspecting the signed-in actor against the saved record...</p>
               <p
                 class="settings-field-help"
                 x-show="!$store.chat.agentChatTriggerDiagnosticsLoading && $store.chat.agentChatTriggerTargetGroup && $store.chat.agentChatTriggerDiagnostics.length === 0"
               >
-                No saved-record members to inspect.
+                No current-actor diagnostic is available.
               </p>
 
               <div class="agent-chat-trigger-diagnostics-subheader" x-show="$store.chat.agentChatTriggerDiagnostics.length > 0">
-                <h4>Saved-Record Key Checks</h4>
-                <p>Each visible member is checked for a wrapped key matching the current group epoch referenced by the saved workspace record.</p>
+                <h4>Current-Actor Compatibility</h4>
+                <p>Flight Deck checks only the signed-in actor against the current group epoch referenced by the saved workspace record.</p>
               </div>
 
               <div class="agent-chat-trigger-diagnostics-list" x-show="$store.chat.agentChatTriggerDiagnostics.length > 0">
@@ -6020,6 +6065,7 @@
                         <div>
                           <strong x-text="$store.chat.getSenderName(diag.member_npub)"></strong>
                           <small x-text="diag.member_npub"></small>
+                          <span class="agent-chat-trigger-member-role" x-show="diag.member_npub === $store.chat.session?.npub">Signed-in actor</span>
                           <span class="agent-chat-trigger-member-role" x-show="$store.chat.isKnownAgentChatBotNpub(diag.member_npub)">Configured bot</span>
                         </div>
                       </div>
@@ -6219,6 +6265,34 @@
                 <span x-show="!$store.chat.repairBusy">Restore From SuperBased</span>
                 <span x-show="$store.chat.repairBusy">Restoring...</span>
               </button>
+            </div>
+            <div class="repair-task-probe">
+              <label class="settings-field-label" for="legacy-doc-scope-repair-scope">Scope Legacy Docs</label>
+              <select
+                id="legacy-doc-scope-repair-scope"
+                class="new-group-input"
+                x-model="$store.chat.legacyDocScopeRepairScopeId"
+                :disabled="$store.chat.legacyDocScopeRepairBusy"
+              >
+                <option value="">Only inherit from scoped parent folders</option>
+                <template x-for="scope in $store.chat.scopes.filter(entry => entry.record_state !== 'deleted')" :key="scope.record_id">
+                  <option :value="scope.record_id" x-text="$store.chat.getTaskBoardOptionLabel(scope.record_id)"></option>
+                </template>
+              </select>
+              <p class="settings-field-help">Assigns missing scope metadata to legacy docs/folders. Nested items inherit from scoped parent folders; choose a scope here to also assign unscoped root docs and root folders.</p>
+              <p class="error-text" x-show="$store.chat.legacyDocScopeRepairError" x-text="$store.chat.legacyDocScopeRepairError"></p>
+              <p class="settings-success" x-show="$store.chat.legacyDocScopeRepairNotice" x-text="$store.chat.legacyDocScopeRepairNotice"></p>
+              <div class="settings-actions">
+                <button
+                  type="button"
+                  class="btn-cancel"
+                  @click="$store.chat.repairLegacyDocScopesFromSettings()"
+                  :disabled="$store.chat.legacyDocScopeRepairBusy"
+                >
+                  <span x-show="!$store.chat.legacyDocScopeRepairBusy">Scope Legacy Docs</span>
+                  <span x-show="$store.chat.legacyDocScopeRepairBusy">Scoping...</span>
+                </button>
+              </div>
             </div>
             <div class="repair-task-probe">
               <label class="settings-field-label" for="repair-task-id">Probe Single Task On Tower</label>

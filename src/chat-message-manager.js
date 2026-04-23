@@ -784,9 +784,16 @@ export const chatMessageManagerMixin = {
   },
 
   async openChatThreadFlowDispatch(recordId, sourceSurface = 'main_feed') {
+    this.error = null;
+    console.info('Chat thread flow dispatch requested:', {
+      recordId,
+      sourceSurface,
+      selectedChannelId: this.selectedChannelId,
+    });
     this.closeMessageActionsMenu();
     Object.assign(this, createChatThreadFlowDispatchState());
     this.showChatThreadFlowDispatchModal = true;
+    this.chatThreadFlowDispatchOpenedAt = Date.now();
     this.chatThreadFlowDispatchLoading = true;
 
     try {
@@ -810,7 +817,14 @@ export const chatMessageManagerMixin = {
       this.chatThreadFlowDispatchError = null;
       this.syncChatThreadFlowDispatchScopeResolution();
     } catch (error) {
+      console.error('Chat thread flow dispatch init failed:', {
+        error,
+        recordId,
+        sourceSurface,
+        selectedChannelId: this.selectedChannelId,
+      });
       this.chatThreadFlowDispatchError = error?.message || 'Unable to prepare chat thread dispatch.';
+      this.error = this.chatThreadFlowDispatchError;
     } finally {
       this.chatThreadFlowDispatchLoading = false;
     }
@@ -818,6 +832,14 @@ export const chatMessageManagerMixin = {
 
   closeChatThreadFlowDispatch() {
     Object.assign(this, createChatThreadFlowDispatchState());
+  },
+
+  handleChatThreadFlowDispatchOverlayClick() {
+    const openedAt = Number(this.chatThreadFlowDispatchOpenedAt || 0);
+    if (openedAt > 0 && (Date.now() - openedAt) < 250) {
+      return;
+    }
+    this.closeChatThreadFlowDispatch();
   },
 
   resolveDispatchThread(recordId) {
@@ -909,9 +931,11 @@ export const chatMessageManagerMixin = {
   },
 
   async submitChatThreadFlowDispatch() {
+    this.error = null;
     this.chatThreadFlowDispatchError = null;
     if (!this.chatThreadFlowDispatchCanSubmit) {
       this.chatThreadFlowDispatchError = 'Select a flow and confirm the preview before dispatching.';
+      this.error = this.chatThreadFlowDispatchError;
       return null;
     }
 
@@ -936,7 +960,13 @@ export const chatMessageManagerMixin = {
       this.closeChatThreadFlowDispatch();
       return result;
     } catch (error) {
+      console.error('Chat thread flow dispatch submit failed:', {
+        error,
+        flowId: this.chatThreadFlowDispatchSelectedFlowId,
+        source,
+      });
       this.chatThreadFlowDispatchError = error?.message || 'Failed to create the kickoff task for this flow dispatch.';
+      this.error = this.chatThreadFlowDispatchError;
       return null;
     } finally {
       this.chatThreadFlowDispatchSubmitting = false;

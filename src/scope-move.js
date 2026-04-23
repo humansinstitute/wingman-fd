@@ -17,10 +17,11 @@ export function separateScopeShares(shares = [], scopeGroupIds = []) {
   const explicitShares = [];
 
   for (const share of shares) {
+    const groupRef = share.group_id || share.group_npub;
     if (
       share.type === 'group'
-      && share.group_npub
-      && scopeGroupSet.has(share.group_npub)
+      && groupRef
+      && scopeGroupSet.has(groupRef)
     ) {
       scopeShares.push(share);
     } else {
@@ -168,10 +169,11 @@ function extractGroupIdsFromShares(shares = []) {
   const ids = new Set();
   for (const share of shares) {
     if (share.type === 'person') {
-      if (share.via_group_npub) ids.add(share.via_group_npub);
-      if (share.group_npub) ids.add(share.group_npub);
-    } else if (share.group_npub) {
-      ids.add(share.group_npub);
+      const groupRef = share.via_group_id || share.group_id || share.via_group_npub || share.group_npub;
+      if (groupRef) ids.add(groupRef);
+    } else {
+      const groupRef = share.group_id || share.group_npub;
+      if (groupRef) ids.add(groupRef);
     }
   }
   return [...ids];

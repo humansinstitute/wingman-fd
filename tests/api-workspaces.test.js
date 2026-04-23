@@ -3,16 +3,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../src/auth/nostr.js', () => ({
   createNip98AuthHeader: vi.fn(async (requestUrl, method) => `NIP98 ${method} ${requestUrl}`),
   createNip98AuthHeaderForSecret: vi.fn(async (requestUrl, method) => `NIP98-SECRET ${method} ${requestUrl}`),
+  localDecryptFromNpub: vi.fn(),
+  localEncryptForNpub: vi.fn(() => 'ciphertext'),
+  personalDecryptFromNpub: vi.fn(),
+  personalEncryptForNpub: vi.fn(),
 }));
 
 vi.mock('../src/crypto/workspace-keys.js', () => ({
+  getActiveWorkspaceKey: vi.fn(() => null),
   getActiveWorkspaceKeySecretForAuth: vi.fn(() => null),
   getActiveWorkspaceKeyNpub: vi.fn(() => null),
 }));
 
 vi.mock('../src/crypto/group-keys.js', () => ({
   createGroupWriteAuthHeader: vi.fn(async (groupRef) => `proof:${groupRef}`),
+  decryptPayloadForGroup: vi.fn(),
+  encryptPayloadForGroup: vi.fn(),
   getActiveSessionNpub: vi.fn(() => null),
+  getGroupKey: vi.fn(() => null),
+  getLoadedGroupKeyDiagnostics: vi.fn(() => ({})),
+  hasGroupKey: vi.fn(() => false),
 }));
 
 describe('workspace API host binding', () => {

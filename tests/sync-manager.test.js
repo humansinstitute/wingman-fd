@@ -1216,6 +1216,20 @@ describe('connectSSEStream — NIP-98 auth token', () => {
     );
   });
 
+  it('does not reconnect when the same SSE stream is already healthy', async () => {
+    const store = createStore({
+      session: { npub: 'npub1viewer' },
+      backendUrl: 'https://tower.example',
+      workspaceOwnerNpub: 'npub1owner',
+      sseStatus: 'connected',
+    });
+    store.sseConnectionKey = store.buildSSEConnectionKey();
+
+    await store.connectSSEStream();
+
+    expect(connectSSE).not.toHaveBeenCalled();
+  });
+
   it('does not call connectSSE when NIP-98 signing fails', async () => {
     createNip98AuthHeader.mockRejectedValueOnce(new Error('no signer'));
     getActiveWorkspaceKeySecretForAuth.mockReturnValue(null);

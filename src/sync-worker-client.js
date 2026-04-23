@@ -338,7 +338,7 @@ export function setWorkerDegradedCallback(callback) {
   _workerDegradedCallback = callback;
 }
 
-export function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey) {
+export function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey, options = {}) {
   const worker = ensureWorkerInstance();
   if (!worker) return;
   syncKeysToWorker(worker);
@@ -350,14 +350,15 @@ export function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDb
       backendUrl,
       token,
       workspaceDbKey,
+      options,
     });
   } catch { /* ignore */ }
 }
 
-export function disconnectSSE() {
+export function disconnectSSE(options = {}) {
   if (!workerInstance) return;
   try {
-    workerInstance.postMessage({ type: 'sync-worker:sse-disconnect' });
+    workerInstance.postMessage({ type: 'sync-worker:sse-disconnect', options });
   } catch { /* ignore */ }
 }
 

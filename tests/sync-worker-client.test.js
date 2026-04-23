@@ -17,7 +17,12 @@ vi.mock('../src/auth/nostr.js', () => ({
 
 vi.mock('../src/crypto/group-keys.js', () => ({
   exportDecryptedKeys: vi.fn(() => []),
+  decryptPayloadForGroup: vi.fn(),
+  encryptPayloadForGroup: vi.fn(),
   getActiveSessionNpub: vi.fn(() => null),
+  getGroupKey: vi.fn(() => null),
+  getLoadedGroupKeyDiagnostics: vi.fn(() => ({})),
+  hasGroupKey: vi.fn(() => false),
 }));
 
 vi.mock('../src/crypto/workspace-keys.js', () => ({

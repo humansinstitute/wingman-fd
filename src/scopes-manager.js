@@ -445,6 +445,10 @@ export const scopesManagerMixin = {
     if (this.docScopeModalSubmitting) return;
     if (this.docScopeTargetType === 'bulk-documents' && this.activeDocScopeTargets.length === 0) return;
     if (this.docScopeTargetType !== 'bulk-documents' && !target) return;
+    if (!this.docScopeModalSelectedId) {
+      this.error = 'Documents and folders must have a scope.';
+      return;
+    }
     this.docScopeModalSubmitting = true;
     try {
       if (this.docScopeTargetType === 'bulk-documents') {
@@ -522,12 +526,16 @@ export const scopesManagerMixin = {
   async clearDocScope() {
     const doc = this.selectedDocument;
     if (!doc || !this.session?.npub) return;
-    await this.updateDocScope(doc, null);
+    this.error = 'Documents must have a scope.';
     this.closeScopePicker();
   },
 
   async updateDocScope(doc, scopeId, options = {}) {
     if (!doc || !this.session?.npub) return;
+    if (!scopeId) {
+      this.error = 'Documents must have a scope.';
+      return;
+    }
     const scopeAssignment = this.buildScopeAssignment(scopeId);
     const previousScopeGroupIds = doc.scope_id ? this.getResolvedScopePolicyGroupIds(doc.scope_id) : [];
     const patch = scopeId
@@ -588,12 +596,16 @@ export const scopesManagerMixin = {
   async clearDirectoryScope() {
     const dir = this.currentFolder;
     if (!dir || !this.session?.npub) return;
-    await this.updateDirectoryScope(dir, null);
+    this.error = 'Folders must have a scope.';
     this.closeScopePicker();
   },
 
   async updateDirectoryScope(dir, scopeId) {
     if (!dir || !this.session?.npub) return;
+    if (!scopeId) {
+      this.error = 'Folders must have a scope.';
+      return;
+    }
     const scopeAssignment = this.buildScopeAssignment(scopeId);
     const previousScopeGroupIds = dir.scope_id ? this.getResolvedScopePolicyGroupIds(dir.scope_id) : [];
     const patch = scopeId
@@ -1057,6 +1069,210 @@ export const scopesManagerMixin = {
       envelope,
     });
     return true;
+  },
+
+  resolveLegacyDocScopeId(item, fallbackScopeId = null, directoryMap = new Map()) {
+    const existingScopeId = String(item?.scope_id || '').trim();
+    if (existingScopeId && this.scopesMap?.has(existingScopeId)) return existingScopeId;
+    let parentId = String(item?.parent_directory_id || '').trim() || null;
+    const seen = new Set();
+    while (parentId && !seen.has(parentId)) {
+      seen.add(parentId);
+      const parent = directoryMap.get(parentId)
+        || (this.directories || []).find((entry) => entry.record_id === parentId)
+        || null;
+      const parentScopeId = String(parent?.scope_id || '').trim();
+      if (parentScopeId && this.scopesMap?.has(parentScopeId)) return parentScopeId;
+      parentId = String(parent?.parent_directory_id || '').trim() || null;
+    }
+    return fallbackScopeId && this.scopesMap?.has(fallbackScopeId) ? fallbackScopeId : null;
+  },
+
+  docDirectoryDepth(directory, directoryMap = new Map(), seen = new Set()) {
+    if (!directory?.parent_directory_id || seen.has(directory.record_id)) return 0;
+    seen.add(directory.record_id);
+    const parent = directoryMap.get(directory.parent_directory_id);
+    return parent ? 1 + this.docDirectoryDepth(parent, directoryMap, seen) : 0;
+  },
+
+  buildLegacyDocScopeAssignment(item, scopeId) {
+    const scope = this.resolveScopeRecord(scopeId);
+    if (!scope?.record_id) return null;
+    const scopeAssignment = this.buildScopeAssignment(scope.record_id);
+    const previousScopeGroupIds = item?.scope_id ? this.getResolvedScopePolicyGroupIds(item.scope_id) : [];
+    const patch = this.buildScopedPolicyRepairPatch(item, {
+      scopeId: scope.record_id,
+      previousScopeGroupIds,
+      fallbackPolicyGroupIds: item?.scope_id ? (item.group_ids || []) : [],
+    });
+    return {
+      ...scopeAssignment,
+      ...patch,
+    };
+  },
+
+  async assignScopeToLegacyDocumentRecord(item, scopeId) {
+    const patch = this.buildLegacyDocScopeAssignment(item, scopeId);
+    if (!patch?.scope_id) return false;
+    const updated = toRaw(this.normalizeDocumentRowGroupRefs({
+      ...item,
+      ...patch,
+      version: (item.version ?? 1) + 1,
+      sync_status: 'pending',
+      updated_at: new Date().toISOString(),
+    }));
+    await upsertDocument(updated);
+    this.patchDocumentLocal(updated);
+    if (typeof this.ensureDocGroupKeysLoaded === 'function') {
+      const missingGroupRefs = await this.ensureDocGroupKeysLoaded(updated);
+      if (missingGroupRefs.length > 0) {
+        throw new Error(`Document scope repair is missing group keys: ${missingGroupRefs.join(', ')}`);
+      }
+    }
+    const envelope = await outboundDocument({
+      record_id: updated.record_id,
+      owner_npub: updated.owner_npub,
+      title: updated.title,
+      content: updated.content,
+      parent_directory_id: updated.parent_directory_id,
+      scope_id: updated.scope_id ?? null,
+      scope_l1_id: updated.scope_l1_id ?? null,
+      scope_l2_id: updated.scope_l2_id ?? null,
+      scope_l3_id: updated.scope_l3_id ?? null,
+      scope_l4_id: updated.scope_l4_id ?? null,
+      scope_l5_id: updated.scope_l5_id ?? null,
+      scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
+      shares: updated.shares,
+      group_ids: updated.group_ids,
+      version: updated.version,
+      previous_version: item.version ?? 1,
+      signature_npub: this.signingNpub,
+      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+    });
+    await addPendingWrite({
+      record_id: updated.record_id,
+      record_family_hash: envelope.record_family_hash,
+      envelope,
+    });
+    return updated;
+  },
+
+  async assignScopeToLegacyDirectoryRecord(item, scopeId) {
+    const patch = this.buildLegacyDocScopeAssignment(item, scopeId);
+    if (!patch?.scope_id) return false;
+    const updated = toRaw(this.normalizeDirectoryRowGroupRefs({
+      ...item,
+      ...patch,
+      version: (item.version ?? 1) + 1,
+      sync_status: 'pending',
+      updated_at: new Date().toISOString(),
+    }));
+    await upsertDirectory(updated);
+    this.patchDirectoryLocal(updated);
+    if (typeof this.ensureDocGroupKeysLoaded === 'function') {
+      const missingGroupRefs = await this.ensureDocGroupKeysLoaded(updated);
+      if (missingGroupRefs.length > 0) {
+        throw new Error(`Folder scope repair is missing group keys: ${missingGroupRefs.join(', ')}`);
+      }
+    }
+    const envelope = await outboundDirectory({
+      record_id: updated.record_id,
+      owner_npub: updated.owner_npub,
+      title: updated.title,
+      parent_directory_id: updated.parent_directory_id,
+      scope_id: updated.scope_id ?? null,
+      scope_l1_id: updated.scope_l1_id ?? null,
+      scope_l2_id: updated.scope_l2_id ?? null,
+      scope_l3_id: updated.scope_l3_id ?? null,
+      scope_l4_id: updated.scope_l4_id ?? null,
+      scope_l5_id: updated.scope_l5_id ?? null,
+      scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
+      shares: updated.shares,
+      group_ids: updated.group_ids,
+      version: updated.version,
+      previous_version: item.version ?? 1,
+      signature_npub: this.signingNpub,
+      write_group_ref: updated.write_group_id || updated.group_ids?.[0] || null,
+    });
+    await addPendingWrite({
+      record_id: updated.record_id,
+      record_family_hash: envelope.record_family_hash,
+      envelope,
+    });
+    return updated;
+  },
+
+  async repairLegacyDocScopes(scopeId = null, options = {}) {
+    if (this.legacyDocScopeRepairBusy) return null;
+    const fallbackScope = scopeId ? this.resolveScopeRecord(scopeId) : null;
+    const fallbackScopeId = fallbackScope?.record_id || null;
+    const directoryMap = new Map((this.directories || []).map((item) => [item.record_id, item]));
+    const directories = [...(this.directories || [])]
+      .filter((item) => item?.record_state !== 'deleted' && !item.scope_id)
+      .sort((left, right) => this.docDirectoryDepth(left, directoryMap) - this.docDirectoryDepth(right, directoryMap));
+    const documents = [...(this.documents || [])]
+      .filter((item) => item?.record_state !== 'deleted' && !item.scope_id);
+    const summary = {
+      directories: 0,
+      documents: 0,
+      skippedDirectories: 0,
+      skippedDocuments: 0,
+      total: 0,
+      message: '',
+    };
+
+    this.legacyDocScopeRepairBusy = true;
+    this.legacyDocScopeRepairError = '';
+    this.legacyDocScopeRepairNotice = '';
+    try {
+      for (const directory of directories) {
+        const targetScopeId = this.resolveLegacyDocScopeId(directory, fallbackScopeId, directoryMap);
+        if (!targetScopeId) {
+          summary.skippedDirectories += 1;
+          continue;
+        }
+        const updated = await this.assignScopeToLegacyDirectoryRecord(directory, targetScopeId);
+        if (updated) {
+          summary.directories += 1;
+          directoryMap.set(updated.record_id, updated);
+        }
+      }
+
+      for (const document of documents) {
+        const targetScopeId = this.resolveLegacyDocScopeId(document, fallbackScopeId, directoryMap);
+        if (!targetScopeId) {
+          summary.skippedDocuments += 1;
+          continue;
+        }
+        const updated = await this.assignScopeToLegacyDocumentRecord(document, targetScopeId);
+        if (updated) summary.documents += 1;
+      }
+
+      summary.total = summary.directories + summary.documents;
+      summary.message = summary.total > 0
+        ? `Scoped ${summary.total} legacy doc record${summary.total === 1 ? '' : 's'} (${summary.documents} docs, ${summary.directories} folders).`
+        : 'No legacy doc records could be scoped automatically.';
+      if (summary.skippedDirectories || summary.skippedDocuments) {
+        summary.message += ` Skipped ${summary.skippedDocuments} root doc${summary.skippedDocuments === 1 ? '' : 's'} and ${summary.skippedDirectories} root folder${summary.skippedDirectories === 1 ? '' : 's'} without a deterministic scope.`;
+      }
+      this.legacyDocScopeRepairNotice = summary.message;
+      if (summary.total > 0 && options.sync !== false) {
+        await this.flushAndBackgroundSync();
+      }
+      await this.refreshDirectories();
+      await this.refreshDocuments();
+      return summary;
+    } catch (error) {
+      this.legacyDocScopeRepairError = error?.message || 'Failed to scope legacy docs.';
+      throw error;
+    } finally {
+      this.legacyDocScopeRepairBusy = false;
+    }
+  },
+
+  async repairLegacyDocScopesFromSettings() {
+    const scopeId = this.legacyDocScopeRepairScopeId || null;
+    await this.repairLegacyDocScopes(scopeId);
   },
 
   async repairScopedFlowRecord(flow, previousScopeGroupIds = [], nextScope = null) {

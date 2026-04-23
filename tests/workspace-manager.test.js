@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { guessDefaultBackendUrl, workspaceManagerMixin } from '../src/workspace-manager.js';
 import * as api from '../src/api.js';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // ---------------------------------------------------------------------------
 // Helper: bind a mixin method to a fake store context
@@ -286,13 +290,14 @@ describe('workspace computed getters', () => {
     ]);
   });
 
-  it('agentChatOperatorWarnings reports wrapped-key failures for configured bots', () => {
+  it('agentChatOperatorWarnings reports current-actor wrapped-key failures when the signed-in bot is stale', () => {
     const { store } = bindMethod('getWorkspaceByOwner', {
       currentWorkspaceOwnerNpub: 'npub1ws',
       agentChatTriggerRecordId: 'agent-chat-trigger:npub1ws',
       agentChatTriggerEnabled: true,
       agentChatTriggerTargetGroupId: 'grp-agents',
       botNpub: 'npub1bot',
+      session: { npub: 'npub1bot' },
       groups: [
         {
           owner_npub: 'npub1ws',
@@ -314,8 +319,8 @@ describe('workspace computed getters', () => {
 
     expect(store.agentChatOperatorWarnings).toEqual([
       expect.objectContaining({
-        code: 'bot-keys-blocked',
-        kind: 'Wrapped keys',
+        code: 'current-actor-keys-stale',
+        kind: 'Current actor',
         severity: 'error',
       }),
     ]);
@@ -338,7 +343,44 @@ describe('workspace computed getters', () => {
     });
 
     expect(store.agentChatDiagnosticsScopeNote).toContain('informative only');
-    expect(store.agentChatDiagnosticsScopeNote).toContain('known bot identities');
+    expect(store.agentChatDiagnosticsScopeNote).toContain('signed-in actor');
+    expect(store.agentChatDiagnosticsScopeNote).toContain('/groups/keys');
+  });
+
+  it('agentChatOperatorWarnings explains when the signed-in actor is outside the target group', () => {
+    const { store } = bindMethod('getWorkspaceByOwner', {
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      agentChatTriggerRecordId: 'agent-chat-trigger:npub1ws',
+      agentChatTriggerEnabled: true,
+      agentChatTriggerTargetGroupId: 'grp-agents',
+      botNpub: 'npub1bot',
+      session: { npub: 'npub1admin' },
+      groups: [
+        {
+          owner_npub: 'npub1ws',
+          group_id: 'grp-agents',
+          name: 'Agent Ops',
+          member_npubs: ['npub1bot'],
+        },
+      ],
+      agentChatTriggerDiagnostics: [
+        {
+          member_npub: 'npub1admin',
+          status: 'not_member',
+          summary: 'The signed-in actor is not a member of this saved target group.',
+          detail: 'Tower only exposes wrapped keys for the resolved actor.',
+        },
+      ],
+      getSenderName: (npub) => npub === 'npub1admin' ? 'Workspace Admin' : npub,
+    });
+
+    expect(store.agentChatOperatorWarnings).toEqual([
+      expect.objectContaining({
+        code: 'current-actor-not-member',
+        kind: 'Current actor',
+        severity: 'warning',
+      }),
+    ]);
   });
 
   it('agentChatTriggerValidationDetail explains that Flight Deck no longer owns routing when no record exists', () => {
@@ -390,6 +432,48 @@ describe('workspace computed getters', () => {
       currentWorkspaceOwnerNpub: 'npub1ws',
     });
     expect(store.currentWorkspaceSlug).toBe('acme-slug');
+  });
+
+  it('refreshAgentChatTriggerDiagnostics only inspects the signed-in actor', async () => {
+    vi.spyOn(api, 'getGroupKeys').mockResolvedValue({
+      keys: [],
+    });
+
+    const { fn, store } = bindMethod('refreshAgentChatTriggerDiagnostics', {
+      knownWorkspaces: [{
+        workspaceKey: 'workspace:npub1ws',
+        workspaceOwnerNpub: 'npub1ws',
+        creatorNpub: 'npub1admin',
+      }],
+      selectedWorkspaceKey: 'workspace:npub1ws',
+      currentWorkspaceOwnerNpub: 'npub1ws',
+      agentChatTriggerRecordId: 'agent-chat-trigger:npub1ws',
+      agentChatTriggerEnabled: true,
+      agentChatTriggerTargetGroupId: 'grp-agents',
+      session: { npub: 'npub1admin' },
+      groups: [
+        {
+          owner_npub: 'npub1ws',
+          group_id: 'grp-agents',
+          group_npub: 'npub1agents',
+          current_epoch: 3,
+          name: 'Agent Ops',
+          member_npubs: ['npub1bot', 'npub1human'],
+        },
+      ],
+    });
+
+    const diagnostics = await fn();
+
+    expect(api.getGroupKeys).toHaveBeenCalledTimes(1);
+    expect(api.getGroupKeys).toHaveBeenCalledWith('npub1admin');
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        member_npub: 'npub1admin',
+        status: 'not_member',
+      }),
+    ]);
+    expect(store.agentChatTriggerDiagnostics).toEqual(diagnostics);
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   findAgentChatTriggerTargetGroup,
   evaluateAgentChatTargetMemberKeys,
+  buildAgentChatActorDiagnostic,
 } from '../src/workspace-manager.js';
 
 describe('findAgentChatTriggerTargetGroup', () => {
@@ -52,5 +53,35 @@ describe('evaluateAgentChatTargetMemberKeys', () => {
     expect(result.status).toBe('stale');
     expect(result.latest_key_version).toBe(2);
     expect(result.current_epoch).toBe(3);
+  });
+});
+
+describe('buildAgentChatActorDiagnostic', () => {
+  const targetGroup = {
+    group_id: 'group-1',
+    group_npub: 'npub1group1',
+    current_epoch: 3,
+    member_npubs: ['npub1bot'],
+  };
+
+  it('marks non-members as a self-only compatibility limit instead of a key failure', () => {
+    const result = buildAgentChatActorDiagnostic(targetGroup, 'npub1admin', [], {
+      isTargetMember: false,
+    });
+
+    expect(result.status).toBe('not_member');
+    expect(result.summary).toContain('signed-in actor');
+    expect(result.detail).toContain('current session');
+  });
+
+  it('passes through wrapped-key health for target-group members', () => {
+    const result = buildAgentChatActorDiagnostic(targetGroup, 'npub1bot', [
+      { group_id: 'group-1', group_npub: 'npub1group1', key_version: 3 },
+    ], {
+      isTargetMember: true,
+    });
+
+    expect(result.status).toBe('healthy');
+    expect(result.member_npub).toBe('npub1bot');
   });
 });

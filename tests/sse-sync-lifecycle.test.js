@@ -7,6 +7,7 @@ import {
   stopWorkerFlushTimer,
 } from '../src/sync-worker-client.js';
 import { syncManagerMixin } from '../src/sync-manager.js';
+import { createNip98AuthHeader } from '../src/auth/nostr.js';
 
 vi.mock('../src/api.js', () => ({
   fetchRecordHistory: vi.fn(),
@@ -65,6 +66,11 @@ vi.mock('../src/translators/chat.js', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
 });
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 // ---------------------------------------------------------------------------
 // Helper: create a fake store with all mixin methods applied
@@ -261,6 +267,41 @@ describe('connectSSEStream', () => {
     await fn();
     expect(connectSSE).not.toHaveBeenCalled();
   });
+
+  it('does not reconnect a healthy stream for the same workspace/session/backend tuple', async () => {
+    const store = createStore({
+      session: { npub: 'npub1viewer' },
+      backendUrl: 'https://tower.example.com',
+      workspaceOwnerNpub: 'npub1owner',
+      sseStatus: 'connected',
+    });
+    store.sseConnectionKey = store.buildSSEConnectionKey();
+
+    await store.connectSSEStream();
+
+    expect(connectSSE).not.toHaveBeenCalled();
+  });
+
+  it('does not issue a duplicate connect while auth for the same stream is already in flight', async () => {
+    let resolveAuth;
+    createNip98AuthHeader.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAuth = resolve;
+    }));
+
+    const store = createStore({
+      session: { npub: 'npub1viewer' },
+      backendUrl: 'https://tower.example.com',
+      workspaceOwnerNpub: 'npub1owner',
+    });
+
+    const firstConnect = store.connectSSEStream();
+    const secondConnect = store.connectSSEStream();
+
+    resolveAuth('Nostr eyJraW5kIjoyNzIzNX0=');
+    await Promise.all([firstConnect, secondConnect]);
+
+    expect(connectSSE).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -324,13 +365,15 @@ describe('handleSSEStatus', () => {
       sseStatus: 'reconnecting',
     });
     fn({ status: 'token-needed' });
-    // connectSSEStream is async — wait for it to complete
-    await vi.waitFor(() => {
-      expect(connectSSE).toHaveBeenCalledTimes(1);
-    });
+    await flushMicrotasks();
+    expect(connectSSE).toHaveBeenCalledTimes(1);
     const [, , , token] = connectSSE.mock.calls[0];
     // Should use NIP-98 token, not bootstrap token
     expect(token).toMatch(/^[A-Za-z0-9+/=]+$/);
+    expect(connectSSE.mock.calls[0][5]).toMatchObject({
+      force: true,
+      reason: 'token-needed',
+    });
   });
 
   it('falls back to polling-only on fallback-polling status', () => {
@@ -390,16 +433,37 @@ describe('ensureBackgroundSync wires SSE', () => {
       workspaceOwnerNpub: 'npub1owner',
     });
     fn(false);
-    // connectSSEStream is async — wait for it to complete
-    await vi.waitFor(() => {
-      expect(connectSSE).toHaveBeenCalledTimes(1);
-    });
+    await flushMicrotasks();
+    expect(connectSSE).toHaveBeenCalledTimes(1);
     const [ownerNpub, viewerNpub, backendUrl, token] = connectSSE.mock.calls[0];
     expect(ownerNpub).toBe('npub1owner');
     expect(viewerNpub).toBe('npub1viewer');
     expect(backendUrl).toBe('https://tower.example.com');
     // Token must be NIP-98, not bootstrap
     expect(token).toMatch(/^[A-Za-z0-9+/=]+$/);
+  });
+
+  it('does not tear down and recreate SSE on repeated ensureBackgroundSync calls for the same stream', async () => {
+    const store = createStore({
+      session: { npub: 'npub1viewer' },
+      backendUrl: 'https://tower.example.com',
+      workspaceOwnerNpub: 'npub1owner',
+    });
+
+    store.ensureBackgroundSync(false);
+    await flushMicrotasks();
+    expect(connectSSE).toHaveBeenCalledTimes(1);
+
+    store.handleSSEStatus({
+      status: 'connected',
+      connectionKey: store.buildSSEConnectionKey(),
+      phase: 'stream-open',
+      reason: 'eventsource-open',
+    });
+
+    store.ensureBackgroundSync(true);
+
+    expect(connectSSE).toHaveBeenCalledTimes(1);
   });
 
   it('does not connect SSE when workspaceOwnerNpub is missing', () => {

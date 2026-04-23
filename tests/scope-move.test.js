@@ -128,6 +128,20 @@ describe('separateScopeShares', () => {
     expect(explicitShares[0].person_npub).toBe('npub_alice');
   });
 
+  it('matches scope groups by stable group_id when group_npub is absent', () => {
+    const shares = [
+      { ...makeShare('g-eng'), group_id: 'g-eng', group_npub: null },
+      { ...makeShare('g-personal'), group_id: 'g-personal', group_npub: null },
+    ];
+
+    const { scopeShares, explicitShares } = separateScopeShares(shares, ['g-eng']);
+
+    expect(scopeShares).toHaveLength(1);
+    expect(scopeShares[0].group_id).toBe('g-eng');
+    expect(explicitShares).toHaveLength(1);
+    expect(explicitShares[0].group_id).toBe('g-personal');
+  });
+
   it('returns all shares as explicit when scope has no groups', () => {
     const shares = [makeShare('g-eng'), makeShare('g-design')];
 
@@ -207,6 +221,19 @@ describe('rebuildAccessForScope', () => {
 
     expect(result.group_ids).toContain('g-team');
     expect(result.group_ids).toContain('g-private');
+  });
+
+  it('extracts stable group_id values from explicit shares', () => {
+    const explicitShares = [
+      { ...makeShare('g-legacy'), group_id: 'g-stable', group_npub: null, key: 'group:g-stable' },
+      { ...makePersonShare('npub_bob', null), via_group_id: 'g-private', via_group_npub: null },
+    ];
+    const destScope = makeScope('scope-dest', 'l1', ['g-team']);
+    const groups = [makeGroup('g-team'), makeGroup('g-stable'), makeGroup('g-private')];
+
+    const result = rebuildAccessForScope(explicitShares, destScope, groups);
+
+    expect(result.group_ids).toEqual(['g-team', 'g-stable', 'g-private']);
   });
 });
 

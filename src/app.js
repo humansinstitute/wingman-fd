@@ -494,6 +494,10 @@ export function initApp() {
     editingScopeGroupQuery: '',
     scopePolicyRepairBusy: false,
     scopePolicyRepairSummary: '',
+    legacyDocScopeRepairScopeId: null,
+    legacyDocScopeRepairBusy: false,
+    legacyDocScopeRepairNotice: '',
+    legacyDocScopeRepairError: '',
     scopeRepairSession: {
       phase: 'idle',
       startedAt: null,
@@ -559,6 +563,7 @@ export function initApp() {
     docMoveModalSubmitting: false,
     newDocModalType: null,
     newDocModalTitle: '',
+    newDocModalScopeId: null,
     newDocModalSubmitting: false,
     showNewGroupModal: false,
     newGroupName: '',
@@ -4161,6 +4166,10 @@ export function initApp() {
       const scopeAssignment = options.applyDefaultScope === true
         ? this.getDirectoryDefaultScopeAssignment(targetFolderId)
         : this.getDirectoryDefaultScopeAssignment(item);
+      if (!scopeAssignment.scope_id) {
+        this.error = 'Select a scope before moving this item.';
+        return;
+      }
       if (scopeAssignment.scope_id) {
         const scope = this.scopesMap.get(scopeAssignment.scope_id);
         if (scope) {

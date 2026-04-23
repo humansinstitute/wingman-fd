@@ -259,5 +259,46 @@ describe('scopes-manager pure utilities', () => {
         rewritten: 1,
       });
     });
+
+    it('resolves unscoped doc scope from the nearest scoped parent folder', () => {
+      const scope = { record_id: 'scope-1', title: 'Websites', group_ids: ['group-a'] };
+      const parent = { record_id: 'dir-parent', scope_id: 'scope-1', parent_directory_id: null };
+      const child = { record_id: 'dir-child', scope_id: null, parent_directory_id: 'dir-parent' };
+      const store = createScopeStore({
+        scopes: [scope],
+        scopesMap: new Map([[scope.record_id, scope]]),
+        directories: [parent, child],
+      });
+
+      expect(store.resolveLegacyDocScopeId(
+        { record_id: 'doc-1', parent_directory_id: 'dir-child', scope_id: null },
+        null,
+        new Map([[parent.record_id, parent], [child.record_id, child]]),
+      )).toBe('scope-1');
+    });
+
+    it('builds legacy doc assignment with scope groups as the write policy', () => {
+      const scope = { record_id: 'scope-1', title: 'Websites', level: 'l1', group_ids: ['group-a'] };
+      const store = createScopeStore({
+        scopes: [scope],
+        scopesMap: new Map([[scope.record_id, scope]]),
+        groups: [{ group_id: 'group-a', name: 'Team' }],
+        resolveGroupId(groupId) {
+          return groupId || null;
+        },
+      });
+
+      const patch = store.buildLegacyDocScopeAssignment({
+        record_id: 'doc-1',
+        shares: [{ type: 'group', key: 'group:group-b', group_id: 'group-b', access: 'read' }],
+        group_ids: ['group-b'],
+      }, 'scope-1');
+
+      expect(patch).toMatchObject({
+        scope_id: 'scope-1',
+        scope_policy_group_ids: ['group-a'],
+      });
+      expect(patch.group_ids).toEqual(['group-a', 'group-b']);
+    });
   });
 });

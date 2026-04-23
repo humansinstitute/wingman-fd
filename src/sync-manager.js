@@ -906,11 +906,106 @@ export const syncManagerMixin = {
     return this.sseStatus === 'connected';
   },
 
-  async connectSSEStream() {
-    if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) return;
+  getSSEConnectionContext() {
+    if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) return null;
+    return {
+      ownerNpub: this.workspaceOwnerNpub,
+      viewerNpub: this.session.npub,
+      backendUrl: this.backendUrl,
+      workspaceDbKey: this.workspaceDbKey,
+    };
+  },
+
+  buildSSEConnectionKey(context = this.getSSEConnectionContext()) {
+    if (!context) return '';
+    return JSON.stringify({
+      ownerNpub: context.ownerNpub,
+      viewerNpub: context.viewerNpub,
+      backendUrl: context.backendUrl,
+      workspaceDbKey: context.workspaceDbKey || context.ownerNpub,
+    });
+  },
+
+  logSSELifecycle(status, message = {}) {
+    const phase = message?.phase || null;
+    const reason = message?.reason || null;
+    const details = {
+      connectionKey: message?.connectionKey || this.sseConnectionKey || null,
+      phase,
+      reason,
+      attempt: message?.attempt ?? null,
+      delayMs: message?.delayMs ?? null,
+      forced: message?.forced ?? null,
+    };
+
+    if (phase === 'connect-skipped') {
+      flightDeckLog('debug', 'sse', 'ignored duplicate SSE connect request', details);
+      return;
+    }
+
+    if (status === 'connecting') {
+      flightDeckLog('info', 'sse', 'opening SSE stream', details);
+      return;
+    }
+
+    if (status === 'connected') {
+      flightDeckLog('info', 'sse', 'SSE stream connected', details);
+      return;
+    }
+
+    if (status === 'reconnecting') {
+      flightDeckLog('warn', 'sse', 'SSE stream error; backing off before reconnect', details);
+      return;
+    }
+
+    if (status === 'token-needed') {
+      flightDeckLog('info', 'sse', 'refreshing SSE auth token for reconnect', details);
+      return;
+    }
+
+    if (status === 'fallback-polling') {
+      flightDeckLog('warn', 'sse', 'SSE entered fallback polling mode', details);
+      return;
+    }
+
+    if (status === 'disconnected') {
+      flightDeckLog('info', 'sse', 'SSE stream disconnected', details);
+    }
+  },
+
+  async connectSSEStream(options = {}) {
+    const context = this.getSSEConnectionContext();
+    if (!context) return false;
+
+    const reason = String(options?.reason || 'ensure-background-sync');
+    const force = Boolean(options?.force);
+    const connectionKey = this.buildSSEConnectionKey(context);
+    const activeStatuses = new Set(['connecting', 'connected', 'reconnecting', 'token-needed']);
+
+    if (!force && this.sseConnectInFlightKey === connectionKey) {
+      this.logSSELifecycle('connecting', {
+        connectionKey,
+        phase: 'connect-skipped',
+        reason: 'connect-in-flight',
+      });
+      return false;
+    }
+
+    if (!force && this.sseConnectionKey === connectionKey && activeStatuses.has(this.sseStatus)) {
+      this.logSSELifecycle(this.sseStatus, {
+        connectionKey,
+        phase: 'connect-skipped',
+        reason: 'connection-already-active',
+      });
+      return false;
+    }
+
+    const connectAttemptId = (this.sseConnectAttemptId || 0) + 1;
+    this.sseConnectAttemptId = connectAttemptId;
+    this.sseConnectInFlightKey = connectionKey;
 
     // Mint a NIP-98 auth token for the stream URL (Tower verifies NIP-98, not the bootstrap connection token)
-    const streamUrl = `${this.backendUrl}/api/v4/workspaces/${this.workspaceOwnerNpub}/stream`;
+    const streamUrl = `${context.backendUrl}/api/v4/workspaces/${context.ownerNpub}/stream`;
     let authHeader;
     try {
       const workspaceSecret = getActiveWorkspaceKeySecretForAuth();
@@ -918,24 +1013,46 @@ export const syncManagerMixin = {
         ? await createNip98AuthHeaderForSecret(streamUrl, 'GET', null, workspaceSecret)
         : await createNip98AuthHeader(streamUrl, 'GET', null);
     } catch (err) {
-      flightDeckLog('SSE auth failed — cannot mint NIP-98 token', err);
-      return;
+      if (this.sseConnectAttemptId === connectAttemptId) {
+        this.sseConnectInFlightKey = null;
+      }
+      flightDeckLog('error', 'sse', 'SSE auth failed — cannot mint NIP-98 token', {
+        connectionKey,
+        reason,
+        error: err?.message || String(err),
+      });
+      return false;
     }
+
+    if (this.sseConnectAttemptId !== connectAttemptId) return false;
+
+    const latestConnectionKey = this.buildSSEConnectionKey();
+    if (latestConnectionKey !== connectionKey) {
+      if (this.sseConnectInFlightKey === connectionKey) this.sseConnectInFlightKey = null;
+      return false;
+    }
+
     // Extract the base64 token from "Nostr <base64>"
     const nip98Token = authHeader.replace(/^Nostr\s+/i, '');
 
     setSSEStatusCallback((message) => this.handleSSEStatus(message));
+    this.sseConnectionKey = connectionKey;
     connectSSE(
-      this.workspaceOwnerNpub,
-      this.session.npub,
-      this.backendUrl,
+      context.ownerNpub,
+      context.viewerNpub,
+      context.backendUrl,
       nip98Token,
-      this.workspaceDbKey,
+      context.workspaceDbKey,
+      { force, reason },
     );
+    return true;
   },
 
-  disconnectSSEStream() {
-    disconnectSSE();
+  disconnectSSEStream(reason = 'client-disconnect') {
+    this.sseConnectAttemptId = (this.sseConnectAttemptId || 0) + 1;
+    this.sseConnectInFlightKey = null;
+    this.sseConnectionKey = null;
+    disconnectSSE({ reason });
     this.sseStatus = 'disconnected';
   },
 
@@ -943,7 +1060,20 @@ export const syncManagerMixin = {
     const status = message?.status;
     if (!status) return;
 
+    if (message?.connectionKey) {
+      if (status === 'disconnected') {
+        if (this.sseConnectionKey === message.connectionKey) this.sseConnectionKey = null;
+      } else {
+        this.sseConnectionKey = message.connectionKey;
+      }
+    }
+
+    if (message?.connectionKey && this.sseConnectInFlightKey === message.connectionKey) {
+      this.sseConnectInFlightKey = null;
+    }
+
     this.sseStatus = status;
+    this.logSSELifecycle(status, message);
 
     if (status === 'catch-up-required') {
       this.catchUpSyncActive = true;
@@ -957,7 +1087,7 @@ export const syncManagerMixin = {
     }
 
     if (status === 'token-needed') {
-      this.connectSSEStream();
+      this.connectSSEStream({ force: true, reason: message?.reason || 'token-needed' });
       return;
     }
 
@@ -999,7 +1129,7 @@ export const syncManagerMixin = {
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.visibilityHandler = null;
     }
-    this.disconnectSSEStream();
+    this.disconnectSSEStream('stop-background-sync');
     stopWorkerFlushTimer();
   },
 
@@ -1027,7 +1157,7 @@ export const syncManagerMixin = {
     }
     // Connect SSE for live refresh — the primary freshness path
     if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
-      this.connectSSEStream();
+      this.connectSSEStream({ reason: runSoon ? 'ensure-background-sync-soon' : 'ensure-background-sync' });
     }
     // Show catch-up overlay when data is stale:
     // - first sync ever (no lastSuccessAt)

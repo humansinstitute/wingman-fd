@@ -1,9 +1,44 @@
 # Agent Chat Trigger Handoff And Bot Provisioning Baseline
 
-Status: decision note, phase 1 / WP03
-Last updated: 2026-04-07
+Status: historical planning note, runtime superseded by the agent-first contract
+Last updated: 2026-04-22
 Source work package: `../../../../docs/design/001_agent_chat/phase1/FlightDeck/workpackage_03.md`
 Canonical design: `../../../../docs/design/001_agent_chat/agent_chat.md`
+
+## Current Runtime Position
+
+This note still matters as historical context for the legacy `agent_chat_trigger`
+record family, but it is no longer the normative runtime contract for current
+Agent Chat behavior.
+
+Today in Flight Deck:
+
+- The `agent_chat_trigger` family is still materialized locally and shown in the
+  Settings UI as compatibility state only.
+- Flight Deck does not own active Agent Chat routing. Current runtime routing is
+  agent-first and lives in Wingmen agent registration plus Tower message/group
+  metadata, as documented in:
+  - `../../wingman-tower/docs/design/agent-chat-trigger-contract.md`
+  - `../../wingman-tower/docs/design/agent-chat-group-metadata-contract.md`
+- Ordinary group refresh must not run Agent Chat trigger diagnostics. The shared
+  refresh path in `src/channels-manager.js` now stops after refreshing visible
+  groups and the current actor's readable wrapped keys.
+- Manual trigger diagnostics in `src/workspace-manager.js` are now an explicit
+  admin-intent path. They inspect only the signed-in actor against the saved
+  target group.
+- Flight Deck must not probe `GET /api/v4/groups/keys?member_npub=...` for
+  other members or bots during ordinary UI refresh. Tower resolves that route
+  for the authenticated actor/workspace-key path only, so cross-member probes
+  are expected to fail with `403` and are not valid passive diagnostics.
+
+If you are trying to answer "what does the Flight Deck Agent Chat trigger still
+do?", the answer is:
+
+1. It preserves and displays any legacy workspace-scoped trigger record that is
+   still synced into Flight Deck.
+2. It offers passive compatibility inspection of that saved record, target-group
+   membership, and the signed-in actor's own wrapped-key readability.
+3. It does not enable, disable, or arbitrate live Agent Chat routing.
 
 ## Purpose
 
@@ -11,8 +46,8 @@ Pin the Tower-visible persistence path that Flight Deck will use for the
 Agent Chat trigger record in v1, inventory the fields Wingmen will need to
 read once that record is synced, and confirm that adding a bot to the
 trigger's target group results in decrypt-capable wrapped keys for that
-bot. This document is a contract pin. Implementation of the trigger
-record itself is phase 2 Flight Deck work.
+bot. The remainder of this document is preserved as the original contract-pin
+and implementation baseline for that legacy record family.
 
 ## Decision — record family
 

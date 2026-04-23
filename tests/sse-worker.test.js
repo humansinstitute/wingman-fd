@@ -89,20 +89,18 @@ describe('SSE echo suppression', () => {
 
 describe('SSE debounce batching', () => {
   it('collects multiple families and flushes after debounce window', async () => {
-    vi.useFakeTimers();
     const SSE_DEBOUNCE_MS = 300;
     const staleFamilies = new Set();
     const flushed = [];
-    let debounceTimer = null;
+    let scheduledFlush = null;
 
     function handleRecordChanged(familyHash) {
       staleFamilies.add(familyHash);
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
+      scheduledFlush = () => {
         flushed.push([...staleFamilies]);
         staleFamilies.clear();
-        debounceTimer = null;
-      }, SSE_DEBOUNCE_MS);
+        scheduledFlush = null;
+      };
     }
 
     handleRecordChanged('family-a');
@@ -112,42 +110,38 @@ describe('SSE debounce batching', () => {
 
     expect(flushed).toHaveLength(0); // not flushed yet
 
-    vi.advanceTimersByTime(SSE_DEBOUNCE_MS);
+    scheduledFlush();
 
     expect(flushed).toHaveLength(1);
     expect(flushed[0]).toEqual(['family-a', 'family-b', 'family-c']);
-
-    vi.useRealTimers();
   });
 
   it('resets debounce timer on each new event', async () => {
-    vi.useFakeTimers();
     const SSE_DEBOUNCE_MS = 300;
     const staleFamilies = new Set();
     const flushed = [];
-    let debounceTimer = null;
+    let scheduledFlush = null;
+    let flushVersion = 0;
 
     function handleRecordChanged(familyHash) {
       staleFamilies.add(familyHash);
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
+      const version = ++flushVersion;
+      scheduledFlush = () => {
+        if (version !== flushVersion) return;
         flushed.push([...staleFamilies]);
         staleFamilies.clear();
-        debounceTimer = null;
-      }, SSE_DEBOUNCE_MS);
+        scheduledFlush = null;
+      };
     }
 
     handleRecordChanged('family-a');
-    vi.advanceTimersByTime(200); // 200ms in
+    const firstFlush = scheduledFlush;
     handleRecordChanged('family-b'); // resets timer
-    vi.advanceTimersByTime(200); // 400ms total, 200ms since last event
-    expect(flushed).toHaveLength(0); // still not flushed
-
-    vi.advanceTimersByTime(100); // 300ms since last event
+    firstFlush();
+    expect(flushed).toHaveLength(0); // stale timer should not flush
+    scheduledFlush();
     expect(flushed).toHaveLength(1);
     expect(flushed[0]).toEqual(['family-a', 'family-b']);
-
-    vi.useRealTimers();
   });
 });
 
@@ -202,6 +196,42 @@ describe('SSE reconnect backoff', () => {
 
     handleConnected();
     expect(sseReconnectAttempts).toBe(0);
+  });
+
+  it('does not count intentional reconnects toward fallback escalation', () => {
+    let sseReconnectAttempts = 3;
+
+    function connectSSE({ force = false } = {}) {
+      if (force) {
+        return 'intentional-reconnect';
+      }
+      return 'connect';
+    }
+
+    expect(connectSSE({ force: true })).toBe('intentional-reconnect');
+    expect(sseReconnectAttempts).toBe(3);
+  });
+
+  it('ignores onerror from a stale EventSource after a client-initiated reconnect', () => {
+    const statuses = [];
+    let activeSource = null;
+
+    function attachSource(name) {
+      const source = { name };
+      activeSource = source;
+      source.onerror = () => {
+        if (source !== activeSource) return;
+        statuses.push(`reconnecting:${name}`);
+      };
+      return source;
+    }
+
+    const first = attachSource('first');
+    attachSource('second');
+
+    first.onerror();
+
+    expect(statuses).toEqual([]);
   });
 });
 

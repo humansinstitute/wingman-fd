@@ -39,6 +39,15 @@ function getEffectiveSigningNpub(signingNpub = null) {
   ).trim();
 }
 
+function getEffectiveViewerNpub(viewerNpub = null) {
+  return String(
+    getActiveWorkspaceKeyNpub()
+    || viewerNpub
+    || getActiveSessionNpub()
+    || ''
+  ).trim();
+}
+
 async function createApiAuthHeader(requestUrl, method, body = null) {
   const workspaceSecret = getActiveWorkspaceKeySecretForAuth();
   if (workspaceSecret) {
@@ -179,6 +188,9 @@ export async function getGroups(npub) {
   return json(resp, { requestUrl, method: 'GET' });
 }
 
+// Tower resolves this route for the authenticated actor/workspace-key path.
+// Callers must treat it as self-only readable state, not a way to probe
+// wrapped keys for arbitrary other members.
 export async function getGroupKeys(memberNpub) {
   const requestPath = `/api/v4/groups/keys?member_npub=${encodeURIComponent(memberNpub)}`;
   const requestUrl = url(requestPath);
@@ -371,7 +383,12 @@ export async function downloadStorageObjectBlob(objectId, options = {}) {
 
 export async function fetchHeartbeat({ owner_npub, viewer_npub, family_cursors }) {
   const requestUrl = url('/api/v4/records/heartbeat');
-  const body = { owner_npub, viewer_npub, family_cursors };
+  const effectiveViewerNpub = getEffectiveViewerNpub(viewer_npub);
+  const body = {
+    owner_npub,
+    family_cursors,
+    ...(effectiveViewerNpub ? { viewer_npub: effectiveViewerNpub } : {}),
+  };
   const resp = await signedFetch('/api/v4/records/heartbeat', {
     method: 'POST',
     body,
@@ -458,7 +475,8 @@ export async function syncRecords({ owner_npub, records, signing_npub }) {
 
 export async function fetchRecordHistory({ record_id, owner_npub, viewer_npub }) {
   const params = new URLSearchParams({ owner_npub });
-  if (viewer_npub) params.set('viewer_npub', viewer_npub);
+  const effectiveViewerNpub = getEffectiveViewerNpub(viewer_npub);
+  if (effectiveViewerNpub) params.set('viewer_npub', effectiveViewerNpub);
   const requestPath = `/api/v4/records/${encodeURIComponent(record_id)}/history?${params}`;
   const { response: resp, requestUrl } = await signedFetchWithFallbackMeta(requestPath);
   return json(resp, { requestUrl, method: 'GET' });
@@ -473,7 +491,8 @@ export async function fetchWorkspaceKeyMappings(ownerNpub) {
 
 export async function fetchRecords({ owner_npub, viewer_npub, record_family_hash, since }) {
   const params = new URLSearchParams({ owner_npub });
-  if (viewer_npub) params.set('viewer_npub', viewer_npub);
+  const effectiveViewerNpub = getEffectiveViewerNpub(viewer_npub);
+  if (effectiveViewerNpub) params.set('viewer_npub', effectiveViewerNpub);
   if (record_family_hash) params.set('record_family_hash', record_family_hash);
   if (since) params.set('since', since);
   const requestPath = `/api/v4/records?${params}`;

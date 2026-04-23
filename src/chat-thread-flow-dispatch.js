@@ -171,6 +171,7 @@ function buildTruncatedTranscript(messages, senderLabelResolver, requiredIds, ma
 export function createChatThreadFlowDispatchState() {
   return {
     showChatThreadFlowDispatchModal: false,
+    chatThreadFlowDispatchOpenedAt: 0,
     chatThreadFlowDispatchSource: null,
     chatThreadFlowDispatchMessages: [],
     chatThreadFlowDispatchSelectedFlowId: null,

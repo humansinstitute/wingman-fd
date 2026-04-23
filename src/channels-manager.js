@@ -236,9 +236,8 @@ export const channelsManagerMixin = {
       this.validateSelectedBoardId();
       this.normalizeTaskFilterTags();
       if (typeof this.normalizeSettingsTab === 'function') this.normalizeSettingsTab();
-      if (typeof this.refreshAgentChatTriggerDiagnostics === 'function') {
-        this.refreshAgentChatTriggerDiagnostics().catch(() => {});
-      }
+      // Agent Chat diagnostics are explicit admin checks now. Do not probe
+      // any trigger diagnostics during the ordinary shared group refresh path.
       return this.groups;
     } catch (error) {
       flightDeckLog('error', 'groups', 'refreshGroups failed', {

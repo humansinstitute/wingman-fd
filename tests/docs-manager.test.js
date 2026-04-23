@@ -250,6 +250,18 @@ describe('docs-manager pure utilities', () => {
       expect(result.shares[0].group_id).toBe('uuid-1');
       expect(result.shares[0].key).toBe('group:uuid-1');
     });
+
+    it('materializes scope policy groups into delivery groups before share groups', () => {
+      const result = normalizeDocAccessRow({
+        scope_policy_group_ids: ['g-scope'],
+        shares: [
+          { type: 'group', group_id: 'g-direct', access: 'read' },
+        ],
+      });
+
+      expect(result.group_ids).toEqual(['g-scope', 'g-direct']);
+      expect(result.write_group_id).toBe('g-scope');
+    });
   });
 
   describe('getPreferredDocWriteGroupRef', () => {
@@ -261,6 +273,20 @@ describe('docs-manager pure utilities', () => {
           { type: 'group', group_npub: 'g-read', access: 'read' },
           { type: 'group', group_npub: 'g-scope', access: 'write' },
         ],
+      });
+      expect(result).toBe('g-scope');
+    });
+
+    it('keeps the scope policy group as canonical even when another writable group is loaded', () => {
+      const result = getPreferredDocWriteGroupRef({
+        group_ids: ['g-scope', 'g-direct'],
+        scope_policy_group_ids: ['g-scope'],
+        shares: [
+          { type: 'group', group_id: 'g-scope', access: 'write' },
+          { type: 'person', person_npub: 'npub1friend', via_group_id: 'g-direct', access: 'write' },
+        ],
+      }, {
+        hasKey: (groupId) => groupId === 'g-direct',
       });
       expect(result).toBe('g-scope');
     });

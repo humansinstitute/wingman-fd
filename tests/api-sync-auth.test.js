@@ -10,16 +10,26 @@ const createGroupWriteAuthHeaderMock = vi.fn(async (groupRef) => `proof:${groupR
 vi.mock('../src/auth/nostr.js', () => ({
   createNip98AuthHeader: createNip98AuthHeaderMock,
   createNip98AuthHeaderForSecret: createNip98AuthHeaderForSecretMock,
+  localDecryptFromNpub: vi.fn(),
+  localEncryptForNpub: vi.fn(() => 'ciphertext'),
+  personalDecryptFromNpub: vi.fn(),
+  personalEncryptForNpub: vi.fn(),
 }));
 
 vi.mock('../src/crypto/workspace-keys.js', () => ({
+  getActiveWorkspaceKey: vi.fn(() => null),
   getActiveWorkspaceKeySecretForAuth: vi.fn(() => workspaceSecret),
   getActiveWorkspaceKeyNpub: vi.fn(() => workspaceNpub),
 }));
 
 vi.mock('../src/crypto/group-keys.js', () => ({
   createGroupWriteAuthHeader: createGroupWriteAuthHeaderMock,
+  decryptPayloadForGroup: vi.fn(),
+  encryptPayloadForGroup: vi.fn(),
   getActiveSessionNpub: vi.fn(() => sessionNpub),
+  getGroupKey: vi.fn(() => null),
+  getLoadedGroupKeyDiagnostics: vi.fn(() => ({})),
+  hasGroupKey: vi.fn(() => false),
 }));
 
 describe('api sync auth and owner-write detection', () => {
@@ -119,6 +129,99 @@ describe('api sync auth and owner-write detection', () => {
     );
     expect(result.body.group_write_tokens).toEqual({
       '3fa85f64-5717-4562-b3fc-2c963f66afa6': 'proof:3fa85f64-5717-4562-b3fc-2c963f66afa6',
+    });
+  });
+
+  it('uses the active workspace key as viewer_npub for record history reads', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1collaborator';
+
+    const fetchMock = vi.fn(async (requestUrl) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ requestUrl }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    const result = await api.fetchRecordHistory({
+      record_id: 'rec-1',
+      owner_npub: 'npub1owner',
+      viewer_npub: 'npub1collaborator',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://sb.example/api/v4/records/rec-1/history?owner_npub=npub1owner&viewer_npub=npub1workspacekey'
+    );
+    expect(result.requestUrl).toBe(
+      'https://sb.example/api/v4/records/rec-1/history?owner_npub=npub1owner&viewer_npub=npub1workspacekey'
+    );
+  });
+
+  it('uses the active workspace key as viewer_npub for record pulls', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1collaborator';
+
+    const fetchMock = vi.fn(async (requestUrl) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ requestUrl, records: [] }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    const result = await api.fetchRecords({
+      owner_npub: 'npub1owner',
+      viewer_npub: 'npub1collaborator',
+      record_family_hash: 'family-1',
+      since: '2026-04-22T00:00:00.000Z',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://sb.example/api/v4/records?owner_npub=npub1owner&viewer_npub=npub1workspacekey&record_family_hash=family-1&since=2026-04-22T00%3A00%3A00.000Z'
+    );
+    expect(result.requestUrl).toBe(
+      'https://sb.example/api/v4/records?owner_npub=npub1owner&viewer_npub=npub1workspacekey&record_family_hash=family-1&since=2026-04-22T00%3A00%3A00.000Z'
+    );
+  });
+
+  it('uses the active workspace key as viewer_npub for heartbeat checks', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1collaborator';
+
+    const fetchMock = vi.fn(async (_requestUrl, options) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ body: JSON.parse(options.body) }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    const result = await api.fetchHeartbeat({
+      owner_npub: 'npub1owner',
+      viewer_npub: 'npub1collaborator',
+      family_cursors: { task: 'cursor-1' },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.body).toEqual({
+      owner_npub: 'npub1owner',
+      viewer_npub: 'npub1workspacekey',
+      family_cursors: { task: 'cursor-1' },
     });
   });
 });

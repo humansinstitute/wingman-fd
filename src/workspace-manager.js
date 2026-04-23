@@ -153,6 +153,29 @@ export function evaluateAgentChatTargetMemberKeys(group, keyEntries = []) {
   };
 }
 
+export function buildAgentChatActorDiagnostic(group, memberNpub, keyEntries = [], options = {}) {
+  const actorNpub = clean(memberNpub);
+  const isTargetMember = options.isTargetMember === true;
+  const health = evaluateAgentChatTargetMemberKeys(group, keyEntries);
+
+  if (health.status === 'missing' && !isTargetMember) {
+    return {
+      member_npub: actorNpub,
+      status: 'not_member',
+      summary: 'The signed-in actor is not a member of this saved target group.',
+      detail: 'Tower only exposes wrapped keys for the resolved actor, so Flight Deck limits this compatibility check to the current session instead of probing other members.',
+      latest_key_version: null,
+      current_epoch: health.current_epoch,
+      relevant_key_count: 0,
+    };
+  }
+
+  return {
+    member_npub: actorNpub,
+    ...health,
+  };
+}
+
 export function guessDefaultBackendUrl() {
   return DEFAULT_SUPERBASED_URL || '';
 }
@@ -345,6 +368,7 @@ export const workspaceManagerMixin = {
 
   agentChatTriggerDiagnosticLabel(status) {
     if (status === 'healthy') return 'Healthy';
+    if (status === 'not_member') return 'Not a member';
     if (status === 'missing') return 'Missing keys';
     if (status === 'stale') return 'Stale keys';
     if (status === 'error') return 'Check failed';
@@ -394,9 +418,9 @@ export const workspaceManagerMixin = {
       return 'The saved workspace record points at a group Flight Deck can no longer inspect. That limits passive diagnostics here, but local Wingmen routing does not depend on this record.';
     }
     if (!this.agentChatTriggerEnabled) {
-      return 'This saved workspace record is paused. Flight Deck keeps it visible for compatibility checks only; local Wingmen routing may still be active through agent registration.';
+      return 'This saved workspace record is paused. Flight Deck keeps it visible for compatibility and current-actor checks only; local Wingmen routing may still be active through agent registration.';
     }
-    return 'This saved workspace record is visible for compatibility and diagnostics only. Wingmen remains the local runtime control plane.';
+    return 'This saved workspace record is visible for compatibility and current-actor diagnostics only. Wingmen remains the local runtime control plane.';
   },
 
   formatAgentChatParticipantNames(npubs = [], maxNames = 2) {
@@ -427,6 +451,12 @@ export const workspaceManagerMixin = {
     return this.agentChatKnownBotNpubs.filter((npub) => targetMemberNpubs.has(npub));
   },
 
+  get agentChatCurrentActorDiagnostic() {
+    const actorNpub = clean(this.session?.npub);
+    if (!actorNpub) return null;
+    return (this.agentChatTriggerDiagnostics || []).find((diag) => clean(diag?.member_npub) === actorNpub) || null;
+  },
+
   get agentChatTargetBotDiagnostics() {
     const diagMap = new Map(
       (this.agentChatTriggerDiagnostics || [])
@@ -449,9 +479,9 @@ export const workspaceManagerMixin = {
 
   get agentChatDiagnosticsScopeNote() {
     if (this.agentChatKnownBotNpubs.length === 0) {
-      return 'These checks are informative only. Add a local bot or default agent if you want Flight Deck to compare the saved workspace record against known bot identities here.';
+      return 'These checks are informative only. Flight Deck compares the saved workspace record with target-group membership and the signed-in actor\'s readable wrapped keys. Tower exposes /groups/keys only for the resolved actor, so other members are not probed here.';
     }
-    return 'These checks are informative only. Flight Deck can inspect a saved workspace record, configured bot membership, and wrapped-key readiness here. Wingmen agent registration and runtime subscription state live elsewhere.';
+    return 'These checks are informative only. Flight Deck compares the saved workspace record, configured bot membership, and the signed-in actor\'s readable wrapped keys. Tower exposes /groups/keys only for the resolved actor, so other members are not probed here.';
   },
 
   get agentChatOperatorWarnings() {
@@ -486,10 +516,7 @@ export const workspaceManagerMixin = {
         summary: `Flight Deck cannot compare ${targetGroupLabel} with a local bot identity because no local bot or default agent is configured here.`,
         action: 'Configure a local bot identity only if you want membership-specific diagnostics in Flight Deck. Wingmen routing itself is owned elsewhere.',
       });
-      return warnings;
-    }
-
-    if (this.agentChatTargetBotMemberNpubs.length === 0) {
+    } else if (this.agentChatTargetBotMemberNpubs.length === 0) {
       warnings.push({
         code: 'no-bot-members',
         kind: 'Membership',
@@ -498,37 +525,52 @@ export const workspaceManagerMixin = {
         summary: `Flight Deck checked ${configuredBotNames}. None of them are members of ${targetGroupLabel}.`,
         action: `If you expect this saved record to explain current replies, verify bot membership and agent registration in Wingmen or repair the legacy group reference outside Flight Deck.`,
       });
+    }
+
+    const actorNpub = clean(this.session?.npub);
+    const actorDiagnostic = this.agentChatCurrentActorDiagnostic;
+    const actorLabel = this.formatAgentChatParticipantNames([actorNpub], 1) || 'The signed-in actor';
+    const actorIsConfiguredBot = this.isKnownAgentChatBotNpub(actorNpub);
+    const actorIsTargetMember = uniqueCleanValues(targetGroup.member_npubs || []).includes(actorNpub);
+
+    if (!actorDiagnostic || actorDiagnostic.status === 'healthy') return warnings;
+
+    if (actorDiagnostic.status === 'not_member') {
+      warnings.push({
+        code: 'current-actor-not-member',
+        kind: 'Current actor',
+        severity: 'warning',
+        title: 'This session cannot inspect target-group wrapped keys directly',
+        summary: `${actorLabel} is not a member of ${targetGroupLabel}, so this session can only validate the saved record and membership list.`,
+        action: 'Run the compatibility check from a target-group member or configured bot if you need a self-check from that identity.',
+      });
       return warnings;
     }
 
-    const botDiagnostics = this.agentChatTargetBotDiagnostics;
-    const unhealthyBotDiagnostics = botDiagnostics.filter((diag) => diag.status !== 'healthy');
-    if (unhealthyBotDiagnostics.length === 0) return warnings;
-
-    const missingLike = unhealthyBotDiagnostics.filter((diag) => diag.status === 'missing' || diag.status === 'error');
-    const stale = unhealthyBotDiagnostics.filter((diag) => diag.status === 'stale');
-    const affectedNames = this.formatAgentChatParticipantNames(
-      unhealthyBotDiagnostics.map((diag) => diag.member_npub),
-      3,
-    ) || 'Affected bots';
-    const issueBits = [];
-    if (missingLike.length > 0) {
-      issueBits.push(`${missingLike.length} missing or unreadable`);
+    if (actorDiagnostic.status === 'error') {
+      warnings.push({
+        code: 'current-actor-check-failed',
+        kind: 'Current actor',
+        severity: 'warning',
+        title: 'Current-actor key inspection failed',
+        summary: `${actorLabel} could not read self-visible wrapped-key state for ${targetGroupLabel}.`,
+        action: 'Retry the compatibility check after Tower is reachable. Flight Deck no longer probes other members from this screen.',
+      });
+      return warnings;
     }
-    if (stale.length > 0) {
-      issueBits.push(`${stale.length} stale`);
-    }
-    const issueSummary = issueBits.join(', ');
 
+    const actorSeverity = actorIsConfiguredBot && actorIsTargetMember ? 'error' : 'warning';
     warnings.push({
-      code: unhealthyBotDiagnostics.length === botDiagnostics.length ? 'bot-keys-blocked' : 'bot-keys-degraded',
-      kind: 'Wrapped keys',
-      severity: unhealthyBotDiagnostics.length === botDiagnostics.length ? 'error' : 'warning',
-      title: unhealthyBotDiagnostics.length === botDiagnostics.length
-        ? 'No target-group bot is decrypt-ready'
-        : 'Some bot members need wrapped-key repair',
-      summary: `${affectedNames} ${unhealthyBotDiagnostics.length === 1 ? 'has' : 'have'} ${issueSummary} wrapped-key state for ${targetGroupLabel}.`,
-      action: `Repair the affected bot's wrapped keys, then refresh diagnostics. This affects decryptability, not whether Flight Deck owns routing policy.`,
+      code: actorDiagnostic.status === 'stale' ? 'current-actor-keys-stale' : 'current-actor-keys-missing',
+      kind: 'Current actor',
+      severity: actorSeverity,
+      title: actorDiagnostic.status === 'stale'
+        ? 'Current actor keys are behind the saved target group'
+        : 'Current actor cannot decrypt the saved target group',
+      summary: `${actorLabel} has ${actorDiagnostic.status === 'stale' ? 'stale' : 'missing'} wrapped-key state for ${targetGroupLabel}.`,
+      action: actorIsConfiguredBot && actorIsTargetMember
+        ? 'Repair this actor\'s wrapped keys, then rerun the compatibility check. This affects decryptability for this identity, not routing policy ownership.'
+        : 'This only describes what the signed-in actor can read from this session. It does not prove whether another bot identity is decrypt-ready.',
     });
 
     return warnings;
@@ -820,7 +862,7 @@ export const workspaceManagerMixin = {
 
     const row = await getAgentChatTrigger(workspaceOwnerNpub);
     this.applyAgentChatTriggerRow(row);
-    if (options.refreshDiagnostics !== false) {
+    if (options.refreshDiagnostics === true) {
       await this.refreshAgentChatTriggerDiagnostics();
     }
     return row;
@@ -1119,7 +1161,7 @@ export const workspaceManagerMixin = {
     this.agentChatTriggerSuccess = null;
 
     if (!this.canAdminWorkspace) {
-      this.agentChatTriggerError = 'Only workspace admins can update the Agent Chat trigger.';
+      this.agentChatTriggerError = 'Only workspace admins can update the legacy Agent Chat record.';
       return;
     }
     if (!this.session?.npub) {
@@ -1142,7 +1184,7 @@ export const workspaceManagerMixin = {
     ));
 
     if (!targetGroup?.group_id && !targetGroup?.group_npub) {
-      this.agentChatTriggerError = 'Select a target group for Agent Chat.';
+      this.agentChatTriggerError = 'Select a target group for the legacy Agent Chat record.';
       return;
     }
 
@@ -1207,9 +1249,9 @@ export const workspaceManagerMixin = {
     await this.refreshSyncStatus();
     this.ensureBackgroundSync(true);
     await this.refreshAgentChatTriggerDiagnostics();
-    this.agentChatTriggerSuccess = 'Agent Chat trigger saved.';
+    this.agentChatTriggerSuccess = 'Legacy Agent Chat record saved.';
     setTimeout(() => {
-      if (this.agentChatTriggerSuccess === 'Agent Chat trigger saved.') {
+      if (this.agentChatTriggerSuccess === 'Legacy Agent Chat record saved.') {
         this.agentChatTriggerSuccess = null;
       }
     }, 3000);
@@ -1239,34 +1281,35 @@ export const workspaceManagerMixin = {
       return [];
     }
 
-    const memberNpubs = [...new Set((targetGroup.member_npubs || []).map((value) => String(value || '').trim()).filter(Boolean))];
-    if (memberNpubs.length === 0) {
+    const actorNpub = clean(this.session?.npub);
+    if (!actorNpub) {
       this.agentChatTriggerDiagnostics = [];
       this.agentChatTriggerDiagnosticsLoading = false;
       return [];
     }
 
+    // Tower exposes /groups/keys for the resolved actor only, so this is a
+    // self-check for the current session rather than a probe across members.
     this.agentChatTriggerDiagnosticsLoading = true;
-    const diagnostics = await Promise.all(memberNpubs.map(async (memberNpub) => {
-      try {
-        const result = await getGroupKeys(memberNpub);
-        const health = evaluateAgentChatTargetMemberKeys(targetGroup, result?.keys || []);
-        return {
-          member_npub: memberNpub,
-          ...health,
-        };
-      } catch (error) {
-        return {
-          member_npub: memberNpub,
-          status: 'error',
-          summary: 'Unable to inspect wrapped keys for this member.',
-          detail: error?.message || String(error),
-          latest_key_version: null,
-          current_epoch: Number(targetGroup.current_epoch || 1) || 1,
-          relevant_key_count: 0,
-        };
-      }
-    }));
+    let diagnostics;
+    try {
+      const result = await getGroupKeys(actorNpub);
+      diagnostics = [
+        buildAgentChatActorDiagnostic(targetGroup, actorNpub, result?.keys || [], {
+          isTargetMember: uniqueCleanValues(targetGroup.member_npubs || []).includes(actorNpub),
+        }),
+      ];
+    } catch (error) {
+      diagnostics = [{
+        member_npub: actorNpub,
+        status: 'error',
+        summary: 'Unable to inspect wrapped keys for the signed-in actor.',
+        detail: error?.message || String(error),
+        latest_key_version: null,
+        current_epoch: Number(targetGroup.current_epoch || 1) || 1,
+        relevant_key_count: 0,
+      }];
+    }
 
     if (this._agentChatTriggerDiagnosticsRequestId !== requestId) return [];
     this.agentChatTriggerDiagnostics = diagnostics;

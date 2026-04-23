@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   mapGroupEntry,
   mapCreatedGroup,
@@ -9,7 +11,16 @@ import {
   filterChannelsForViewer,
 } from '../src/channels-manager.js';
 
+const channelsManagerSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, '..', 'src', 'channels-manager.js'),
+  'utf-8',
+);
+
 describe('channels-manager pure utilities', () => {
+  it('does not trigger Agent Chat diagnostics during ordinary group refresh', () => {
+    expect(channelsManagerSource).not.toContain('refreshAgentChatTriggerDiagnostics');
+  });
+
   // --- mapGroupEntry ---
   describe('mapGroupEntry', () => {
     it('maps a group with id field', () => {

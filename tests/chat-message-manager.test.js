@@ -950,6 +950,7 @@ describe('chat thread flow dispatch modal state', () => {
   it('closeChatThreadFlowDispatch resets the full dispatch state block', () => {
     const store = createStore({
       showChatThreadFlowDispatchModal: true,
+      chatThreadFlowDispatchOpenedAt: Date.now(),
       chatThreadFlowDispatchSource: { channelId: 'channel-1' },
       chatThreadFlowDispatchMessages: [{ record_id: 'root-1' }],
       chatThreadFlowDispatchSelectedFlowId: 'flow-1',
@@ -972,6 +973,32 @@ describe('chat thread flow dispatch modal state', () => {
     for (const [key, value] of Object.entries(expected)) {
       expect(store[key]).toEqual(value);
     }
+  });
+
+  it('ignores backdrop close clicks for the opening gesture window', () => {
+    const store = createStore({
+      showChatThreadFlowDispatchModal: true,
+      chatThreadFlowDispatchOpenedAt: Date.now(),
+      chatThreadFlowDispatchSource: { channelId: 'channel-1' },
+    });
+
+    store.handleChatThreadFlowDispatchOverlayClick();
+
+    expect(store.showChatThreadFlowDispatchModal).toBe(true);
+    expect(store.chatThreadFlowDispatchSource).toEqual({ channelId: 'channel-1' });
+  });
+
+  it('allows backdrop close clicks after the opening gesture window passes', () => {
+    const store = createStore({
+      showChatThreadFlowDispatchModal: true,
+      chatThreadFlowDispatchOpenedAt: Date.now() - 500,
+      chatThreadFlowDispatchSource: { channelId: 'channel-1' },
+    });
+
+    store.handleChatThreadFlowDispatchOverlayClick();
+
+    expect(store.showChatThreadFlowDispatchModal).toBe(false);
+    expect(store.chatThreadFlowDispatchSource).toBeNull();
   });
 
   it('keeps thread resolution consistent across main-feed, thread-parent, and thread-reply entry points', async () => {

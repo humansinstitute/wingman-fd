@@ -45,6 +45,8 @@ let sseOwnerNpub = null;
 let sseViewerNpub = null;
 let sseBackendUrl = null;
 let sseWorkspaceDbKey = null;
+let sseConnectionKey = null;
+let sseConnectionState = 'disconnected';
 let sseLastEventId = null;
 let sseReconnectTimer = null;
 let sseReconnectAttempts = 0;
@@ -132,13 +134,70 @@ function cleanEchoSet() {
 
 // --- SSE client ---
 
-function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey) {
-  disconnectSSE();
+function buildSSEConnectionKey(ownerNpub, viewerNpub, backendUrl, workspaceDbKey) {
+  return JSON.stringify({
+    ownerNpub,
+    viewerNpub,
+    backendUrl,
+    workspaceDbKey: workspaceDbKey || ownerNpub,
+  });
+}
+
+function closeSSE({ resetContext = false } = {}) {
+  if (sseDebounceTimer) {
+    clearTimeout(sseDebounceTimer);
+    sseDebounceTimer = null;
+  }
+  if (sseReconnectTimer) {
+    clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = null;
+  }
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+  sseStaleFamilies.clear();
+  if (resetContext) {
+    sseOwnerNpub = null;
+    sseViewerNpub = null;
+    sseBackendUrl = null;
+    sseWorkspaceDbKey = null;
+    sseConnectionKey = null;
+    sseConnectionState = 'disconnected';
+    sseLastEventId = null;
+    sseReconnectAttempts = 0;
+  }
+}
+
+function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey, options = {}) {
+  const connectionKey = buildSSEConnectionKey(ownerNpub, viewerNpub, backendUrl, workspaceDbKey);
+  const force = Boolean(options?.force);
+  const reason = String(options?.reason || 'connect');
+  const hasActiveLifecycle = Boolean(eventSource || sseReconnectTimer)
+    || ['connecting', 'connected', 'reconnecting', 'token-needed'].includes(sseConnectionState);
+
+  if (!force && connectionKey === sseConnectionKey && hasActiveLifecycle) {
+    postSSEStatus(sseConnectionState, {
+      connectionKey,
+      phase: 'connect-skipped',
+      reason: 'duplicate-connect',
+    });
+    return;
+  }
+
+  const phase = !sseConnectionKey
+    ? 'initial-connect'
+    : connectionKey === sseConnectionKey
+      ? 'intentional-reconnect'
+      : 'context-switch';
+
+  closeSSE();
 
   sseOwnerNpub = ownerNpub;
   sseViewerNpub = viewerNpub;
   sseBackendUrl = backendUrl;
   sseWorkspaceDbKey = workspaceDbKey;
+  sseConnectionKey = connectionKey;
 
   const sseUrl = new URL(`/api/v4/workspaces/${ownerNpub}/stream`, backendUrl);
   sseUrl.searchParams.set('token', token);
@@ -146,61 +205,102 @@ function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey) {
     sseUrl.searchParams.set('last_event_id', String(sseLastEventId));
   }
 
-  eventSource = new EventSource(sseUrl.toString());
+  const source = new EventSource(sseUrl.toString());
+  eventSource = source;
 
-  eventSource.addEventListener('record-changed', handleRecordChanged);
-  eventSource.addEventListener('group-changed', handleGroupChanged);
-  eventSource.addEventListener('catch-up-required', handleCatchUpRequired);
-  eventSource.addEventListener('connected', handleConnected);
-  eventSource.addEventListener('heartbeat', () => { /* keep-alive, no action needed */ });
+  source.addEventListener('record-changed', (event) => {
+    if (source !== eventSource) return;
+    handleRecordChanged(event);
+  });
+  source.addEventListener('group-changed', (event) => {
+    if (source !== eventSource) return;
+    handleGroupChanged(event);
+  });
+  source.addEventListener('catch-up-required', (event) => {
+    if (source !== eventSource) return;
+    handleCatchUpRequired(event);
+  });
+  source.addEventListener('connected', (event) => {
+    if (source !== eventSource) return;
+    handleConnected(event);
+  });
+  source.addEventListener('heartbeat', () => {
+    if (source !== eventSource) return;
+  });
 
-  eventSource.onerror = () => {
-    disconnectSSE();
-    scheduleReconnect();
+  source.onerror = () => {
+    if (source !== eventSource) return;
+    closeSSE();
+    scheduleReconnect({ reason: 'eventsource-error' });
   };
 
-  sseReconnectAttempts = 0;
-  postSSEStatus('connecting');
+  sseConnectionState = 'connecting';
+  postSSEStatus('connecting', {
+    connectionKey,
+    phase,
+    reason,
+    forced: force,
+  });
 }
 
 function disconnectSSE() {
-  if (sseDebounceTimer) {
-    clearTimeout(sseDebounceTimer);
-    sseDebounceTimer = null;
-  }
-  if (eventSource) {
-    eventSource.close();
-    eventSource = null;
-  }
-  sseStaleFamilies.clear();
+  closeSSE({ resetContext: true });
 }
 
-function scheduleReconnect() {
+function scheduleReconnect({ reason = 'eventsource-error' } = {}) {
   if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
 
+  const attempt = sseReconnectAttempts + 1;
   const delay = Math.min(1000 * Math.pow(2, sseReconnectAttempts), 60_000);
-  sseReconnectAttempts++;
+  sseReconnectAttempts = attempt;
 
-  if (sseReconnectAttempts > 5) {
-    postSSEStatus('fallback-polling');
+  if (attempt > 5) {
+    sseConnectionState = 'fallback-polling';
+    postSSEStatus('fallback-polling', {
+      phase: 'fallback-entered',
+      reason: 'reconnect-exhausted',
+      attempt,
+      delayMs: delay,
+    });
     return;
   }
 
-  postSSEStatus('reconnecting');
+  sseConnectionState = 'reconnecting';
+  postSSEStatus('reconnecting', {
+    phase: 'backoff',
+    reason,
+    attempt,
+    delayMs: delay,
+  });
   sseReconnectTimer = setTimeout(() => {
     sseReconnectTimer = null;
     // Request a fresh token from the main thread
-    self.postMessage({ type: SSE_STATUS_TYPE, status: 'token-needed' });
+    sseConnectionState = 'token-needed';
+    postSSEStatus('token-needed', {
+      phase: 'refresh-token',
+      reason: 'reconnect-attempt',
+      attempt,
+    });
   }, delay);
 }
 
 function postSSEStatus(status, extra = {}) {
-  self.postMessage({ type: SSE_STATUS_TYPE, status, ...extra });
+  self.postMessage({
+    type: SSE_STATUS_TYPE,
+    status,
+    connectionKey: extra.connectionKey || sseConnectionKey,
+    ...extra,
+  });
 }
 
 function handleConnected(event) {
   sseReconnectAttempts = 0;
-  postSSEStatus('connected');
+  sseConnectionState = 'connected';
+  if (event?.lastEventId) sseLastEventId = event.lastEventId;
+  postSSEStatus('connected', {
+    phase: 'stream-open',
+    reason: 'eventsource-open',
+  });
 }
 
 function handleRecordChanged(event) {
@@ -413,12 +513,18 @@ self.addEventListener('message', async (event) => {
       message.backendUrl,
       message.token,
       message.workspaceDbKey,
+      message.options || {},
     );
     return;
   }
   if (message.type === SSE_DISCONNECT_TYPE) {
+    const previousKey = sseConnectionKey;
     disconnectSSE();
-    postSSEStatus('disconnected');
+    postSSEStatus('disconnected', {
+      connectionKey: previousKey,
+      phase: 'stream-closed',
+      reason: message.options?.reason || 'client-disconnect',
+    });
     return;
   }
   if (message.type === FLUSH_NOW_TYPE) {
