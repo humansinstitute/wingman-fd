@@ -157,30 +157,30 @@ export function getPreferredDocWriteGroupRef(item = null, options = {}) {
   const explicitWriteGroupId = String(item?.write_group_id || '').trim() || null;
   const scopePolicyGroupIds = normalizeGroupIds(item?.scope_policy_group_ids || [])
     .filter((groupId) => !hasAllowedFilter || isAllowed(groupId));
+  const writeableGroupIds = getWriteableShareGroupIds(shares);
+  const candidateWriteableGroupIds = writeableGroupIds.filter((groupId) => candidateGroupIds.includes(groupId));
+
+  if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && hasKey(explicitWriteGroupId)) {
+    return explicitWriteGroupId;
+  }
   for (const groupId of scopePolicyGroupIds) {
     if (candidateGroupIds.includes(groupId) && hasKey(groupId)) return groupId;
   }
 
-  const loadedWritableGroupIds = getWriteableShareGroupIds(shares)
-    .filter((groupId) => candidateGroupIds.includes(groupId) && hasKey(groupId));
-  if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && hasKey(explicitWriteGroupId)) {
-    return explicitWriteGroupId;
-  }
+  const loadedWritableGroupIds = candidateWriteableGroupIds.filter((groupId) => hasKey(groupId));
   if (loadedWritableGroupIds.length > 0) return loadedWritableGroupIds[0];
   for (const groupId of candidateGroupIds) {
-    if (hasKey(groupId)) return groupId;
+    if (!hasAllowedFilter && hasKey(groupId)) return groupId;
   }
   if (scopePolicyGroupIds.length > 0) return scopePolicyGroupIds[0];
   if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && candidateGroupIds.includes(explicitWriteGroupId)) {
     return explicitWriteGroupId;
   }
-
-  const writeableGroupIds = getWriteableShareGroupIds(shares);
-  for (const groupId of writeableGroupIds) {
+  for (const groupId of candidateWriteableGroupIds) {
     if (candidateGroupIds.includes(groupId)) return groupId;
   }
 
-  if (candidateGroupIds.length > 0) return candidateGroupIds[0];
+  if (!hasAllowedFilter && candidateGroupIds.length > 0) return candidateGroupIds[0];
   if (hasAllowedFilter) return null;
   return groupIds[0] || explicitWriteGroupId || null;
 }

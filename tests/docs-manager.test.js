@@ -358,5 +358,21 @@ describe('docs-manager pure utilities', () => {
       });
       expect(result).toBeNull();
     });
+
+    it('does not fall back to a read-only delivery group when writable groups exist', () => {
+      const result = getPreferredDocWriteGroupRef({
+        group_ids: ['g-private', 'g-shared', 'g-external'],
+        scope_policy_group_ids: [],
+        shares: [
+          { type: 'group', group_id: 'g-private', access: 'read' },
+          { type: 'group', group_id: 'g-shared', access: 'write' },
+          { type: 'group', group_id: 'g-external', access: 'read' },
+        ],
+      }, {
+        allowedGroupIds: ['g-private', 'g-shared', 'g-external'],
+        hasKey: () => true,
+      });
+      expect(result).toBe('g-shared');
+    });
   });
 });
