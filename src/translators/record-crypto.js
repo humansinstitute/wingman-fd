@@ -1,4 +1,8 @@
-import { personalDecryptFromNpub, personalEncryptForNpub, localDecryptFromNpub, localEncryptForNpub } from '../auth/nostr.js';
+import {
+  decryptOwnerPayloadJsonWithActiveWorkspaceUserKey,
+  encryptOwnerPayloadWithActiveWorkspaceUserKey,
+} from '@superbased/browser';
+import { personalDecryptFromNpub, personalEncryptForNpub } from '../auth/nostr.js';
 import {
   decryptPayloadForGroup,
   encryptPayloadForGroup,
@@ -9,7 +13,6 @@ import {
 } from '../crypto/group-keys.js';
 import {
   getActiveWorkspaceKey,
-  getActiveWorkspaceKeyNpub,
 } from '../crypto/workspace-keys.js';
 
 function parsePayloadJson(raw) {
@@ -58,15 +61,7 @@ function describeRecordGroupPayloads(record) {
 export async function encryptOwnerPayload(ownerNpub, payload) {
   const wsKey = getActiveWorkspaceKey();
   if (wsKey?.secret) {
-    // Encrypt with workspace session key (fast, no signer bridge needed)
-    const senderNpub = getActiveSessionNpub() || getActiveWorkspaceKeyNpub();
-    return {
-      ciphertext: JSON.stringify({
-        encrypted_by_npub: getActiveWorkspaceKeyNpub(),
-        ciphertext: localEncryptForNpub(wsKey.secret, senderNpub, JSON.stringify(payload)),
-        ws_key_epoch: wsKey.epoch,
-      }),
-    };
+    return encryptOwnerPayloadWithActiveWorkspaceUserKey(payload);
   }
   // Fallback: encrypt with real signer (pre-migration or no workspace key)
   return {
@@ -120,22 +115,16 @@ export async function decryptRecordPayload(record) {
   const ownerCiphertext = record.owner_payload?.ciphertext ?? record.owner_payload;
   const viewerNpub = getActiveSessionNpub();
   const wsKey = getActiveWorkspaceKey();
-  const wsKeyNpub = getActiveWorkspaceKeyNpub();
   const errors = [];
   const payloadDiagnostics = describeRecordGroupPayloads(record);
 
   // --- Workspace session key owner-payload path ---
   // If the record was signed by our workspace key, decrypt with it (fast, no bridge).
-  if (wsKey?.secret && wsKeyNpub && ownerCiphertext) {
-    const ownerEnvelope = parseCiphertextEnvelope(ownerCiphertext);
-    if (ownerEnvelope?.encrypted_by_npub === wsKeyNpub) {
-      try {
-        const senderNpub = ownerEnvelope.encrypted_by_npub;
-        const decrypted = localDecryptFromNpub(wsKey.secret, senderNpub, ownerEnvelope.ciphertext);
-        return parsePayloadJson(decrypted);
-      } catch (error) {
-        errors.push(`ws-owner:${error instanceof Error ? error.message : String(error)}`);
-      }
+  if (wsKey?.secret && ownerCiphertext) {
+    try {
+      return decryptOwnerPayloadJsonWithActiveWorkspaceUserKey(ownerCiphertext);
+    } catch (error) {
+      errors.push(`ws-owner:${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
