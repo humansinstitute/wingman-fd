@@ -116,7 +116,7 @@ export function mapCreatedGroup(response, name, ownerNpub) {
     name: response.name ?? name,
     group_kind: response.group_kind || 'shared',
     private_member_npub: response.private_member_npub ?? null,
-    member_npubs: (response.members ?? []).map((member) => member.member_npub ?? member).filter(Boolean),
+    member_npubs: normalizeGroupMemberNpubs(response.members ?? []),
   };
 }
 
@@ -124,6 +124,9 @@ export function mapCreatedGroup(response, name, ownerNpub) {
  * Map a rotateGroup API response into the local group shape.
  */
 export function mapRotatedGroup(response, groupIdentity, group, nextMembers, options) {
+  const rawMembers = Array.isArray(response.members) && response.members.length > 0
+    ? response.members
+    : nextMembers;
   return {
     group_id: response.group_id ?? group.group_id,
     group_npub: response.group_npub ?? groupIdentity.npub,
@@ -132,7 +135,7 @@ export function mapRotatedGroup(response, groupIdentity, group, nextMembers, opt
     name: response.name ?? options.name ?? group.name,
     group_kind: response.group_kind || group.group_kind || 'shared',
     private_member_npub: response.private_member_npub ?? group.private_member_npub ?? null,
-    member_npubs: (response.members ?? nextMembers).map((member) => member.member_npub ?? member).filter(Boolean),
+    member_npubs: normalizeGroupMemberNpubs(rawMembers),
   };
 }
 
@@ -140,7 +143,7 @@ export function mapRotatedGroup(response, groupIdentity, group, nextMembers, opt
  * Deduplicate and normalize member npubs, ensuring the owner is first.
  */
 export function deduplicateMembers(ownerNpub, memberNpubs) {
-  return [...new Set([ownerNpub, ...(memberNpubs || []).map((value) => String(value || '').trim()).filter(Boolean)])];
+  return [...new Set([ownerNpub, ...normalizeGroupMemberNpubs(memberNpubs)])];
 }
 
 /**

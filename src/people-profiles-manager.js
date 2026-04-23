@@ -47,7 +47,14 @@ export const peopleProfilesManagerMixin = {
       const result = await fetchWorkspaceKeyMappings(this.workspaceOwnerNpub);
       const map = {};
       for (const entry of (result.mappings || [])) {
-        map[entry.ws_key_npub] = entry.user_npub;
+        const workspaceUserKeyNpub = String(
+          entry.workspace_user_key_npub
+          || entry.ws_key_npub
+          || ''
+        ).trim();
+        const userNpub = String(entry.user_npub || '').trim();
+        if (!workspaceUserKeyNpub || !userNpub) continue;
+        map[workspaceUserKeyNpub] = userNpub;
       }
       this._wsKeyDisplayMap = map;
     } catch {

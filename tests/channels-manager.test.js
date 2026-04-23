@@ -144,6 +144,13 @@ describe('channels-manager pure utilities', () => {
       const result = mapCreatedGroup({}, 'n', 'o');
       expect(result.member_npubs).toEqual([]);
     });
+
+    it('normalizes mixed member entry shapes in create responses', () => {
+      const result = mapCreatedGroup({
+        members: [{ member_npub: 'npub1a' }, { npub: 'npub1b' }, 'npub1c'],
+      }, 'n', 'o');
+      expect(result.member_npubs).toEqual(['npub1a', 'npub1b', 'npub1c']);
+    });
   });
 
   // --- mapRotatedGroup ---
@@ -203,6 +210,17 @@ describe('channels-manager pure utilities', () => {
       );
       expect(result.member_npubs).toEqual(['npub1a', 'npub1b']);
     });
+
+    it('normalizes fallback members when rotate response omits members', () => {
+      const result = mapRotatedGroup(
+        {},
+        { npub: 'n' },
+        baseGroup,
+        [{ member_npub: 'npub1a' }, { npub: 'npub1b' }, 'npub1c'],
+        {},
+      );
+      expect(result.member_npubs).toEqual(['npub1a', 'npub1b', 'npub1c']);
+    });
   });
 
   // --- deduplicateMembers ---
@@ -230,6 +248,11 @@ describe('channels-manager pure utilities', () => {
     it('converts non-string members to strings', () => {
       const result = deduplicateMembers('npub1owner', [123]);
       expect(result).toEqual(['npub1owner', '123']);
+    });
+
+    it('normalizes object-shaped member entries', () => {
+      const result = deduplicateMembers('npub1owner', [{ member_npub: 'npub1a' }, { npub: 'npub1b' }]);
+      expect(result).toEqual(['npub1owner', 'npub1a', 'npub1b']);
     });
   });
 
