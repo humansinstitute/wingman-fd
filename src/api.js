@@ -4,8 +4,9 @@
  */
 
 import { createNip98AuthHeader, createNip98AuthHeaderForSecret } from './auth/nostr.js';
-import { createGroupWriteAuthHeader, getActiveSessionNpub } from './crypto/group-keys.js';
-import { getActiveWorkspaceKeyNpub, getActiveWorkspaceKeySecretForAuth } from './crypto/workspace-keys.js';
+import { getActiveSessionNpub } from './crypto/group-keys.js';
+import { getActiveWorkspaceKeySecretForAuth } from './crypto/workspace-keys.js';
+import { buildFlightDeckSyncRequest } from './superbased/sync-request.js';
 
 let _baseUrl = '';
 
@@ -28,15 +29,6 @@ export function getBaseUrl() {
 
 function url(path) {
   return `${_baseUrl}${path}`;
-}
-
-function getEffectiveSigningNpub(signingNpub = null) {
-  return String(
-    signingNpub
-    || getActiveWorkspaceKeyNpub()
-    || getActiveSessionNpub()
-    || ''
-  ).trim();
 }
 
 function getEffectiveViewerNpub(viewerNpub = null) {
@@ -429,62 +421,38 @@ export async function fetchRecordsSummary(ownerNpub) {
 // --- Records sync ---
 
 export async function syncRecords({ owner_npub, records, signing_npub }) {
-  const proofPayload = { owner_npub, records };
-  const groupWriteTokens = {};
-  const effectiveSigningNpub = getEffectiveSigningNpub(signing_npub);
+  const syncRequest = await buildFlightDeckSyncRequest({
+    ownerNpub: owner_npub,
+    records,
+    signingNpub: signing_npub,
+    baseUrl: _baseUrl,
+  });
+  const deferredRecordIds = Array.isArray(syncRequest.deferred_record_ids)
+    ? syncRequest.deferred_record_ids
+    : [];
 
-  // owner_npub is the workspace service identity — not any person's npub.
-  // No user's real npub will ever match it, so all writes are non-owner
-  // writes from Tower's perspective and require a group write proof.
-  // We still check in case the identity model changes, but in practice
-  // isOwnerUser is always false.
-  const realUserNpub = String(getActiveSessionNpub() || '').trim();
-  const owner = String(owner_npub || '').trim();
-  const isOwnerUser = realUserNpub === owner;
-
-  const deferredRecordIds = new Set();
-
-  for (const record of records) {
-    if (isOwnerUser) continue;
-    const groupRef = String(record?.write_group_id || record?.write_group_npub || '').trim();
-    if (!groupRef || groupWriteTokens[groupRef]) continue;
-    try {
-      groupWriteTokens[groupRef] = await createGroupWriteAuthHeader(
-        groupRef,
-        url('/api/v4/records/sync'),
-        'POST',
-        proofPayload,
-      );
-    } catch (error) {
-      // Group key not loaded — defer these records for a later sync cycle
-      // rather than crashing the entire batch.
-      console.warn(`[sync] Cannot create group write proof for ${groupRef}, deferring records:`, error?.message);
-      for (const r of records) {
-        const ref = String(r?.write_group_id || r?.write_group_npub || '').trim();
-        if (ref === groupRef) deferredRecordIds.add(r.record_id);
-      }
-    }
-  }
-
-  const sendableRecords = deferredRecordIds.size > 0
-    ? records.filter((r) => !deferredRecordIds.has(r.record_id))
-    : records;
-
-  if (sendableRecords.length === 0) {
-    return { synced: 0, created: 0, updated: 0, rejected: [], deferred: [...deferredRecordIds] };
+  if (syncRequest.records.length === 0) {
+    return { synced: 0, created: 0, updated: 0, rejected: [], deferred: deferredRecordIds };
   }
 
   const requestUrl = url('/api/v4/records/sync');
   const resp = await signedFetch('/api/v4/records/sync', {
     method: 'POST',
     body: {
-      owner_npub,
-      records: sendableRecords,
-      group_write_tokens: groupWriteTokens,
+      owner_npub: syncRequest.owner_npub,
+      workspace_service_npub: syncRequest.workspace_service_npub,
+      ...(syncRequest.user_npub ? { user_npub: syncRequest.user_npub } : {}),
+      ...(syncRequest.actor_npub ? { actor_npub: syncRequest.actor_npub } : {}),
+      ...(syncRequest.viewer_npub ? { viewer_npub: syncRequest.viewer_npub } : {}),
+      ...(syncRequest.signer_npub ? { signer_npub: syncRequest.signer_npub } : {}),
+      ...(syncRequest.workspace_user_key_npub ? { workspace_user_key_npub: syncRequest.workspace_user_key_npub } : {}),
+      ...(syncRequest.ws_key_npub ? { ws_key_npub: syncRequest.ws_key_npub } : {}),
+      records: syncRequest.records,
+      group_write_tokens: syncRequest.group_write_tokens,
     },
   });
   const result = await json(resp, { requestUrl, method: 'POST' });
-  result.deferred = [...deferredRecordIds];
+  result.deferred = deferredRecordIds;
   return result;
 }
 
