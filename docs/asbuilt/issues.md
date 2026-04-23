@@ -55,23 +55,23 @@ Practical follow-up:
 - Promote `flows` to a first-class route in both route builders and route parsers.
 - Add a dedicated document-title case so the browser tab reflects the active section.
 
-### 3. Workspace session-key bootstrap appears to be present in code but not wired into the live runtime
+### 3. Workspace user key runtime is now wired through SDK adapters but still uses legacy cache names
 
 Evidence:
 
-- `src/crypto/workspace-keys.js` still contains a full bootstrap/cache/register flow, including `bootstrapWorkspaceSessionKey()`, `setActiveWorkspaceKey()`, and registration helpers.
-- Repo-wide usage in this snapshot shows those bootstrap and activation helpers referenced only inside `src/crypto/workspace-keys.js` itself.
-- Live runtime code only imports the read-side helpers: `src/api.js` and `src/sync-manager.js` read `getActiveWorkspaceKeySecretForAuth()`, while `src/sync-worker-client.js` exports any already-active key to the worker.
+- `src/crypto/workspace-keys.js` keeps Flight Deck's historical function and Dexie field names, but delegates active-key state and encrypted blob helpers to `@superbased/browser`.
+- Workspace bootstrap is called from the app and shell workspace lifecycle, then registration state gates NIP-98 API auth.
+- Worker handoff still uses the FD-compatible serializable payload so existing sync worker behavior and pending writes remain stable.
 
 Why this matters:
 
-- The auth layer is built to prefer a registered workspace session key, but this repo snapshot does not show the app actually activating one.
-- That makes the intended auth model easy to misread and suggests the browser may still sign most traffic as the logged-in user instead.
+- The durable identity model names are `userNpub`, `workspaceServiceNpub`, and `workspaceUserKeyNpub`; the local DB still contains legacy aliases such as `workspace_owner_npub` and `ws_key_npub`.
+- Future SDK cleanup should keep those cache aliases readable until a Dexie migration is explicitly planned and tested.
 
 Practical follow-up:
 
-- Either wire the bootstrap/registration path into the real workspace lifecycle or document that the user-signer path is the only live path today.
-- Add an end-to-end check that proves which signer is actually used for API auth and SSE auth.
+- Prefer SDK helpers for new behavior, but keep the FD adapter boundary around Dexie rows and worker payloads.
+- Add an end-to-end check that proves registered workspace user key auth is used for sync/API calls and that fallback user-signer auth still works when no registered workspace user key is active.
 
 ### 4. Worker fallback and flush-cadence comments are stale relative to the implementation
 

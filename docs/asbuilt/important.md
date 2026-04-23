@@ -168,16 +168,16 @@ Primary files reviewed for this refresh:
 
 - Stored auth credentials expire after 7 days in `src/auth/secure-store.js`.
 - When Web Crypto AES-GCM is available, secrets are encrypted before being stored in IndexedDB. When it is not available, secrets are stored in plain form in the secure-auth DB.
-- `src/api.js` and `src/sync-manager.js` prefer a registered workspace session key for NIP-98 auth, then fall back to the logged-in user signer when no registered workspace key is active.
-- `src/crypto/workspace-keys.js` still contains a full bootstrap, cache, decrypt, and registration model for workspace session keys.
-- In this repo snapshot, that bootstrap path does not appear to be wired into the live app/workspace/sync managers:
-  - `bootstrapWorkspaceSessionKey()` exists
-  - the active-key setters and cache-registration helpers exist
-  - but those helpers are not referenced outside `src/crypto/workspace-keys.js`
+- `src/api.js` and `src/sync-manager.js` prefer a registered workspace user key for NIP-98 auth, then fall back to the logged-in user signer when no registered workspace user key is active.
+- `src/crypto/workspace-keys.js` is now an FD compatibility adapter over `@superbased/browser` workspace user key runtime and encrypted blob helpers.
+- The canonical identity names are:
+  - `userNpub`: the real user and read viewer
+  - `workspaceServiceNpub`: the workspace service identity, still aliased by legacy `workspace_owner_npub` / `owner_npub` at compatibility boundaries
+  - `workspaceUserKeyNpub`: the delegated signer, still aliased by legacy `ws_key_npub` where old Dexie rows and Tower payloads require it
 - Practical result:
-  - owner-payload crypto and worker handoff can use a workspace key if some runtime path has already activated one
-  - API auth and SSE auth will otherwise run as the logged-in user signer
-- Do not assume the documented workspace-key design is fully live just because the helper module exists. Verify the actual call path before changing auth or record-crypto behavior.
+  - owner-payload crypto, worker handoff, and registered API auth can use the workspace user key
+  - API auth and SSE auth still fall back to the logged-in user signer when no registered workspace user key is active
+- Do not remove the FD compatibility adapter or legacy cache aliases until a Dexie migration and Tower/library strict-mode rollout are planned together.
 
 ## Flows And Jobs Are Not Fully First-Class Routes
 

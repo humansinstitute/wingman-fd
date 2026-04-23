@@ -175,6 +175,47 @@ describe('api sync auth and owner-write detection', () => {
     expect(eventTag(proofEvent, 'payload')).toBe(await jsonPayloadHash(expectedProofBody));
   });
 
+  it('keeps pre-Phase-4 pending writes with write_group_npub syncable', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1collaborator';
+    const legacyWriteGroupNpub = 'npub1legacywritegroup';
+    groupKeys.set(legacyWriteGroupNpub, {
+      group_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+      group_npub: legacyWriteGroupNpub,
+      key_version: 1,
+      secret: new Uint8Array(32).fill(8),
+    });
+
+    const fetchMock = vi.fn(async (_requestUrl, options) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ body: JSON.parse(options.body) }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const legacyPendingRecord = {
+      record_id: 'rec-legacy-write-group-npub',
+      owner_npub: 'npub1workspaceservicekey',
+      signature_npub: 'npub1workspacekey',
+      write_group_npub: legacyWriteGroupNpub,
+      owner_payload: { ciphertext: '{}' },
+      group_payloads: [],
+    };
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+    const result = await api.syncRecords({
+      owner_npub: 'npub1workspaceservicekey',
+      records: [legacyPendingRecord],
+    });
+
+    expect(result.deferred).toEqual([]);
+    expect(result.body.records).toEqual([legacyPendingRecord]);
+    expect(Object.keys(result.body.group_write_tokens)).toEqual([legacyWriteGroupNpub]);
+  });
+
   it('defers records when the write group key is missing', async () => {
     workspaceSecret = new Uint8Array(32).fill(7);
     workspaceNpub = 'npub1workspacekey';

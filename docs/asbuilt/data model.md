@@ -60,7 +60,7 @@ The shared DB is currently on schema version 2.
 | `storage_image_cache` | `&object_id, cached_at` | Blob cache for storage-backed images with LRU-style eviction |
 | `profiles` | `pubkey` | 24-hour Nostr profile cache |
 | `address_book` | `npub, last_used_at` | Mention and identity suggestion cache |
-| `workspace_keys` | `&workspace_owner_npub, user_npub, ws_key_npub` | Cached encrypted workspace session-key blobs plus registration flag |
+| `workspace_keys` | `&workspace_owner_npub, user_npub, ws_key_npub` | Cached encrypted workspace user key blobs plus registration flag; field names are legacy Dexie aliases for `workspaceServiceNpub`, `userNpub`, and `workspaceUserKeyNpub` |
 
 Important nuance:
 
@@ -174,7 +174,7 @@ SSE is advisory only:
 | Cached storage image | `storage_image_cache` | Persisted as a blob row keyed by raw or backend-aware object id string |
 | Cached profile | `profiles` | 24-hour TTL cache of fetched Nostr profile data |
 | Address book person | `address_book` | Recent people cache for mentions and identity lookup |
-| Workspace key cache | `workspace_keys` | Encrypted workspace-session-key blob plus registration status |
+| Workspace user key cache | `workspace_keys` | Encrypted workspace user key blob plus registration status, stored with legacy cache aliases for compatibility |
 
 ### Workspace-local entities
 
@@ -228,7 +228,7 @@ SSE is advisory only:
   - rotating crypto identity: `group_npub`
 - Local rows are normalized toward stable `group_id` references when translators can resolve them.
 - `normalizeShareGroupRefs()` preserves both stable ids and current `group_npub` values inside share objects.
-- Workspace session keys are cached browser-side encrypted blobs and are separate from the real user identity.
+- Workspace user keys are cached browser-side encrypted blobs and are separate from the real user identity.
 
 Important as-built pruning nuance:
 
