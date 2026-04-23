@@ -112,6 +112,7 @@ import {
   clearRuntimeData,
 } from './db.js';
 import {
+  registerWorkspaceKey,
   setBaseUrl,
   prepareStorageObject,
   uploadStorageObject,
@@ -161,13 +162,19 @@ import {
   setActiveSessionNpub,
   wrapKnownGroupKeyForMember,
 } from './crypto/group-keys.js';
-import { getActiveWorkspaceKeyNpub } from './crypto/workspace-keys.js';
+import {
+  bootstrapWorkspaceSessionKey,
+  getActiveWorkspaceKeyNpub,
+  markCachedWorkspaceKeyRegistered,
+  markWorkspaceKeyRegistered,
+} from './crypto/workspace-keys.js';
 import { findWorkspaceByKey, mergeWorkspaceEntries, workspaceFromToken, findWorkspaceBySlug } from './workspaces.js';
 import { buildSectionUrl, parseRouteLocation } from './route-helpers.js';
 import { extractInviteToken } from './invite-link.js';
 import {
   buildStoragePrepareBody,
 } from './storage-payloads.js';
+import { flightDeckLog } from './logging.js';
 
 // Constants UNSCOPED_TASK_BOARD_ID, WEEKDAY_OPTIONS imported from task-board-state.js
 
@@ -231,6 +238,7 @@ export function initApp() {
     IDLE_SYNC_MS: 30000,
     SSE_HEARTBEAT_CADENCE_MS: 120000,
     BACKGROUND_GROUP_REFRESH_MS: 5 * 60 * 1000,
+    GROUP_KEY_REFRESH_MAX_AGE_MS: 24 * 60 * 60 * 1000,
     MAIN_FEED_PAGE_SIZE: 80,
     MESSAGE_PREVIEW_MAX_LINES: 15,
     COMPOSER_MAX_LINES: 12,
@@ -1252,9 +1260,43 @@ export function initApp() {
       this.routeSyncPaused = false; // unpause route sync after init (no-op if applyRouteFromLocation already unpaused)
     },
 
+    async ensureWorkspaceSessionKey() {
+      const workspaceOwnerNpub = this.workspaceOwnerNpub
+        || this.currentWorkspaceOwnerNpub
+        || this.ownerNpub
+        || '';
+      const userNpub = this.session?.npub || '';
+      if (!workspaceOwnerNpub || !userNpub || !this.backendUrl) return null;
+
+      try {
+        return await bootstrapWorkspaceSessionKey({
+          workspaceOwnerNpub,
+          userNpub,
+          onRegister: async (blob, key) => {
+            const wsKeyNpub = key?.npub || blob?.ws_key_npub || '';
+            if (!wsKeyNpub) throw new Error('Workspace key bootstrap did not produce ws_key_npub');
+            await registerWorkspaceKey({
+              workspace_owner_npub: workspaceOwnerNpub,
+              ws_key_npub: wsKeyNpub,
+            });
+            markWorkspaceKeyRegistered();
+            await markCachedWorkspaceKeyRegistered(workspaceOwnerNpub);
+          },
+        });
+      } catch (error) {
+        flightDeckLog('warn', 'workspace-key', 'workspace session key bootstrap failed', {
+          workspaceOwnerNpub,
+          userNpub,
+          error: error?.message || String(error),
+        });
+        return null;
+      }
+    },
+
     async bootstrapSelectedWorkspace(options = {}) {
       if (!this.selectedWorkspaceKey && !this.currentWorkspaceOwnerNpub) return;
-      await this.refreshGroups();
+      await this.ensureWorkspaceSessionKey();
+      await this.refreshGroups({ maxAgeMs: this.GROUP_KEY_REFRESH_MAX_AGE_MS });
       // Flows are loaded eagerly so flow linkage resolution works from any section
       this.refreshFlows().catch(() => {});
       // Fetch ws_key → user_npub mappings for display identity resolution

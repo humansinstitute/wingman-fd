@@ -80,4 +80,11 @@ describe('channelsManagerMixin', () => {
   it('route-driven chat focus no longer suppresses scrollToLatest on channel open', () => {
     expect(appSource).not.toContain("await this.selectChannel(item.channelId, { scrollToLatest: false });");
   });
+
+  it('refreshGroups supports a max-age guard for group key refreshes', () => {
+    const source = channelsManagerMixin.refreshGroups.toString();
+    expect(source).toContain('options.maxAgeMs');
+    expect(source).toContain('expiredByMaxAge');
+    expect(source).toContain('!expiredByMaxAge');
+  });
 });

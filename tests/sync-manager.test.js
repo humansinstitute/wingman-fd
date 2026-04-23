@@ -80,6 +80,7 @@ function createStore(overrides = {}) {
     FAST_SYNC_MS: 1000,
     IDLE_SYNC_MS: 5000,
     BACKGROUND_GROUP_REFRESH_MS: 300000,
+    GROUP_KEY_REFRESH_MAX_AGE_MS: 86400000,
     backgroundSyncTimer: null,
     backgroundSyncInFlight: false,
     visibilityHandler: null,
@@ -598,7 +599,10 @@ describe('performSync', () => {
         workspaceDbKey: 'npub1owner',
       }),
     );
-    expect(refreshGroups).toHaveBeenCalledWith({ minIntervalMs: 300000 });
+    expect(refreshGroups).toHaveBeenCalledWith({
+      minIntervalMs: 300000,
+      maxAgeMs: 86400000,
+    });
     expect(refreshWorkspaceSettings).not.toHaveBeenCalled();
     expect(ensureTaskFamilyBackfill).not.toHaveBeenCalled();
     expect(ensureTaskBoardScopeSetup).not.toHaveBeenCalled();

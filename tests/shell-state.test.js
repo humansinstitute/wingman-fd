@@ -125,6 +125,7 @@ describe('shell state key inventory', () => {
     expect(SHELL_STATE_KEYS).toContain('IDLE_SYNC_MS');
     expect(SHELL_STATE_KEYS).toContain('SSE_HEARTBEAT_CADENCE_MS');
     expect(SHELL_STATE_KEYS).toContain('BACKGROUND_GROUP_REFRESH_MS');
+    expect(SHELL_STATE_KEYS).toContain('GROUP_KEY_REFRESH_MAX_AGE_MS');
   });
 });
 
@@ -219,6 +220,7 @@ describe('shell state default values', () => {
     expect(shell.IDLE_SYNC_MS).toBe(30000);
     expect(shell.SSE_HEARTBEAT_CADENCE_MS).toBe(120000);
     expect(shell.BACKGROUND_GROUP_REFRESH_MS).toBe(300000);
+    expect(shell.GROUP_KEY_REFRESH_MAX_AGE_MS).toBe(86400000);
   });
 
   it('isLoggedIn returns false when session is null', () => {
@@ -278,6 +280,10 @@ describe('shell lifecycle methods', () => {
 
   it('includes bootstrapSelectedWorkspace method', () => {
     expect(SHELL_METHOD_NAMES).toContain('bootstrapSelectedWorkspace');
+  });
+
+  it('includes ensureWorkspaceSessionKey method', () => {
+    expect(SHELL_METHOD_NAMES).toContain('ensureWorkspaceSessionKey');
   });
 
   it('includes applyRouteFromLocation method', () => {

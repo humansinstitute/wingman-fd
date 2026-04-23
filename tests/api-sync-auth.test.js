@@ -224,4 +224,46 @@ describe('api sync auth and owner-write detection', () => {
       family_cursors: { task: 'cursor-1' },
     });
   });
+
+  it('registers workspace keys with real-user auth even when workspace auth is active', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1collaborator';
+
+    const fetchMock = vi.fn(async (_requestUrl, options) => ({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        auth: options.headers.Authorization,
+        body: JSON.parse(options.body),
+      }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    const result = await api.registerWorkspaceKey({
+      workspace_owner_npub: 'npub1owner',
+      ws_key_npub: 'npub1workspacekey',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://sb.example/api/v4/user/workspace-keys');
+    expect(createNip98AuthHeaderMock).toHaveBeenCalledWith(
+      'https://sb.example/api/v4/user/workspace-keys',
+      'POST',
+      {
+        workspace_owner_npub: 'npub1owner',
+        ws_key_npub: 'npub1workspacekey',
+      },
+    );
+    expect(createNip98AuthHeaderForSecretMock).not.toHaveBeenCalled();
+    expect(result.auth).toContain('session POST https://sb.example/api/v4/user/workspace-keys');
+    expect(result.body).toEqual({
+      workspace_owner_npub: 'npub1owner',
+      ws_key_npub: 'npub1workspacekey',
+    });
+  });
 });

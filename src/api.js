@@ -256,6 +256,22 @@ export async function updateWorkspace(workspaceOwnerNpub, body) {
   return json(resp, { requestUrl, method: 'PATCH' });
 }
 
+export async function registerWorkspaceKey({ workspace_owner_npub, ws_key_npub }) {
+  const requestPath = '/api/v4/user/workspace-keys';
+  const requestUrl = url(requestPath);
+  const body = { workspace_owner_npub, ws_key_npub };
+  const resp = await fetch(requestUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: await createNip98AuthHeader(requestUrl, 'POST', body),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
+  });
+  return json(resp, { requestUrl, method: 'POST' });
+}
+
 // --- Storage ---
 
 export async function prepareStorageObject(body) {

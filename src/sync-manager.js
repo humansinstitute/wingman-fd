@@ -1364,6 +1364,7 @@ export const syncManagerMixin = {
     try {
       await this.refreshGroups({
         minIntervalMs: silent ? this.BACKGROUND_GROUP_REFRESH_MS : 0,
+        maxAgeMs: this.GROUP_KEY_REFRESH_MAX_AGE_MS,
       });
       if (
         !this.hasForcedInitialBackfill

@@ -15,7 +15,12 @@
  */
 
 import { getRunningBuildId } from './version-check.js';
-import { getActiveWorkspaceKeyNpub } from './crypto/workspace-keys.js';
+import {
+  bootstrapWorkspaceSessionKey,
+  getActiveWorkspaceKeyNpub,
+  markCachedWorkspaceKeyRegistered,
+  markWorkspaceKeyRegistered,
+} from './crypto/workspace-keys.js';
 import { parseRouteLocation } from './route-helpers.js';
 import {
   normalizeBackendUrl,
@@ -27,7 +32,7 @@ import {
   hasWorkspaceDb,
   clearRuntimeData,
 } from './db.js';
-import { setBaseUrl } from './api.js';
+import { registerWorkspaceKey, setBaseUrl } from './api.js';
 import {
   signLoginEvent,
   getPubkeyFromEvent,
@@ -47,6 +52,7 @@ import { mergeWorkspaceEntries, workspaceFromToken, findWorkspaceByKey, findWork
 import { guessDefaultBackendUrl } from './workspace-manager.js';
 import { parseSuperBasedToken } from './superbased-token.js';
 import { extractInviteToken } from './invite-link.js';
+import { flightDeckLog } from './logging.js';
 
 /**
  * Canonical list of shell state keys (data properties and getters).
@@ -59,6 +65,7 @@ export const SHELL_STATE_KEYS = Object.freeze([
   'IDLE_SYNC_MS',
   'SSE_HEARTBEAT_CADENCE_MS',
   'BACKGROUND_GROUP_REFRESH_MS',
+  'GROUP_KEY_REFRESH_MAX_AGE_MS',
 
   // Identity and session
   'appBuildId',
@@ -189,6 +196,7 @@ export const SHELL_STATE_KEYS = Object.freeze([
  */
 export const SHELL_METHOD_NAMES = Object.freeze([
   'init',
+  'ensureWorkspaceSessionKey',
   'bootstrapSelectedWorkspace',
   'initRouteSync',
   'getRoutePath',
@@ -225,6 +233,7 @@ export function createShellState(options = {}) {
     IDLE_SYNC_MS: 30000,
     SSE_HEARTBEAT_CADENCE_MS: 120000,
     BACKGROUND_GROUP_REFRESH_MS: 5 * 60 * 1000,
+    GROUP_KEY_REFRESH_MAX_AGE_MS: 24 * 60 * 60 * 1000,
 
     // ── Identity and session ──────────────────────────────────
     appBuildId: getRunningBuildId(),
@@ -464,9 +473,43 @@ export function createShellState(options = {}) {
       this.routeSyncPaused = false;
     },
 
+    async ensureWorkspaceSessionKey() {
+      const workspaceOwnerNpub = this.workspaceOwnerNpub
+        || this.currentWorkspaceOwnerNpub
+        || this.ownerNpub
+        || '';
+      const userNpub = this.session?.npub || '';
+      if (!workspaceOwnerNpub || !userNpub || !this.backendUrl) return null;
+
+      try {
+        return await bootstrapWorkspaceSessionKey({
+          workspaceOwnerNpub,
+          userNpub,
+          onRegister: async (blob, key) => {
+            const wsKeyNpub = key?.npub || blob?.ws_key_npub || '';
+            if (!wsKeyNpub) throw new Error('Workspace key bootstrap did not produce ws_key_npub');
+            await registerWorkspaceKey({
+              workspace_owner_npub: workspaceOwnerNpub,
+              ws_key_npub: wsKeyNpub,
+            });
+            markWorkspaceKeyRegistered();
+            await markCachedWorkspaceKeyRegistered(workspaceOwnerNpub);
+          },
+        });
+      } catch (error) {
+        flightDeckLog('warn', 'workspace-key', 'workspace session key bootstrap failed', {
+          workspaceOwnerNpub,
+          userNpub,
+          error: error?.message || String(error),
+        });
+        return null;
+      }
+    },
+
     async bootstrapSelectedWorkspace(options = {}) {
       if (!this.selectedWorkspaceKey && !this.currentWorkspaceOwnerNpub) return;
-      await this.refreshGroups();
+      await this.ensureWorkspaceSessionKey();
+      await this.refreshGroups({ maxAgeMs: this.GROUP_KEY_REFRESH_MAX_AGE_MS });
       this.refreshFlows().catch(() => {});
       this.refreshWorkspaceKeyMappings().catch(() => {});
       if (options.runAccessPrune === true) {

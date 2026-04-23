@@ -173,13 +173,18 @@ export const channelsManagerMixin = {
     if (!viewerNpub || !this.backendUrl) return;
     const force = options.force === true;
     const minIntervalMs = Number(options.minIntervalMs);
+    const maxAgeMs = Number(options.maxAgeMs);
+    const now = Date.now();
+    const ageMs = this.lastGroupsRefreshAt > 0 ? now - this.lastGroupsRefreshAt : Infinity;
+    const expiredByMaxAge = Number.isFinite(maxAgeMs) && maxAgeMs > 0 && ageMs >= maxAgeMs;
     if (
       !force
+      && !expiredByMaxAge
       && Number.isFinite(minIntervalMs)
       && minIntervalMs > 0
       && this.lastGroupsRefreshAt > 0
       && this.groups.length > 0
-      && (Date.now() - this.lastGroupsRefreshAt) < minIntervalMs
+      && ageMs < minIntervalMs
     ) {
       return this.groups;
     }
