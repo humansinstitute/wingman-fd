@@ -162,6 +162,38 @@ describe('getPreferredChannelWriteGroup', () => {
       group_ids: ['g1', 'g2'],
     })).toBe('g2');
   });
+
+  it('never selects hidden non-member groups as the write group', () => {
+    const hiddenIdentity = createGroupIdentity();
+    cacheGroupKey({
+      group_id: 'g-hidden',
+      group_npub: 'npub1hidden',
+      nsec: hiddenIdentity.nsec,
+    });
+    const visibleIdentity = createGroupIdentity();
+    cacheGroupKey({
+      group_id: 'g2',
+      group_npub: 'npub1grp2',
+      nsec: visibleIdentity.nsec,
+    });
+    const store = {
+      session: { npub: 'npub1member' },
+      workspaceOwnerNpub: 'npub1owner',
+      groups,
+      currentWorkspaceContentGroups: [
+        { group_id: 'g1', group_npub: 'npub1grp1', member_npubs: ['npub1member'] },
+        { group_id: 'g2', group_npub: 'npub1grp2', member_npubs: ['npub1member'] },
+      ],
+      resolveGroupId(ref) {
+        return resolveGroupId(ref, this.groups);
+      },
+      getActorWritableGroupRefs: taskBoardStateMixin.getActorWritableGroupRefs,
+    };
+
+    expect(taskBoardStateMixin.getPreferredChannelWriteGroup.call(store, {
+      group_ids: ['g-hidden', 'g1', 'g2'],
+    })).toBe('g2');
+  });
 });
 
 describe('selectPreferredWritableGroupRef', () => {
@@ -183,6 +215,13 @@ describe('selectPreferredWritableGroupRef', () => {
         { type: 'group', group_id: 'g3', access: 'write' },
       ],
     })).toBe('g3');
+  });
+
+  it('returns null when allowed writable groups do not overlap delivery groups', () => {
+    expect(selectPreferredWritableGroupRef({
+      groupIds: ['g-hidden'],
+      allowedGroupIds: ['g1', 'g2'],
+    })).toBeNull();
   });
 });
 

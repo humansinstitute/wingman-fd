@@ -90,30 +90,52 @@ export function selectPreferredWritableGroupRef(input = {}) {
     ? input.resolveGroupId
     : (value) => String(value || '').trim() || null;
   const hasKey = typeof input.hasKey === 'function' ? input.hasKey : hasGroupKey;
+  const allowedGroupIds = normalizeResolvedGroupRefs(input.allowedGroupIds || [], resolveGroupId);
+  const hasAllowedFilter = allowedGroupIds.length > 0;
+  const allowedSet = new Set(allowedGroupIds);
+  const isAllowed = (groupId) => !hasAllowedFilter || allowedSet.has(groupId);
   const deliveryGroupIds = normalizeResolvedGroupRefs(input.groupIds || [], resolveGroupId);
   const scopePolicyGroupIds = normalizeResolvedGroupRefs(input.scopePolicyGroupIds || [], resolveGroupId);
   const writeShareGroupIds = normalizeResolvedGroupRefs(getShareWriteGroupIds(input.shares || []), resolveGroupId);
-  const explicitWriteGroupId = normalizeResolvedGroupRefs([input.writeGroupId], resolveGroupId)[0] || null;
-  const boardGroupId = normalizeResolvedGroupRefs([input.boardGroupId], resolveGroupId)[0] || null;
-  const deliverySet = new Set(deliveryGroupIds);
+  const candidateDeliveryGroupIds = deliveryGroupIds.filter(isAllowed);
+  const candidateScopePolicyGroupIds = scopePolicyGroupIds.filter(isAllowed);
+  const candidateWriteShareGroupIds = writeShareGroupIds.filter(isAllowed);
+  const explicitWriteGroupId = normalizeResolvedGroupRefs([input.writeGroupId], resolveGroupId)
+    .find((groupId) => isAllowed(groupId)) || null;
+  const boardGroupId = normalizeResolvedGroupRefs([input.boardGroupId], resolveGroupId)
+    .find((groupId) => isAllowed(groupId)) || null;
+  const deliverySet = new Set(candidateDeliveryGroupIds);
 
   const candidates = [
     explicitWriteGroupId,
     boardGroupId,
-    ...scopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
-    ...writeShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
-    ...deliveryGroupIds,
+    ...candidateScopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...candidateWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...candidateDeliveryGroupIds,
   ].filter(Boolean);
 
   for (const groupId of normalizeResolvedGroupRefs(candidates, resolveGroupId)) {
     if (hasKey(groupId)) return groupId;
   }
 
-  return normalizeResolvedGroupRefs([
+  const fallback = normalizeResolvedGroupRefs([
     explicitWriteGroupId,
     boardGroupId,
-    ...writeShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
-    ...scopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...candidateWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...candidateScopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...candidateDeliveryGroupIds,
+    ...candidateScopePolicyGroupIds,
+    ...candidateWriteShareGroupIds,
+  ], resolveGroupId)[0] || null;
+
+  if (fallback) return fallback;
+  if (hasAllowedFilter) return null;
+
+  return normalizeResolvedGroupRefs([
+    normalizeResolvedGroupRefs([input.writeGroupId], resolveGroupId)[0] || null,
+    normalizeResolvedGroupRefs([input.boardGroupId], resolveGroupId)[0] || null,
+    ...writeShareGroupIds.filter((groupId) => deliveryGroupIds.includes(groupId)),
+    ...scopePolicyGroupIds.filter((groupId) => deliveryGroupIds.includes(groupId)),
     ...deliveryGroupIds,
     ...scopePolicyGroupIds,
     ...writeShareGroupIds,
@@ -794,7 +816,15 @@ export const taskBoardStateMixin = {
     const scope = this.scopesMap.get(scopeId);
     if (!scope) return null;
     const groupIds = this.getScopeShareGroupIds(scope);
-    return groupIds.find((groupId) => hasGroupKey(groupId)) || groupIds[0] || null;
+    const allowedGroupIds = typeof this.getActorWritableGroupRefs === 'function'
+      ? this.getActorWritableGroupRefs()
+      : [];
+    return selectPreferredWritableGroupRef({
+      groupIds,
+      scopePolicyGroupIds: groupIds,
+      resolveGroupId: (groupId) => this.resolveGroupId(groupId),
+      allowedGroupIds,
+    });
   },
 
   buildTaskBoardAssignment(scopeId, fallbackTask = null) {
@@ -847,6 +877,9 @@ export const taskBoardStateMixin = {
       scopePolicyGroupIds: groupIds,
       shares: rebuilt.shares,
       resolveGroupId: (groupId) => this.resolveGroupId(groupId),
+      allowedGroupIds: typeof this.getActorWritableGroupRefs === 'function'
+        ? this.getActorWritableGroupRefs()
+        : [],
     });
 
     return {
@@ -1120,7 +1153,35 @@ export const taskBoardStateMixin = {
     return this.scheduleAssignableGroups.find((group) => group.groupId === resolvedGroupId)?.label || resolvedGroupId;
   },
 
+  getActorWritableGroupRefs() {
+    const viewerNpub = String(this.session?.npub || '').trim();
+    const workspaceOwnerNpub = String(this.workspaceOwnerNpub || '').trim();
+    if (!viewerNpub) return [];
+
+    const candidateGroups = Array.isArray(this.currentWorkspaceContentGroups) && this.currentWorkspaceContentGroups.length > 0
+      ? this.currentWorkspaceContentGroups
+      : (Array.isArray(this.groups) ? this.groups : []);
+    const resolveGroupRef = (groupRef) => this.resolveGroupId(groupRef);
+
+    if (viewerNpub === workspaceOwnerNpub) {
+      return [...new Set(candidateGroups
+        .map((group) => resolveGroupRef(group?.group_id || group?.group_npub))
+        .filter(Boolean))];
+    }
+
+    return [...new Set(candidateGroups
+      .filter((group) => {
+        if (String(group?.private_member_npub || '').trim() === viewerNpub) return true;
+        return Array.isArray(group?.member_npubs) && group.member_npubs.includes(viewerNpub);
+      })
+      .map((group) => resolveGroupRef(group?.group_id || group?.group_npub))
+      .filter(Boolean))];
+  },
+
   getPreferredChannelWriteGroup(channel) {
+    const allowedGroupIds = typeof this.getActorWritableGroupRefs === 'function'
+      ? this.getActorWritableGroupRefs()
+      : [];
     return selectPreferredWritableGroupRef({
       writeGroupId: channel?.write_group_id,
       boardGroupId: channel?.board_group_id,
@@ -1128,10 +1189,14 @@ export const taskBoardStateMixin = {
       scopePolicyGroupIds: channel?.scope_policy_group_ids || [],
       shares: channel?.shares || [],
       resolveGroupId: (groupId) => this.resolveGroupId(groupId),
+      allowedGroupIds,
     });
   },
 
   getPreferredRecordWriteGroup(record = null) {
+    const allowedGroupIds = typeof this.getActorWritableGroupRefs === 'function'
+      ? this.getActorWritableGroupRefs()
+      : [];
     return selectPreferredWritableGroupRef({
       writeGroupId: record?.write_group_id,
       boardGroupId: record?.board_group_id,
@@ -1139,6 +1204,7 @@ export const taskBoardStateMixin = {
       scopePolicyGroupIds: record?.scope_policy_group_ids || [],
       shares: record?.shares || [],
       resolveGroupId: (groupId) => this.resolveGroupId(groupId),
+      allowedGroupIds,
     });
   },
 

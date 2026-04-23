@@ -29,7 +29,7 @@ import { inboundDocument } from './translators/docs.js';
 import { renderMarkdownToHtml, hydrateStorageImageMarkup } from './markdown.js';
 import { normalizeGroupIds } from './scope-delivery.js';
 import { hasGroupKey } from './crypto/group-keys.js';
-import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
+import { getPreferredRecordWriteGroupForStore, getStoreActorWritableGroupRefs } from './preferred-write-group.js';
 import { diffLines } from 'diff';
 
 // ---------------------------------------------------------------------------
@@ -141,35 +141,47 @@ export function getPreferredDocWriteGroupRef(item = null, options = {}) {
   const hasKey = typeof options?.hasKey === 'function'
     ? options.hasKey
     : hasGroupKey;
+  const allowedGroupIds = normalizeGroupIds(options?.allowedGroupIds || []);
+  const hasAllowedFilter = allowedGroupIds.length > 0;
+  const allowedSet = new Set(allowedGroupIds);
+  const isAllowed = (groupId) => !hasAllowedFilter || allowedSet.has(groupId);
   const shares = getStoredDocShares(item);
   const groupIds = normalizeGroupIds(
     Array.isArray(item?.group_ids) && item.group_ids.length > 0
       ? item.group_ids
       : getShareGroupIds(shares),
   );
+  const candidateGroupIds = hasAllowedFilter
+    ? groupIds.filter((groupId) => isAllowed(groupId))
+    : groupIds;
   const explicitWriteGroupId = String(item?.write_group_id || '').trim() || null;
-  const scopePolicyGroupIds = normalizeGroupIds(item?.scope_policy_group_ids || []);
+  const scopePolicyGroupIds = normalizeGroupIds(item?.scope_policy_group_ids || [])
+    .filter((groupId) => !hasAllowedFilter || isAllowed(groupId));
   for (const groupId of scopePolicyGroupIds) {
-    if (groupIds.includes(groupId) && hasKey(groupId)) return groupId;
+    if (candidateGroupIds.includes(groupId) && hasKey(groupId)) return groupId;
   }
 
   const loadedWritableGroupIds = getWriteableShareGroupIds(shares)
-    .filter((groupId) => groupIds.includes(groupId) && hasKey(groupId));
-  if (explicitWriteGroupId && groupIds.includes(explicitWriteGroupId) && hasKey(explicitWriteGroupId)) {
+    .filter((groupId) => candidateGroupIds.includes(groupId) && hasKey(groupId));
+  if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && hasKey(explicitWriteGroupId)) {
     return explicitWriteGroupId;
   }
   if (loadedWritableGroupIds.length > 0) return loadedWritableGroupIds[0];
-  for (const groupId of groupIds) {
+  for (const groupId of candidateGroupIds) {
     if (hasKey(groupId)) return groupId;
   }
   if (scopePolicyGroupIds.length > 0) return scopePolicyGroupIds[0];
-  if (explicitWriteGroupId && groupIds.includes(explicitWriteGroupId)) return explicitWriteGroupId;
+  if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && candidateGroupIds.includes(explicitWriteGroupId)) {
+    return explicitWriteGroupId;
+  }
 
   const writeableGroupIds = getWriteableShareGroupIds(shares);
   for (const groupId of writeableGroupIds) {
-    if (groupIds.includes(groupId)) return groupId;
+    if (candidateGroupIds.includes(groupId)) return groupId;
   }
 
+  if (candidateGroupIds.length > 0) return candidateGroupIds[0];
+  if (hasAllowedFilter) return null;
   return groupIds[0] || explicitWriteGroupId || null;
 }
 
@@ -897,27 +909,34 @@ export const docsManagerMixin = {
   },
   getPreferredDocWriteGroupRef(record) {
     const resolveGroupRef = (value) => this._resolveDocGroupRef(value);
+    const allowedGroupIds = getStoreActorWritableGroupRefs(this);
     return getPreferredDocWriteGroupRef(
       normalizeDocAccessRow(record, resolveGroupRef, {
         hasKey: (value) => hasGroupKey(resolveGroupRef(value)),
+        allowedGroupIds,
       }),
       {
         hasKey: (value) => hasGroupKey(resolveGroupRef(value)),
+        allowedGroupIds,
       },
     );
   },
 
   normalizeDocumentRowGroupRefs(record) {
     const resolveGroupRef = (value) => this._resolveDocGroupRef(value);
+    const allowedGroupIds = getStoreActorWritableGroupRefs(this);
     return normalizeDocAccessRow(record, resolveGroupRef, {
       hasKey: (value) => hasGroupKey(resolveGroupRef(value)),
+      allowedGroupIds,
     });
   },
 
   normalizeDirectoryRowGroupRefs(record) {
     const resolveGroupRef = (value) => this._resolveDocGroupRef(value);
+    const allowedGroupIds = getStoreActorWritableGroupRefs(this);
     return normalizeDocAccessRow(record, resolveGroupRef, {
       hasKey: (value) => hasGroupKey(resolveGroupRef(value)),
+      allowedGroupIds,
     });
   },
 

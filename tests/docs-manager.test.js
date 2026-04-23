@@ -319,5 +319,44 @@ describe('docs-manager pure utilities', () => {
 
       expect(result).toBe('g-actor');
     });
+
+    it('does not choose a loaded group outside allowedGroupIds', () => {
+      const hiddenIdentity = createGroupIdentity();
+      cacheGroupKey({
+        group_id: 'g-hidden',
+        group_npub: 'npub1hidden_group',
+        nsec: hiddenIdentity.nsec,
+      });
+      const actorIdentity = createGroupIdentity();
+      cacheGroupKey({
+        group_id: 'g-actor',
+        group_npub: 'npub1actor_group',
+        nsec: actorIdentity.nsec,
+      });
+
+      const result = getPreferredDocWriteGroupRef({
+        group_ids: ['g-hidden', 'g-actor', 'g-other'],
+        scope_policy_group_ids: ['g-hidden', 'g-actor'],
+        shares: [
+          { type: 'group', group_id: 'g-hidden', access: 'write' },
+          { type: 'group', group_id: 'g-actor', access: 'write' },
+        ],
+      }, {
+        allowedGroupIds: ['g-actor', 'g-other'],
+      });
+
+      expect(result).toBe('g-actor');
+    });
+
+    it('returns null when allowedGroupIds has no overlap with delivery groups', () => {
+      const result = getPreferredDocWriteGroupRef({
+        group_ids: ['g-hidden'],
+        scope_policy_group_ids: ['g-hidden'],
+        shares: [{ type: 'group', group_id: 'g-hidden', access: 'write' }],
+      }, {
+        allowedGroupIds: ['g-visible'],
+      });
+      expect(result).toBeNull();
+    });
   });
 });
