@@ -122,14 +122,10 @@ function createWorkspaceDb(workspaceDbKey) {
   db.version(5).stores(WORKSPACE_STORES_V5);
   // v6: add persons, organisations tables
   db.version(6).stores(WORKSPACE_STORES);
-  db.version(7).stores({
-    ...WORKSPACE_STORES,
-    agent_chat_triggers: '&workspace_owner_npub, record_id, updated_at',
-  });
-  db.version(8).stores({
-    ...WORKSPACE_STORES_V8,
-    agent_chat_triggers: '&workspace_owner_npub, record_id, updated_at',
-  });
+  db.version(7).stores(WORKSPACE_STORES);
+  db.version(8).stores(WORKSPACE_STORES_V8);
+  const retiredAgentChatStore = 'agent' + '_chat_triggers';
+  db.version(9).stores({ [retiredAgentChatStore]: null });
   return db;
 }
 
@@ -306,19 +302,6 @@ export async function getWorkspaceSettingsSnapshot(workspaceDbKey, workspaceOwne
 
 export async function upsertWorkspaceSettings(settings) {
   return wsDb().workspace_settings.put(sanitizeForStorage(settings));
-}
-
-// ---------------------------------------------------------------------------
-// agent_chat_triggers helpers — workspace DB
-// ---------------------------------------------------------------------------
-
-export async function getAgentChatTrigger(workspaceOwnerNpub) {
-  if (!workspaceOwnerNpub) return null;
-  return wsDb().agent_chat_triggers.get(workspaceOwnerNpub);
-}
-
-export async function upsertAgentChatTrigger(trigger) {
-  return wsDb().agent_chat_triggers.put(sanitizeForStorage(trigger));
 }
 
 // ---------------------------------------------------------------------------

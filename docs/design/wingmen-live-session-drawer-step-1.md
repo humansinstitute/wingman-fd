@@ -111,7 +111,7 @@ Cases:
 
 - `wingman-fd` does not currently contain a `live` nav section or a Wingmen Live session screen.
 - `wingman-fd` does not currently contain a Night Watchman runtime surface.
-- `workspace_settings` and `agent_chat_triggers` are workspace-scoped records and are not valid storage for per-session runtime metadata.
+- `workspace_settings` and the retired Agent Chat trigger workspace records are workspace-scoped and are not valid storage for per-session runtime metadata.
 - The closest local UI patterns are:
   - responsive side panels in [index.html](/Users/mini/code/wingmanbefree/wingman-fd/index.html) and [src/styles.css](/Users/mini/code/wingmanbefree/wingman-fd/src/styles.css)
   - the approval history modal in [index.html](/Users/mini/code/wingmanbefree/wingman-fd/index.html) and [src/styles.css](/Users/mini/code/wingmanbefree/wingman-fd/src/styles.css)
@@ -557,7 +557,7 @@ If any Flight Deck deep-link follow-up is later added:
 
 - The biggest risk is implementing this in the wrong repo and ending up with two live-session control planes.
 - A second concrete risk now exists in the current working tree: there is already partial FD-first live drawer wiring in progress, so an uncoordinated follow-up could merge contradictory assumptions into one UI.
-- Reusing `workspace_settings` or `agent_chat_triggers` for session runtime data would leak per-session state into workspace-scoped records.
+- Reusing `workspace_settings` or retired Agent Chat trigger records for session runtime data would leak per-session state into workspace-scoped records.
 - Filtering global Night Watch reports client-side is acceptable for the first slice but may become noisy if the report volume grows.
 - Moving `Cmd` actions into a drawer can regress focus and keyboard handling if it does not preserve the current menu accessibility behavior.
 - Broadening the first drawer slice beyond metadata and Night Watch controls creates avoidable merge risk with the existing `Cmd` menu and with the dirty-tree FD-first experiment in this repo.
@@ -575,7 +575,7 @@ If any Flight Deck deep-link follow-up is later added:
 ## Explicit Non-Goals
 
 - Do not store session runtime metadata in `workspace_settings`.
-- Do not store session runtime metadata in `agent_chat_triggers`.
+- Do not store session runtime metadata in retired Agent Chat trigger records.
 - Do not add a duplicate `/live` route or duplicate live session screen to Flight Deck.
 - Do not redesign the entire Wingmen Live surface beyond the requested drawer and modal path.
 - Do not start dev servers in this step.

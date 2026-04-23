@@ -7,7 +7,7 @@ Task `539eeac6-a5c7-444b-97f7-42a3ed2716e6` asks for a session-metadata drawer, 
 The original risk in `wingman-fd` was that an implementation here could try to reuse:
 
 - `workspace_settings`
-- `agent_chat_triggers`
+- the retired Agent Chat trigger workspace records
 
 Neither is correct for per-session runtime state.
 
@@ -29,7 +29,7 @@ Why:
 
 - Do not add a duplicate live-session screen to Flight Deck.
 - Do not create a Tower-synced record family for session runtime metadata.
-- Do not extend `workspace_settings` or `agent_chat_triggers` to carry session goal, next action, or Night Watch history.
+- Do not extend `workspace_settings` or the retired Agent Chat trigger workspace records to carry session goal, next action, or Night Watch history.
 - Target the real UI work to `../../wingmen/src/ui/views/live-view.js` and related session/nightwatch modules.
 - Keep any later Flight Deck work narrow and integration-focused.
 

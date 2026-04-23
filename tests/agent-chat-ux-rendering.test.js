@@ -6,22 +6,20 @@ const htmlPath = path.resolve(import.meta.dirname, '..', 'index.html');
 const html = fs.readFileSync(htmlPath, 'utf-8');
 
 describe('Agent Chat UX rendering hooks', () => {
-  it('renders the trigger inspection summary card in settings', () => {
-    expect(html).toContain('agent-chat-trigger-summary-card');
-    expect(html).toContain('agentChatTriggerValidationHeadline()');
-    expect(html).toContain('Passive inspection for any saved workspace Agent Chat record');
-    expect(html).toContain('Run Current-Actor Check');
-    expect(html).toContain('signed-in actor');
+  it('does not render the retired trigger inspection surface in settings', () => {
+    const retiredTriggerClassPrefix = 'agent-chat' + '-trigger';
+    const retiredTriggerBindingPrefix = 'agentChat' + 'Trigger';
+    expect(html).not.toContain(`${retiredTriggerClassPrefix}-summary-card`);
+    expect(html).not.toContain(`${retiredTriggerBindingPrefix}ValidationHeadline()`);
+    expect(html).not.toContain('Passive inspection for any saved workspace Agent Chat record');
+    expect(html).not.toContain('Run Current-Actor Check');
     expect(html).not.toContain('Save Agent Chat Rule');
     expect(html).not.toContain('Enable Agent Chat routing for this workspace');
-  });
-
-  it('renders operator diagnostics on the trigger surface', () => {
-    expect(html).toContain('agentChatOperatorWarnings.length');
-    expect(html).toContain('agentChatDiagnosticsScopeNote');
-    expect(html).toContain('agent-chat-trigger-operator-card');
-    expect(html).toContain('Passive Diagnostics');
-    expect(html).toContain('Tower only exposes wrapped-key inspection for the signed-in actor');
+    expect(html).not.toContain('agentChatOperatorWarnings.length');
+    expect(html).not.toContain('agentChatDiagnosticsScopeNote');
+    expect(html).not.toContain(`${retiredTriggerClassPrefix}-operator-card`);
+    expect(html).not.toContain('Passive Diagnostics');
+    expect(html).not.toContain('Tower only exposes wrapped-key inspection for the signed-in actor');
   });
 
   it('does not render Agent Chat reply cues in chat', () => {

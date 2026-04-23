@@ -15,7 +15,6 @@ import {
   getPendingWrites,
   removePendingWrite,
   upsertWorkspaceSettings,
-  upsertAgentChatTrigger,
   upsertChannel,
   upsertMessage,
   upsertDocument,
@@ -54,13 +53,11 @@ import { inboundPerson, recordFamilyHash as personFamilyHash } from '../translat
 import { inboundOrganisation, recordFamilyHash as organisationFamilyHash } from '../translators/organisations.js';
 import { inboundOpportunity, recordFamilyHash as opportunityFamilyHash } from '../translators/opportunities.js';
 import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from '../translators/settings.js';
-import { inboundAgentChatTrigger, recordFamilyHash as agentChatTriggerFamilyHash } from '../translators/agent-chat-trigger.js';
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
 import { pruneInaccessibleRecords, repairStaleGroupRefs } from '../access-pruner.js';
 import { flightDeckLog } from '../logging.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
-const AGENT_CHAT_TRIGGER_FAMILY = agentChatTriggerFamilyHash('agent_chat_trigger');
 const CHANNEL_FAMILY = recordFamilyHash('channel');
 const MESSAGE_FAMILY = recordFamilyHash('chat_message');
 const DOCUMENT_FAMILY = recordFamilyHash('document');
@@ -87,9 +84,6 @@ async function materializeRecordForFamily(family, record) {
   if (family === SETTINGS_FAMILY) {
     const row = await inboundWorkspaceSettings(record);
     await upsertWorkspaceSettings(row);
-  } else if (family === AGENT_CHAT_TRIGGER_FAMILY) {
-    const row = await inboundAgentChatTrigger(record);
-    await upsertAgentChatTrigger(row);
   } else if (family === CHANNEL_FAMILY) {
     const row = await inboundChannel(record);
     await upsertChannel(row);

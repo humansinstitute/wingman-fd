@@ -30,7 +30,6 @@ describe('sync repair helpers', () => {
   it('exposes stable metadata for all selectable sync families', () => {
     expect(SYNC_FAMILY_OPTIONS.map((family) => family.id)).toEqual([
       'settings',
-      'agent_chat_trigger',
       'channel',
       'chat_message',
       'directory',

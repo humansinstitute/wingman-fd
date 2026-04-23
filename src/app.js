@@ -611,19 +611,6 @@ export function initApp() {
     workspaceSettingsVersion: 0,
     workspaceSettingsGroupIds: [],
     workspaceHarnessUrl: '',
-    agentChatTriggerRecordId: '',
-    agentChatTriggerVersion: 0,
-    agentChatTriggerGroupIds: [],
-    agentChatTriggerEnabled: true,
-    agentChatTriggerTargetGroupId: '',
-    agentChatTriggerTargetGroupNpub: '',
-    agentChatTriggerUpdatedAt: '',
-    agentChatTriggerDiagnostics: [],
-    agentChatTriggerDiagnosticsLoading: false,
-    agentChatTriggerDiagnosticsError: null,
-    agentChatTriggerError: null,
-    agentChatTriggerSuccess: null,
-    _agentChatTriggerDiagnosticsRequestId: 0,
     workspaceProfileNameInput: '',
     workspaceProfileSlugInput: '',
     workspaceProfileDescriptionInput: '',
@@ -1771,19 +1758,6 @@ export function initApp() {
       this.workspaceSettingsVersion = 0;
       this.workspaceSettingsGroupIds = [];
       this.workspaceHarnessUrl = '';
-      this.agentChatTriggerRecordId = '';
-      this.agentChatTriggerVersion = 0;
-      this.agentChatTriggerGroupIds = [];
-      this.agentChatTriggerEnabled = true;
-      this.agentChatTriggerTargetGroupId = '';
-      this.agentChatTriggerTargetGroupNpub = '';
-      this.agentChatTriggerUpdatedAt = '';
-      this.agentChatTriggerDiagnostics = [];
-      this.agentChatTriggerDiagnosticsLoading = false;
-      this.agentChatTriggerDiagnosticsError = null;
-      this.agentChatTriggerError = null;
-      this.agentChatTriggerSuccess = null;
-      this._agentChatTriggerDiagnosticsRequestId = 0;
       this.revokeWorkspaceAvatarPreviewObjectUrl();
       this.hasBootstrappedUnreadTracking = false;
       this.workspaceProfileNameInput = '';

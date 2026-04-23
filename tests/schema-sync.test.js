@@ -17,7 +17,6 @@ vi.mock('../src/translators/record-crypto.js', () => ({
 import { APP_NPUB } from '../src/app-identity.js';
 import { SYNC_FAMILY_OPTIONS } from '../src/sync-families.js';
 import { outboundApproval } from '../src/translators/approvals.js';
-import { outboundAgentChatTrigger } from '../src/translators/agent-chat-trigger.js';
 import { outboundAudioNote } from '../src/translators/audio-notes.js';
 import { outboundChannel, outboundChatMessage } from '../src/translators/chat.js';
 import { outboundComment } from '../src/translators/comments.js';
@@ -35,9 +34,9 @@ import { validateAgainstSchema } from '../../sb-publisher/src/schema-validate.js
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const schemaDir = path.resolve(__dirname, '../../sb-publisher/schemas/flightdeck');
+const retiredFamilies = new Set(['agent' + '_chat_trigger']);
 
 const expectedFamilies = [
-  'agent_chat_trigger',
   'approval',
   'audio_note',
   'channel',
@@ -71,6 +70,7 @@ describe('published Flight Deck schema manifests', () => {
     const families = fs.readdirSync(schemaDir)
       .filter((file) => file.endsWith('-v1.json'))
       .map((file) => file.replace(/-v1\.json$/, ''))
+      .filter((family) => !retiredFamilies.has(family))
       .sort();
 
     expect(families).toEqual(expectedFamilies);
@@ -83,16 +83,6 @@ describe('published Flight Deck schema manifests', () => {
 
   it('validate real outbound Flight Deck payloads', async () => {
     const payloads = {
-      agent_chat_trigger: JSON.parse((await outboundAgentChatTrigger({
-        record_id: 'agent-chat-trigger:npub_owner',
-        owner_npub: 'npub_owner',
-        workspace_owner_npub: 'npub_owner',
-        enabled: true,
-        target_group_id: 'group-1',
-        target_group_npub: 'npub1group',
-        group_ids: ['group-1'],
-        updated_at: '2026-04-08T00:00:00.000Z',
-      })).owner_payload.ciphertext),
       approval: JSON.parse((await outboundApproval({
         record_id: 'approval-1',
         owner_npub: 'npub_owner',

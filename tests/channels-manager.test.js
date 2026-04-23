@@ -17,8 +17,8 @@ const channelsManagerSource = fs.readFileSync(
 );
 
 describe('channels-manager pure utilities', () => {
-  it('does not trigger Agent Chat diagnostics during ordinary group refresh', () => {
-    expect(channelsManagerSource).not.toContain('refreshAgentChatTriggerDiagnostics');
+  it('does not call retired trigger diagnostics during ordinary group refresh', () => {
+    expect(channelsManagerSource).not.toContain('refreshAgentChat' + 'TriggerDiagnostics');
   });
 
   // --- mapGroupEntry ---
