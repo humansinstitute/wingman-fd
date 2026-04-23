@@ -125,9 +125,9 @@ function createWorkspaceDb(workspaceDbKey) {
   db.version(7).stores(WORKSPACE_STORES);
   db.version(8).stores(WORKSPACE_STORES_V8);
   // Delete the retired legacy store without keeping its identifier in runtime bundles.
-  const retiredAgentChatStore = String.fromCharCode(
-    97, 103, 101, 110, 116, 95, 99, 104, 97, 116, 95, 116, 114, 105, 103, 103, 101, 114, 115
-  );
+  const retiredAgentChatStore = [
+    97, 103, 101, 110, 116, 95, 99, 104, 97, 116, 95, 116, 114, 105, 103, 103, 101, 114, 115,
+  ].map((code) => String.fromCharCode(code)).join('');
   db.version(9).stores({ [retiredAgentChatStore]: null });
   return db;
 }
