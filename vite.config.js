@@ -197,6 +197,6 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./tests/setup.js'],
     include: ['./tests/**/*.test.js'],
-    exclude: ['./tests/e2e/**'],
+    exclude: ['./tests/e2e/**', './tests/bun/**'],
   },
 });
