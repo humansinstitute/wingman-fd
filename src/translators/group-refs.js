@@ -13,6 +13,24 @@ export function buildWriteGroupFields(writeGroupRef) {
   return { write_group_npub: normalized };
 }
 
+export function resolveGroupIdRef(groupRef, groupRefMap) {
+  const normalized = normalizeGroupRef(groupRef, groupRefMap || new Map());
+  return looksLikeUuid(normalized) ? normalized : null;
+}
+
+export function requireGroupIdRef(groupRef, groupRefMap, label = 'groupId') {
+  const groupId = resolveGroupIdRef(groupRef, groupRefMap);
+  if (groupId) return groupId;
+
+  const value = String(groupRef || '').trim();
+  const suffix = value ? `, received ${value}` : '';
+  throw new Error(`${label} must be a stable groupId UUID${suffix}`);
+}
+
+export function buildDurableWriteGroupFields(writeGroupRef, groupRefMap) {
+  return { write_group_id: requireGroupIdRef(writeGroupRef, groupRefMap, 'write group') };
+}
+
 /**
  * Build a map from any group ref (npub or UUID) to the stable group_id.
  * group_payloads carry both group_id (stable UUID) and group_npub (rotating).

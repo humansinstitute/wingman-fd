@@ -41,8 +41,7 @@ function getEffectiveSigningNpub(signingNpub = null) {
 
 function getEffectiveViewerNpub(viewerNpub = null) {
   return String(
-    getActiveWorkspaceKeyNpub()
-    || viewerNpub
+    viewerNpub
     || getActiveSessionNpub()
     || ''
   ).trim();

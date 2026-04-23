@@ -132,7 +132,7 @@ describe('api sync auth and owner-write detection', () => {
     });
   });
 
-  it('uses the active workspace key as viewer_npub for record history reads', async () => {
+  it('uses the real user as viewer_npub for record history reads', async () => {
     workspaceSecret = new Uint8Array(32).fill(7);
     workspaceNpub = 'npub1workspacekey';
     sessionNpub = 'npub1collaborator';
@@ -156,14 +156,14 @@ describe('api sync auth and owner-write detection', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      'https://sb.example/api/v4/records/rec-1/history?owner_npub=npub1owner&viewer_npub=npub1workspacekey'
+      'https://sb.example/api/v4/records/rec-1/history?owner_npub=npub1owner&viewer_npub=npub1collaborator'
     );
     expect(result.requestUrl).toBe(
-      'https://sb.example/api/v4/records/rec-1/history?owner_npub=npub1owner&viewer_npub=npub1workspacekey'
+      'https://sb.example/api/v4/records/rec-1/history?owner_npub=npub1owner&viewer_npub=npub1collaborator'
     );
   });
 
-  it('uses the active workspace key as viewer_npub for record pulls', async () => {
+  it('uses the real user as viewer_npub for record pulls', async () => {
     workspaceSecret = new Uint8Array(32).fill(7);
     workspaceNpub = 'npub1workspacekey';
     sessionNpub = 'npub1collaborator';
@@ -188,14 +188,14 @@ describe('api sync auth and owner-write detection', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      'https://sb.example/api/v4/records?owner_npub=npub1owner&viewer_npub=npub1workspacekey&record_family_hash=family-1&since=2026-04-22T00%3A00%3A00.000Z'
+      'https://sb.example/api/v4/records?owner_npub=npub1owner&viewer_npub=npub1collaborator&record_family_hash=family-1&since=2026-04-22T00%3A00%3A00.000Z'
     );
     expect(result.requestUrl).toBe(
-      'https://sb.example/api/v4/records?owner_npub=npub1owner&viewer_npub=npub1workspacekey&record_family_hash=family-1&since=2026-04-22T00%3A00%3A00.000Z'
+      'https://sb.example/api/v4/records?owner_npub=npub1owner&viewer_npub=npub1collaborator&record_family_hash=family-1&since=2026-04-22T00%3A00%3A00.000Z'
     );
   });
 
-  it('uses the active workspace key as viewer_npub for heartbeat checks', async () => {
+  it('uses the real user as viewer_npub for heartbeat checks', async () => {
     workspaceSecret = new Uint8Array(32).fill(7);
     workspaceNpub = 'npub1workspacekey';
     sessionNpub = 'npub1collaborator';
@@ -220,9 +220,35 @@ describe('api sync auth and owner-write detection', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.body).toEqual({
       owner_npub: 'npub1owner',
-      viewer_npub: 'npub1workspacekey',
+      viewer_npub: 'npub1collaborator',
       family_cursors: { task: 'cursor-1' },
     });
+  });
+
+  it('falls back to the active real user when viewer_npub is omitted', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1collaborator';
+
+    const fetchMock = vi.fn(async (requestUrl) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ requestUrl, records: [] }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    await api.fetchRecords({
+      owner_npub: 'npub1owner',
+      record_family_hash: 'family-1',
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://sb.example/api/v4/records?owner_npub=npub1owner&viewer_npub=npub1collaborator&record_family_hash=family-1'
+    );
   });
 
   it('registers workspace keys with real-user auth even when workspace auth is active', async () => {

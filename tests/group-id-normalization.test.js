@@ -2,11 +2,14 @@ import { describe, it, expect, vi } from 'vitest';
 
 import {
   looksLikeUuid,
+  buildDurableWriteGroupFields,
   buildWriteGroupFields,
   buildGroupRefMap,
   normalizeGroupRef,
   normalizeShareGroupRefs,
   extractGroupIds,
+  requireGroupIdRef,
+  resolveGroupIdRef,
 } from '../src/translators/group-refs.js';
 
 // ---------------------------------------------------------------------------
@@ -219,5 +222,26 @@ describe('buildWriteGroupFields', () => {
   it('returns empty object for empty input', () => {
     expect(buildWriteGroupFields('')).toEqual({});
     expect(buildWriteGroupFields(null)).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Durable write refs — new app writes should use stable groupId UUIDs
+// ---------------------------------------------------------------------------
+
+describe('durable write group refs', () => {
+  it('builds write_group_id after resolving a legacy group_npub through the ref map', () => {
+    const map = new Map([
+      ['npub1grouprefexample', '3fa85f64-5717-4562-b3fc-2c963f66afa6'],
+    ]);
+
+    expect(resolveGroupIdRef('npub1grouprefexample', map)).toBe('3fa85f64-5717-4562-b3fc-2c963f66afa6');
+    expect(buildDurableWriteGroupFields('npub1grouprefexample', map)).toEqual({
+      write_group_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+    });
+  });
+
+  it('requires durable write refs to resolve to a stable groupId UUID', () => {
+    expect(() => requireGroupIdRef('npub1grouprefexample', new Map())).toThrow(/stable groupId UUID/);
   });
 });
