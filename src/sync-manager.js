@@ -327,9 +327,16 @@ export const syncManagerMixin = {
     const resolvedGroupRef = typeof this.resolveGroupId === 'function' ? this.resolveGroupId(groupRef) : String(groupRef || '').trim();
     if (!resolvedGroupRef) return { ref: '', label: '', keyLoaded: false };
     const group = (this.groups || []).find((entry) => entry.group_id === resolvedGroupRef || entry.group_npub === resolvedGroupRef);
+    const canonicalRef = String(group?.group_id || resolvedGroupRef).trim();
+    const shortRef = canonicalRef.length > 18
+      ? `${canonicalRef.slice(0, 8)}…${canonicalRef.slice(-6)}`
+      : canonicalRef;
+    const label = group?.name
+      ? `${group.name} (${shortRef})`
+      : canonicalRef;
     return {
-      ref: resolvedGroupRef,
-      label: group?.name || resolvedGroupRef,
+      ref: canonicalRef,
+      label,
       keyLoaded: hasGroupKey(resolvedGroupRef),
     };
   },

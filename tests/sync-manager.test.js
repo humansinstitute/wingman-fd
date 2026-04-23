@@ -886,7 +886,7 @@ describe('record status modal', () => {
     await fn({ familyId: 'task', recordId: 'task-1', label: 'Task One' });
 
     expect(store.recordStatusWriteGroupRef).toBe('group-1');
-    expect(store.recordStatusWriteGroupLabel).toBe('Scope Writers');
+    expect(store.recordStatusWriteGroupLabel).toBe('Scope Writers (group-1)');
     expect(store.recordStatusNotice).toBe('Task One is missing on Tower. You can force submit this local snapshot as version 1.');
   });
 
