@@ -12,22 +12,140 @@
  */
 
 import {
-  personalEncryptForNpub,
-  personalDecryptFromNpub,
-  decodeNsec,
-  bytesToHex,
-  secretToPubkey,
-} from '../auth/nostr.js';
-import { createGroupIdentity } from './group-keys.js';
+  clearActiveWorkspaceUserKey,
+  createEncryptedWorkspaceUserKeyBlob,
+  decryptWorkspaceUserKeyBlob,
+  exportWorkspaceUserKeyForWorker as exportLibraryWorkspaceUserKeyForWorker,
+  generateWorkspaceUserKey,
+  getActiveWorkspaceUserKey,
+  getActiveWorkspaceUserKeyNpub,
+  getWorkspaceUserKeySecretForAuth as getLibraryWorkspaceUserKeySecretForAuth,
+  getWorkspaceUserKeySecretForCrypto,
+  isActiveWorkspaceUserKeyRegistered,
+  markActiveWorkspaceUserKeyRegistered,
+  setActiveWorkspaceUserKey,
+} from '@superbased/browser';
+import { bytesToHex, decodeNsec, generateLocalIdentity } from '@superbased/core';
+import { personalEncryptForNpub, personalDecryptFromNpub } from '../auth/nostr.js';
 import { getSharedDb } from '../db.js';
 import { flightDeckLog } from '../logging.js';
 
 // ---------------------------------------------------------------------------
-// In-memory state — the active workspace session key
+// Flight Deck compatibility adapters
 // ---------------------------------------------------------------------------
 
-let _activeWsKey = null;
-let _wsKeyRegistered = false;
+function clean(value) {
+  return String(value || '').trim();
+}
+
+function firstClean(...values) {
+  for (const value of values) {
+    const normalized = clean(value);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+function normalizeEpoch(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    const epoch = Number(value);
+    if (Number.isFinite(epoch) && epoch > 0) return epoch;
+  }
+  return 1;
+}
+
+function toLibraryWorkspaceUserKey(key, fallback = {}) {
+  if (!key) return null;
+  const secret = key.secret instanceof Uint8Array ? key.secret : decodeNsec(key.nsec);
+  return {
+    nsec: key.nsec,
+    secret,
+    secretHex: firstClean(key.secretHex, bytesToHex(secret)),
+    workspaceUserKeyNpub: firstClean(
+      key.workspaceUserKeyNpub,
+      key.workspace_user_key_npub,
+      key.ws_key_npub,
+      key.npub,
+      fallback.workspaceUserKeyNpub,
+      fallback.npub,
+    ),
+    epoch: normalizeEpoch(
+      key.epoch,
+      key.workspace_user_key_epoch,
+      key.ws_key_epoch,
+      fallback.epoch,
+    ),
+    workspaceServiceNpub: firstClean(
+      key.workspaceServiceNpub,
+      key.workspace_service_npub,
+      key.workspaceOwnerNpub,
+      key.workspace_owner_npub,
+      fallback.workspaceServiceNpub,
+      fallback.workspaceOwnerNpub,
+    ),
+    userNpub: firstClean(
+      key.userNpub,
+      key.user_npub,
+      key.encrypted_by_npub,
+      fallback.userNpub,
+      fallback.user_npub,
+    ),
+  };
+}
+
+function toFlightDeckWorkspaceKey(key) {
+  if (!key) return null;
+  const workspaceUserKeyNpub = firstClean(key.workspaceUserKeyNpub, key.workspace_user_key_npub, key.ws_key_npub, key.npub);
+  const workspaceServiceNpub = firstClean(key.workspaceServiceNpub, key.workspace_service_npub, key.workspaceOwnerNpub, key.workspace_owner_npub);
+  return {
+    nsec: key.nsec,
+    npub: workspaceUserKeyNpub,
+    secret: key.secret,
+    secretHex: key.secretHex,
+    epoch: normalizeEpoch(key.epoch, key.workspace_user_key_epoch, key.ws_key_epoch),
+    workspaceOwnerNpub: workspaceServiceNpub,
+    workspaceServiceNpub,
+    workspaceUserKeyNpub,
+    userNpub: firstClean(key.userNpub, key.user_npub, key.encrypted_by_npub),
+  };
+}
+
+function toLibraryWorkspaceUserKeyBlob(blob) {
+  if (!blob) return blob;
+  const workspaceServiceNpub = firstClean(blob.workspace_service_npub, blob.workspace_owner_npub);
+  const workspaceUserKeyNpub = firstClean(blob.workspace_user_key_npub, blob.ws_key_npub);
+  const epoch = normalizeEpoch(blob.workspace_user_key_epoch, blob.ws_key_epoch);
+  return {
+    ...blob,
+    workspace_service_npub: workspaceServiceNpub,
+    workspace_owner_npub: workspaceServiceNpub,
+    workspace_user_key_npub: workspaceUserKeyNpub,
+    ws_key_npub: workspaceUserKeyNpub,
+    workspace_user_key_epoch: epoch,
+    ws_key_epoch: epoch,
+  };
+}
+
+function toFlightDeckWorkspaceKeyBlob(blob) {
+  if (!blob) return blob;
+  const normalized = toLibraryWorkspaceUserKeyBlob(blob);
+  return {
+    ...normalized,
+    workspace_owner_npub: normalized.workspace_service_npub,
+    ws_key_npub: normalized.workspace_user_key_npub,
+    ws_key_epoch: normalized.workspace_user_key_epoch,
+  };
+}
+
+const realUserNip44Auth = {
+  async nip44EncryptToNpub(recipientNpub, plaintext) {
+    return personalEncryptForNpub(recipientNpub, plaintext);
+  },
+  async nip44DecryptFromNpub(senderNpub, ciphertext) {
+    return personalDecryptFromNpub(senderNpub, ciphertext);
+  },
+};
 
 /**
  * Set the active workspace session key after decryption.
@@ -35,8 +153,7 @@ let _wsKeyRegistered = false;
  * @param {{ registered?: boolean }} options
  */
 export function setActiveWorkspaceKey(key, options = {}) {
-  _activeWsKey = key || null;
-  _wsKeyRegistered = Boolean(options.registered);
+  setActiveWorkspaceUserKey(toLibraryWorkspaceUserKey(key), options);
 }
 
 /**
@@ -44,15 +161,15 @@ export function setActiveWorkspaceKey(key, options = {}) {
  * Only after this should the key be used for NIP-98 API auth.
  */
 export function markWorkspaceKeyRegistered() {
-  _wsKeyRegistered = true;
+  markActiveWorkspaceUserKeyRegistered();
 }
 
 export function isWorkspaceKeyRegistered() {
-  return _wsKeyRegistered;
+  return isActiveWorkspaceUserKeyRegistered();
 }
 
 export function getActiveWorkspaceKey() {
-  return _activeWsKey;
+  return toFlightDeckWorkspaceKey(getActiveWorkspaceUserKey());
 }
 
 /**
@@ -61,8 +178,7 @@ export function getActiveWorkspaceKey() {
  * This prevents using the key for API auth before Tower knows about it.
  */
 export function getActiveWorkspaceKeySecretForAuth() {
-  if (!_wsKeyRegistered) return null;
-  return _activeWsKey?.secret ?? null;
+  return getLibraryWorkspaceUserKeySecretForAuth();
 }
 
 /**
@@ -70,15 +186,15 @@ export function getActiveWorkspaceKeySecretForAuth() {
  * Available regardless of registration status — local crypto doesn't need Tower.
  */
 export function getActiveWorkspaceKeySecret() {
-  return _activeWsKey?.secret ?? null;
+  return getWorkspaceUserKeySecretForCrypto();
 }
 
 export function getActiveWorkspaceKeyNpub() {
-  return _activeWsKey?.npub ?? null;
+  return getActiveWorkspaceUserKeyNpub();
 }
 
 export function clearActiveWorkspaceKey() {
-  _activeWsKey = null;
+  clearActiveWorkspaceUserKey();
 }
 
 /**
@@ -86,13 +202,17 @@ export function clearActiveWorkspaceKey() {
  * Returns a plain serializable object or null.
  */
 export function exportWorkspaceKeyForWorker() {
-  if (!_activeWsKey) return null;
+  const payload = exportLibraryWorkspaceUserKeyForWorker();
+  if (!payload) return null;
   return {
-    nsec: _activeWsKey.nsec,
-    npub: _activeWsKey.npub,
-    epoch: _activeWsKey.epoch,
-    workspaceOwnerNpub: _activeWsKey.workspaceOwnerNpub,
-    registered: _wsKeyRegistered,
+    nsec: payload.nsec,
+    npub: payload.workspaceUserKeyNpub,
+    workspaceUserKeyNpub: payload.workspaceUserKeyNpub,
+    epoch: payload.epoch,
+    workspaceOwnerNpub: payload.workspaceServiceNpub,
+    workspaceServiceNpub: payload.workspaceServiceNpub,
+    userNpub: payload.userNpub,
+    registered: payload.registered,
   };
 }
 
@@ -101,21 +221,11 @@ export function exportWorkspaceKeyForWorker() {
  * Accepts the serializable object from exportWorkspaceKeyForWorker().
  */
 export function importWorkspaceKeyFromMain(data) {
-  if (!data?.nsec || !data?.npub) {
-    _activeWsKey = null;
-    _wsKeyRegistered = false;
+  if (!data?.nsec || !(data?.npub || data?.workspaceUserKeyNpub || data?.workspace_user_key_npub || data?.ws_key_npub)) {
+    clearActiveWorkspaceUserKey();
     return;
   }
-  const secret = decodeNsec(data.nsec);
-  _activeWsKey = {
-    nsec: data.nsec,
-    secret,
-    secretHex: bytesToHex(secret),
-    npub: data.npub,
-    epoch: data.epoch ?? 1,
-    workspaceOwnerNpub: data.workspaceOwnerNpub || '',
-  };
-  _wsKeyRegistered = Boolean(data.registered);
+  setActiveWorkspaceUserKey(toLibraryWorkspaceUserKey(data), { registered: Boolean(data.registered) });
 }
 
 // ---------------------------------------------------------------------------
@@ -127,13 +237,12 @@ export function importWorkspaceKeyFromMain(data) {
  * Returns { nsec, npub, secret, secretHex }.
  */
 export function generateWorkspaceSessionKey() {
-  const identity = createGroupIdentity();
-  const secret = decodeNsec(identity.nsec);
+  const identity = generateLocalIdentity();
   return {
     nsec: identity.nsec,
     npub: identity.npub,
-    secret,
-    secretHex: bytesToHex(secret),
+    secret: identity.secret,
+    secretHex: identity.secretHex,
   };
 }
 
@@ -152,16 +261,15 @@ export async function createEncryptedKeyBlob({
   workspaceOwnerNpub,
   userNpub,
 }) {
-  const encryptedNsec = await personalEncryptForNpub(userNpub, wsKeyNsec);
-  return {
-    version: 1,
-    workspace_owner_npub: workspaceOwnerNpub,
-    ws_key_npub: wsKeyNpub,
-    ws_key_epoch: wsKeyEpoch,
-    encrypted_nsec: encryptedNsec,
-    encrypted_by_npub: userNpub,
-    created_at: new Date().toISOString(),
-  };
+  const blob = await createEncryptedWorkspaceUserKeyBlob({
+    auth: realUserNip44Auth,
+    workspaceServiceNpub: workspaceOwnerNpub,
+    userNpub,
+    workspaceUserKeyNsec: wsKeyNsec,
+    workspaceUserKeyNpub: wsKeyNpub,
+    epoch: wsKeyEpoch,
+  });
+  return toFlightDeckWorkspaceKeyBlob(blob);
 }
 
 /**
@@ -172,16 +280,11 @@ export async function decryptKeyBlob(blob) {
   if (!blob?.encrypted_nsec || !blob?.encrypted_by_npub) {
     throw new Error('Invalid workspace key blob: missing encrypted_nsec or encrypted_by_npub');
   }
-  const nsec = await personalDecryptFromNpub(blob.encrypted_by_npub, blob.encrypted_nsec);
-  const secret = decodeNsec(nsec);
-  return {
-    nsec,
-    npub: blob.ws_key_npub,
-    secret,
-    secretHex: bytesToHex(secret),
-    epoch: blob.ws_key_epoch ?? 1,
-    workspaceOwnerNpub: blob.workspace_owner_npub || '',
-  };
+  const key = await decryptWorkspaceUserKeyBlob(
+    toLibraryWorkspaceUserKeyBlob(blob),
+    realUserNip44Auth,
+  );
+  return toFlightDeckWorkspaceKey(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,13 +301,14 @@ function wsKeysTable() {
  * @param {{ registered?: boolean }} options - Whether Tower registration has been confirmed
  */
 export async function cacheWorkspaceKeyBlob(blob, options = {}) {
-  if (!blob?.workspace_owner_npub) return;
+  const fdBlob = toFlightDeckWorkspaceKeyBlob(blob);
+  if (!fdBlob?.workspace_owner_npub) return;
   await wsKeysTable().put({
-    workspace_owner_npub: blob.workspace_owner_npub,
-    user_npub: blob.encrypted_by_npub || '',
-    ws_key_npub: blob.ws_key_npub || '',
-    ws_key_epoch: blob.ws_key_epoch ?? 1,
-    encrypted_blob: blob,
+    workspace_owner_npub: fdBlob.workspace_owner_npub,
+    user_npub: fdBlob.encrypted_by_npub || '',
+    ws_key_npub: fdBlob.ws_key_npub || '',
+    ws_key_epoch: fdBlob.ws_key_epoch ?? 1,
+    encrypted_blob: fdBlob,
     registered: Boolean(options.registered),
     cached_at: Date.now(),
   });
@@ -218,7 +322,7 @@ export async function getCachedWorkspaceKeyRow(workspaceOwnerNpub) {
   if (!workspaceOwnerNpub) return null;
   const row = await wsKeysTable().get(workspaceOwnerNpub);
   if (!row?.encrypted_blob) return null;
-  return { blob: row.encrypted_blob, registered: Boolean(row.registered) };
+  return { blob: toFlightDeckWorkspaceKeyBlob(row.encrypted_blob), registered: Boolean(row.registered) };
 }
 
 /**
@@ -296,11 +400,14 @@ export async function bootstrapWorkspaceSessionKey({
   }
 
   // 2. No cache (or cache was corrupt) — generate new key
-  const generated = generateWorkspaceSessionKey();
+  const generated = generateWorkspaceUserKey({
+    workspaceServiceNpub: workspaceOwnerNpub,
+    userNpub,
+  });
   const blob = await createEncryptedKeyBlob({
     wsKeyNsec: generated.nsec,
-    wsKeyNpub: generated.npub,
-    wsKeyEpoch: 1,
+    wsKeyNpub: generated.workspaceUserKeyNpub,
+    wsKeyEpoch: generated.epoch,
     workspaceOwnerNpub,
     userNpub,
   });
@@ -310,17 +417,20 @@ export async function bootstrapWorkspaceSessionKey({
 
   const key = {
     nsec: generated.nsec,
-    npub: generated.npub,
+    npub: generated.workspaceUserKeyNpub,
     secret: generated.secret,
     secretHex: generated.secretHex,
-    epoch: 1,
+    epoch: generated.epoch,
     workspaceOwnerNpub,
+    workspaceServiceNpub: workspaceOwnerNpub,
+    workspaceUserKeyNpub: generated.workspaceUserKeyNpub,
+    userNpub,
   };
   setActiveWorkspaceKey(key);
 
   flightDeckLog('info', 'workspace-key', 'generated new workspace session key', {
     workspaceOwnerNpub,
-    wsKeyNpub: generated.npub,
+    wsKeyNpub: generated.workspaceUserKeyNpub,
   });
 
   // 4. Notify caller to register with Tower / store on Superbased
