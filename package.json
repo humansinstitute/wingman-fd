@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "start": "sh -c 'bunx vite preview --host 0.0.0.0 --port ${PORT:-8093} --strictPort'",
-    "build": "bunx vite build",
+    "build": "bunx vite build && node scripts/verify-dist-assets.mjs",
     "preview": "vite preview",
+    "verify:dist": "node scripts/verify-dist-assets.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test"
   },
