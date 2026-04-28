@@ -4267,6 +4267,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+  width: min(28rem, 34vw);
+  max-height: calc(100vh - 6.5rem);
   padding: 0.85rem 0.9rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -4294,6 +4296,47 @@ button:disabled {
 .doc-comment-thread-actions {
   display: flex;
   gap: 0.4rem;
+}
+
+.doc-comment-drawer-rail {
+  position: sticky;
+  top: 5.2rem;
+  align-self: flex-start;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  width: 2.25rem;
+  min-height: 9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+}
+
+.doc-comment-drawer-rail:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.doc-comment-drawer-rail span {
+  margin-top: 0.75rem;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.doc-comment-drawer-rail strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 0.72rem;
 }
 
 .doc-thread-icon-btn {
@@ -4324,8 +4367,46 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  max-height: 48vh;
+  max-height: 50vh;
   overflow-y: auto;
+}
+
+.doc-thread-empty,
+.doc-thread-placement-hint,
+.doc-thread-new-comment {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.doc-thread-empty,
+.doc-thread-placement-hint {
+  padding: 0.75rem;
+}
+
+.doc-thread-new-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem;
+}
+
+.doc-thread-new-comment-meta {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.doc-thread-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.doc-thread-group-selected .doc-thread-entry-root {
+  border-color: rgba(59, 130, 246, 0.35);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
 }
 
 .doc-thread-entry {
@@ -4336,8 +4417,35 @@ button:disabled {
 }
 
 .doc-thread-entry-root {
+  cursor: pointer;
+}
+
+.doc-thread-entry-root:hover {
+  border-color: rgba(59, 130, 246, 0.28);
+}
+
+.doc-thread-entry-root {
   background: rgba(59, 130, 246, 0.06);
   border-color: rgba(59, 130, 246, 0.18);
+}
+
+.doc-thread-entry-reply {
+  margin-left: 1rem;
+  background: var(--surface);
+}
+
+.doc-thread-row-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.doc-thread-action-link {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .doc-thread-entry-header {

@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-Dg6HntOU.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-tk2HttZy.css">
+  <script type="module" crossorigin src="/assets/index-fKCMMkg7.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Dvm0mfh3.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -2487,7 +2487,7 @@
                     <div
                       class="doc-content-layout"
                       data-doc-content-layout
-                      :class="{ 'doc-content-layout-with-thread': $store.chat.docCommentsVisible && $store.chat.selectedDocComment }"
+                      :class="{ 'doc-content-layout-with-thread': $store.chat.docCommentsVisible }"
                     >
                       <svg class="doc-comment-connector" x-show="$store.chat.hasDocCommentConnector" x-cloak>
                         <path
@@ -2559,120 +2559,187 @@
                         <div class="doc-block-add" x-show="$store.chat.docEditorMode === 'block'" @click="$store.chat.appendDocBlock()">+ Add block</div>
                       </div>
 
-                      <aside class="doc-comment-thread-panel" data-doc-thread-panel x-show="$store.chat.docCommentsVisible && $store.chat.selectedDocComment">
+                      <button
+                        type="button"
+                        class="doc-comment-drawer-rail"
+                        x-show="!$store.chat.docCommentsVisible"
+                        @click="$store.chat.toggleDocCommentsVisible()"
+                        title="Open comments"
+                      >
+                        <span>‹</span>
+                        <strong x-text="$store.chat.getRootDocComments().length"></strong>
+                      </button>
+
+                      <aside class="doc-comment-thread-panel" data-doc-thread-panel x-show="$store.chat.docCommentsVisible">
                         <div class="doc-comment-thread-header">
                           <div>
-                            <h3>Comment thread</h3>
-                            <small x-text="`Line ${$store.chat.selectedDocComment?.anchor_line_number || 1}`"></small>
+                            <h3>Comments</h3>
+                            <small x-text="$store.chat.getRootDocComments().length === 1 ? '1 thread' : `${$store.chat.getRootDocComments().length} threads`"></small>
                           </div>
                           <div class="doc-comment-thread-actions">
                             <button
                               type="button"
                               class="doc-thread-icon-btn"
-                              :title="$store.chat.selectedDocComment?.comment_status === 'resolved' ? 'Reopen comment' : 'Resolve comment'"
-                              @click="$store.chat.setDocCommentStatus($store.chat.selectedDocComment.record_id, $store.chat.selectedDocComment.comment_status === 'resolved' ? 'open' : 'resolved')"
+                              title="Add a new comment"
+                              @click="$store.chat.startDocCommentPlacement()"
                             >
-                              <span class="doc-thread-icon-glyph" aria-hidden="true">✓</span>
+                              <span class="doc-thread-icon-glyph" aria-hidden="true">+</span>
                             </button>
-                            <button type="button" class="doc-thread-icon-btn" title="Close thread" @click="$store.chat.closeDocCommentThread()">
-                              <span class="doc-thread-icon-glyph" aria-hidden="true">×</span>
+                            <button type="button" class="doc-thread-icon-btn" title="Collapse comments" @click="$store.chat.toggleDocCommentsVisible()">
+                              <span class="doc-thread-icon-glyph" aria-hidden="true">›</span>
                             </button>
                           </div>
                         </div>
 
-                        <div class="doc-thread-list">
-                          <div class="doc-thread-entry doc-thread-entry-root">
-                            <div class="doc-thread-entry-header">
-                              <template x-if="$store.chat.getSenderAvatar($store.chat.selectedDocComment?.sender_npub)">
-                                <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar($store.chat.selectedDocComment?.sender_npub)" alt="Profile picture" />
-                              </template>
-                              <template x-if="!$store.chat.getSenderAvatar($store.chat.selectedDocComment?.sender_npub)">
-                                <span class="doc-comment-avatar doc-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.selectedDocComment?.sender_npub))"></span>
-                              </template>
-                              <div class="doc-comment-chip-meta">
-                                <span class="doc-comment-author" x-text="$store.chat.getSenderName($store.chat.selectedDocComment?.sender_npub)"></span>
-                                <span class="doc-comment-time" x-text="$store.chat.formatRelativeTime($store.chat.selectedDocComment?.updated_at)"></span>
-                              </div>
-                              <span class="doc-thread-status-badge" :class="{ 'doc-thread-status-badge-resolved': $store.chat.selectedDocComment?.comment_status === 'resolved' }" x-text="$store.chat.selectedDocComment?.comment_status === 'resolved' ? 'Done' : 'Open'"></span>
-                            </div>
-                            <div class="doc-thread-entry-body" x-html="$store.chat.renderMarkdown($store.chat.selectedDocComment?.body || '')"></div>
-                            <div class="audio-attachment-list" x-show="($store.chat.selectedDocComment?.attachments || []).length > 0">
-                              <template x-for="attachment in ($store.chat.selectedDocComment?.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
-                                <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
-                                  <div class="audio-card-main">
-                                    <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
-                                    <div class="audio-card-meta">
-                                      <span>Voice note</span>
-                                      <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
-                                    </div>
-                                  </div>
-                                </button>
-                              </template>
-                            </div>
-                          </div>
-
-                          <template x-for="reply in $store.chat.selectedDocCommentReplies" :key="reply.record_id">
-                            <div class="doc-thread-entry">
-                              <div class="doc-thread-entry-header">
-                                <template x-if="$store.chat.getSenderAvatar(reply.sender_npub)">
-                                  <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="Profile picture" />
-                                </template>
-                                <template x-if="!$store.chat.getSenderAvatar(reply.sender_npub)">
-                                  <span class="doc-comment-avatar doc-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(reply.sender_npub))"></span>
-                                </template>
-                                <div class="doc-comment-chip-meta">
-                                  <span class="doc-comment-author" x-text="$store.chat.getSenderName(reply.sender_npub)"></span>
-                                  <span class="doc-comment-time" x-text="$store.chat.formatRelativeTime(reply.updated_at)"></span>
-                                </div>
-                              </div>
-                              <div class="doc-thread-entry-body" x-html="$store.chat.renderMarkdown(reply.body)"></div>
-                              <div class="audio-attachment-list" x-show="(reply.attachments || []).length > 0">
-                                <template x-for="attachment in (reply.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
-                                  <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
-                                    <div class="audio-card-main">
-                                      <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
-                                      <div class="audio-card-meta">
-                                        <span>Voice note</span>
-                                        <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
-                                      </div>
-                                    </div>
-                                  </button>
-                                </template>
-                              </div>
-                            </div>
-                          </template>
-                        </div>
-
-                        <div class="doc-thread-reply">
+                        <div class="doc-thread-new-comment" x-show="$store.chat.docCommentAnchorLine">
+                          <div class="doc-thread-new-comment-meta" x-text="$store.chat.getPendingDocCommentAnchorLabel()"></div>
                           <textarea
                             class="doc-thread-reply-input"
+                            data-doc-new-comment-input
                             rows="3"
-                            placeholder="Reply in thread..."
-                            x-model="$store.chat.newDocCommentReplyBody"
+                            placeholder="Write a new comment..."
+                            x-model="$store.chat.newDocCommentBody"
                             @input="$store.chat.handleMentionInput($event.target)"
                             @keydown="$store.chat.handleMentionKeydown($event)"
-                            @paste="$store.chat.handleDocCommentReplyPaste($event)"
-                            @keydown.meta.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocCommentReply()"
-                            @keydown.ctrl.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocCommentReply()"
+                            @paste="$store.chat.handleDocCommentPaste($event)"
+                            @keydown.meta.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocComment()"
+                            @keydown.ctrl.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocComment()"
                           ></textarea>
-                          <div class="doc-thread-reply-actions">
-                            <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-reply')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
-                            <button type="button" class="doc-thread-reply-btn" @click="$store.chat.addDocCommentReply()" :disabled="((!$store.chat.newDocCommentReplyBody.trim() && $store.chat.docCommentReplyAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newDocCommentReplyBody))">Reply</button>
-                          </div>
-                          <div class="audio-draft-list" x-show="$store.chat.docCommentReplyAudioDrafts.length > 0">
-                            <template x-for="draft in $store.chat.docCommentReplyAudioDrafts" :key="draft.draft_id">
+                          <div class="audio-draft-list" x-show="$store.chat.docCommentAudioDrafts.length > 0">
+                            <template x-for="draft in $store.chat.docCommentAudioDrafts" :key="draft.draft_id">
                               <div class="audio-card audio-card-draft">
                                 <div class="audio-card-main">
                                   <div class="audio-card-title" x-text="draft.title || 'Voice note'"></div>
                                   <div class="audio-card-meta">
                                     <span x-text="draft.duration_seconds ? $store.chat.formatAudioDuration(draft.duration_seconds) : 'Pending'"></span>
-                                    <span>Ready to reply</span>
+                                    <span>Ready to post</span>
                                   </div>
                                 </div>
-                                <button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('doc-reply', draft.draft_id)">&times;</button>
+                                <button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('doc-comment', draft.draft_id)">&times;</button>
                               </div>
                             </template>
                           </div>
+                          <div class="doc-thread-reply-actions">
+                            <button type="button" class="btn-cancel" @click="$store.chat.closeDocCommentModal()">Cancel</button>
+                            <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-comment')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
+                            <button type="button" class="doc-thread-reply-btn" @click="$store.chat.addDocComment()" :disabled="((!$store.chat.newDocCommentBody.trim() && $store.chat.docCommentAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newDocCommentBody))">Post</button>
+                          </div>
+                        </div>
+
+                        <div class="doc-thread-placement-hint" x-show="!$store.chat.docCommentAnchorLine">
+                          Click a comment marker beside a block to start a new anchored comment.
+                        </div>
+
+                        <div class="doc-thread-list">
+                          <div class="doc-thread-empty" x-show="$store.chat.getRootDocComments().length === 0">
+                            No comments yet.
+                          </div>
+                          <template x-for="root in $store.chat.getRootDocComments()" :key="root.record_id">
+                            <div class="doc-thread-group" :class="{ 'doc-thread-group-selected': root.record_id === $store.chat.selectedDocCommentId }">
+                              <div class="doc-thread-entry doc-thread-entry-root" @click="$store.chat.selectDocCommentThread(root.record_id)">
+                                <div class="doc-thread-entry-header">
+                                  <template x-if="$store.chat.getSenderAvatar(root.sender_npub)">
+                                    <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(root.sender_npub)" alt="Profile picture" />
+                                  </template>
+                                  <template x-if="!$store.chat.getSenderAvatar(root.sender_npub)">
+                                    <span class="doc-comment-avatar doc-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(root.sender_npub))"></span>
+                                  </template>
+                                  <div class="doc-comment-chip-meta">
+                                    <span class="doc-comment-author" x-text="$store.chat.getSenderName(root.sender_npub)"></span>
+                                    <span class="doc-comment-time" x-text="`${$store.chat.getDocCommentAnchorLabel(root)} · ${$store.chat.formatRelativeTime(root.updated_at)}`"></span>
+                                  </div>
+                                  <span class="doc-thread-status-badge" :class="{ 'doc-thread-status-badge-resolved': root.comment_status === 'resolved' }" x-text="root.comment_status === 'resolved' ? 'Done' : 'Open'"></span>
+                                </div>
+                                <div class="doc-thread-entry-body" x-html="$store.chat.renderMarkdown(root.body || '')"></div>
+                                <div class="audio-attachment-list" x-show="(root.attachments || []).length > 0">
+                                  <template x-for="attachment in (root.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
+                                    <button type="button" class="audio-card" @click.stop="$store.chat.playAudioAttachment(attachment)">
+                                      <div class="audio-card-main">
+                                        <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
+                                        <div class="audio-card-meta">
+                                          <span>Voice note</span>
+                                          <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
+                                        </div>
+                                      </div>
+                                    </button>
+                                  </template>
+                                </div>
+                              </div>
+
+                              <template x-for="reply in $store.chat.getDocCommentReplies(root.record_id)" :key="reply.record_id">
+                                <div class="doc-thread-entry doc-thread-entry-reply">
+                                  <div class="doc-thread-entry-header">
+                                    <template x-if="$store.chat.getSenderAvatar(reply.sender_npub)">
+                                      <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="Profile picture" />
+                                    </template>
+                                    <template x-if="!$store.chat.getSenderAvatar(reply.sender_npub)">
+                                      <span class="doc-comment-avatar doc-comment-avatar-fallback" x-text="$store.chat.getInitials($store.chat.getSenderName(reply.sender_npub))"></span>
+                                    </template>
+                                    <div class="doc-comment-chip-meta">
+                                      <span class="doc-comment-author" x-text="$store.chat.getSenderName(reply.sender_npub)"></span>
+                                      <span class="doc-comment-time" x-text="$store.chat.formatRelativeTime(reply.updated_at)"></span>
+                                    </div>
+                                  </div>
+                                  <div class="doc-thread-entry-body" x-html="$store.chat.renderMarkdown(reply.body)"></div>
+                                  <div class="audio-attachment-list" x-show="(reply.attachments || []).length > 0">
+                                    <template x-for="attachment in (reply.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
+                                      <button type="button" class="audio-card" @click="$store.chat.playAudioAttachment(attachment)">
+                                        <div class="audio-card-main">
+                                          <div class="audio-card-title" x-text="$store.chat.getAudioAttachmentPreview(attachment)"></div>
+                                          <div class="audio-card-meta">
+                                            <span>Voice note</span>
+                                            <span x-text="$store.chat.getAudioAttachmentNote(attachment)?.duration_seconds ? $store.chat.formatAudioDuration($store.chat.getAudioAttachmentNote(attachment).duration_seconds) : ''"></span>
+                                          </div>
+                                        </div>
+                                      </button>
+                                    </template>
+                                  </div>
+                                </div>
+                              </template>
+
+                              <div class="doc-thread-row-actions" x-show="root.record_id === $store.chat.selectedDocCommentId">
+                                <button
+                                  type="button"
+                                  class="doc-thread-action-link"
+                                  :title="root.comment_status === 'resolved' ? 'Reopen comment' : 'Resolve comment'"
+                                  @click="$store.chat.setDocCommentStatus(root.record_id, root.comment_status === 'resolved' ? 'open' : 'resolved')"
+                                  x-text="root.comment_status === 'resolved' ? 'Reopen' : 'Resolve'"
+                                ></button>
+                              </div>
+
+                              <div class="doc-thread-reply" x-show="root.record_id === $store.chat.selectedDocCommentId">
+                                <textarea
+                                  class="doc-thread-reply-input"
+                                  rows="3"
+                                  placeholder="Reply in thread..."
+                                  x-model="$store.chat.newDocCommentReplyBody"
+                                  @input="$store.chat.handleMentionInput($event.target)"
+                                  @keydown="$store.chat.handleMentionKeydown($event)"
+                                  @paste="$store.chat.handleDocCommentReplyPaste($event)"
+                                  @keydown.meta.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocCommentReply()"
+                                  @keydown.ctrl.enter.prevent="if (!$store.chat.mentionActive) $store.chat.addDocCommentReply()"
+                                ></textarea>
+                                <div class="doc-thread-reply-actions">
+                                  <button type="button" class="audio-trigger-btn" @click="$store.chat.openAudioRecorder('doc-reply')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
+                                  <button type="button" class="doc-thread-reply-btn" @click="$store.chat.addDocCommentReply()" :disabled="((!$store.chat.newDocCommentReplyBody.trim() && $store.chat.docCommentReplyAudioDrafts.length === 0) || $store.chat.containsInlineImageUploadToken($store.chat.newDocCommentReplyBody))">Reply</button>
+                                </div>
+                                <div class="audio-draft-list" x-show="$store.chat.docCommentReplyAudioDrafts.length > 0">
+                                  <template x-for="draft in $store.chat.docCommentReplyAudioDrafts" :key="draft.draft_id">
+                                    <div class="audio-card audio-card-draft">
+                                      <div class="audio-card-main">
+                                        <div class="audio-card-title" x-text="draft.title || 'Voice note'"></div>
+                                        <div class="audio-card-meta">
+                                          <span x-text="draft.duration_seconds ? $store.chat.formatAudioDuration(draft.duration_seconds) : 'Pending'"></span>
+                                          <span>Ready to reply</span>
+                                        </div>
+                                      </div>
+                                      <button type="button" class="audio-card-remove" @click="$store.chat.removeAudioDraft('doc-reply', draft.draft_id)">&times;</button>
+                                    </div>
+                                  </template>
+                                </div>
+                              </div>
+                            </div>
+                          </template>
                         </div>
                       </aside>
                     </div>

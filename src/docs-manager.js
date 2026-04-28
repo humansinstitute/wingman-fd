@@ -819,6 +819,30 @@ export const docsManagerMixin = {
     return current?.record_id || commentId || null;
   },
 
+  getRootDocComments() {
+    return this.docComments
+      .filter((comment) => !comment.parent_comment_id && comment.record_state !== 'deleted')
+      .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+  },
+
+  getDocCommentReplies(commentId) {
+    const rootId = String(commentId || '').trim();
+    if (!rootId) return [];
+    return this.docComments
+      .filter((comment) => comment.parent_comment_id === rootId && comment.record_state !== 'deleted')
+      .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+  },
+
+  getDocCommentAnchorLabel(comment = null) {
+    const line = Number(comment?.anchor_line_number) || 1;
+    return `Line ${line}`;
+  },
+
+  getPendingDocCommentAnchorLabel() {
+    if (!this.docCommentAnchorLine) return 'Choose a block to anchor this comment.';
+    return `New comment on line ${this.docCommentAnchorLine}`;
+  },
+
   getDocCommentsForBlock(block) {
     const startLine = Number(block?.start_line);
     if (!Number.isFinite(startLine) && !block?.id) return [];
@@ -852,6 +876,9 @@ export const docsManagerMixin = {
     this.docCommentsVisible = true;
     this.selectedDocCommentId = rootId;
     this.showDocCommentModal = false;
+    this.docCommentAnchorLine = null;
+    this.docCommentAnchorBlockId = null;
+    this.newDocCommentBody = '';
     this.newDocCommentReplyBody = '';
     if (options.syncRoute !== false) this.syncRoute();
     this.scheduleDocCommentConnectorUpdate();
@@ -869,8 +896,25 @@ export const docsManagerMixin = {
     this.docCommentsVisible = true;
     this.docCommentAnchorLine = Number(block.start_line) || 1;
     this.docCommentAnchorBlockId = block.id || null;
+    this.selectedDocCommentId = null;
+    this.newDocCommentReplyBody = '';
     this.newDocCommentBody = '';
-    this.showDocCommentModal = true;
+    this.showDocCommentModal = false;
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        document.querySelector('[data-doc-new-comment-input]')?.focus?.();
+      });
+    }
+    this.scheduleDocCommentConnectorUpdate();
+  },
+
+  startDocCommentPlacement() {
+    this.docCommentsVisible = true;
+    this.closeDocCommentThread({ syncRoute: false });
+    this.docCommentAnchorLine = null;
+    this.docCommentAnchorBlockId = null;
+    this.newDocCommentBody = '';
+    this.showDocCommentModal = false;
     this.scheduleDocCommentConnectorUpdate();
   },
 

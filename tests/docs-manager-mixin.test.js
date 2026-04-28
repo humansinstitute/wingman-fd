@@ -206,6 +206,43 @@ describe('docsManagerMixin comment loading', () => {
   });
 });
 
+describe('docsManagerMixin comment drawer', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('opens an inline anchored composer instead of the legacy modal', () => {
+    const store = createStore({
+      selectedDocId: 'doc-1',
+      docCommentsVisible: false,
+      selectedDocCommentId: 'comment-1',
+      showDocCommentModal: false,
+      scheduleDocCommentConnectorUpdate: vi.fn(),
+    });
+
+    store.openDocCommentModal({ id: 'block-1-3', start_line: 3 });
+
+    expect(store.docCommentsVisible).toBe(true);
+    expect(store.docCommentAnchorLine).toBe(3);
+    expect(store.docCommentAnchorBlockId).toBe('block-1-3');
+    expect(store.selectedDocCommentId).toBeNull();
+    expect(store.showDocCommentModal).toBe(false);
+  });
+
+  it('lists root comments and replies separately for the drawer', () => {
+    const store = createStore({
+      docComments: [
+        { record_id: 'reply-1', parent_comment_id: 'root-1', record_state: 'active', updated_at: '2026-01-01T00:02:00Z' },
+        { record_id: 'root-2', parent_comment_id: null, record_state: 'deleted', updated_at: '2026-01-01T00:03:00Z' },
+        { record_id: 'root-1', parent_comment_id: null, record_state: 'active', updated_at: '2026-01-01T00:01:00Z' },
+      ],
+    });
+
+    expect(store.getRootDocComments().map((comment) => comment.record_id)).toEqual(['root-1']);
+    expect(store.getDocCommentReplies('root-1').map((comment) => comment.record_id)).toEqual(['reply-1']);
+  });
+});
+
 describe('docsManagerMixin checkout orchestration', () => {
   const documentFamilyHash = recordFamilyHash('document');
 
