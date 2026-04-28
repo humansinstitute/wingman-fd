@@ -35,6 +35,8 @@ describe('docs translator', () => {
           data: {
             title: 'Spec',
             content: 'hello world',
+            content_format: 'block_document_v1',
+            content_blocks: [{ id: 'blk-1', type: 'markdown', text: 'hello world', attrs: {} }],
             parent_directory_id: 'dir-1',
             shares: [
               {
@@ -57,6 +59,8 @@ describe('docs translator', () => {
     expect(row.record_id).toBe('doc-1');
     expect(row.parent_directory_id).toBe('dir-1');
     expect(row.content).toBe('hello world');
+    expect(row.content_format).toBe('block_document_v1');
+    expect(row.content_blocks[0].id).toBe('blk-1');
     expect(row.shares[0].group_npub).toBe('g-1');
     expect(row.shares[0].inherited).toBe(true);
     expect(row.shares[0].inherited_from_directory_id).toBe('dir-1');
@@ -69,6 +73,7 @@ describe('docs translator', () => {
       owner_npub: 'npub_owner',
       title: 'Plan',
       content: 'outline',
+      content_blocks: [{ id: 'blk-plan', type: 'markdown', text: 'outline', attrs: {} }],
       parent_directory_id: null,
       group_ids: ['g-1', 'g-direct'],
       shares: [
@@ -101,6 +106,8 @@ describe('docs translator', () => {
     const inner = JSON.parse(envelope.owner_payload.ciphertext);
     expect(inner.app_namespace).toBe(APP_NPUB);
     expect(inner.data.title).toBe('Plan');
+    expect(inner.data.content_format).toBe('block_document_v1');
+    expect(inner.data.content_blocks[0].id).toBe('blk-plan');
     expect(inner.data.shares).toHaveLength(2);
     expect(inner.data.shares[0].inherited).toBe(true);
     expect(inner.data.shares[0].inherited_from_directory_id).toBe('dir-1');

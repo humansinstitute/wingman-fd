@@ -11,6 +11,9 @@ import {
   sameListBySignature,
   parseMarkdownBlocks,
   assembleMarkdownBlocks,
+  buildDocumentContentModel,
+  createDocumentBlock,
+  normalizeDocumentBlocks,
 } from './utils/state-helpers.js';
 import {
   upsertDocument,
@@ -573,6 +576,11 @@ export const docsManagerMixin = {
   },
 
   async buildManagedDocumentEnvelope(payload, record = null, options = {}) {
+    const contentModel = buildDocumentContentModel(
+      payload?.content_blocks && Array.isArray(payload.content_blocks)
+        ? payload.content_blocks
+        : parseMarkdownBlocks(payload?.content || ''),
+    );
     const requestedGroupIds = normalizeGroupIds((payload?.group_ids || [])
       .map((value) => this._resolveDocGroupRef(value))
       .filter(Boolean));
@@ -582,6 +590,7 @@ export const docsManagerMixin = {
     }
     const envelope = await outboundDocument({
       ...payload,
+      ...contentModel,
       group_ids: encryptableGroupIds,
     });
     return this.attachLockManagedCheckoutToEnvelope(record, envelope, options);
@@ -694,11 +703,15 @@ export const docsManagerMixin = {
 
     this.docEditorTitle = item.title ?? '';
     this.docEditorContent = this.selectedDocType === 'document' ? (item.content ?? '') : '';
+    const contentBlocks = this.selectedDocType === 'document'
+      ? normalizeDocumentBlocks(item.content_blocks, this.docEditorContent)
+      : [];
     this.docEditorShares = this.getEffectiveDocShares(item)
       .map((share) => ({ ...share }));
     this.docEditorMode = 'preview';
     this.docEditorSharesDirty = false;
-    this.docEditorBlocks = parseMarkdownBlocks(this.docEditorContent);
+    this.docEditorBlocks = contentBlocks;
+    this.docEditorContent = assembleMarkdownBlocks(contentBlocks);
     this.docEditingBlockIndex = -1;
     this.docBlockBuffer = '';
     this.docEditingTitle = false;
@@ -1255,7 +1268,9 @@ export const docsManagerMixin = {
   },
 
   syncDocBlocksFromContent() {
-    this.docEditorBlocks = parseMarkdownBlocks(this.docEditorContent);
+    this.docEditorBlocks = parseMarkdownBlocks(this.docEditorContent, {
+      previousBlocks: this.docEditorBlocks,
+    });
   },
 
   handleDocSourceInput(value) {
@@ -1271,7 +1286,7 @@ export const docsManagerMixin = {
       this.commitDocBlockEdit();
     }
     if (!this.docEditorBlocks[index]) {
-      this.docEditorBlocks = [...this.docEditorBlocks, { id: `block-${Date.now()}`, raw: '' }];
+      this.docEditorBlocks = [...this.docEditorBlocks, createDocumentBlock('')];
     }
     this.docEditingBlockIndex = index;
     this.docBlockBuffer = this.docEditorBlocks[index]?.raw ?? '';
@@ -1280,7 +1295,7 @@ export const docsManagerMixin = {
   appendDocBlock() {
     if (this.docEditorMode !== 'block') return;
     const index = this.docEditorBlocks.length;
-    this.docEditorBlocks = [...this.docEditorBlocks, { id: `block-${Date.now()}`, raw: '' }];
+    this.docEditorBlocks = [...this.docEditorBlocks, createDocumentBlock('')];
     this.startDocBlockEdit(index);
   },
 
@@ -1295,14 +1310,15 @@ export const docsManagerMixin = {
     const raw = String(this.docBlockBuffer || '').trimEnd();
     if (raw) {
       blocks[this.docEditingBlockIndex] = {
-        ...(blocks[this.docEditingBlockIndex] || { id: `block-${Date.now()}` }),
+        ...(blocks[this.docEditingBlockIndex] || createDocumentBlock('')),
         raw,
+        text: raw,
       };
     } else {
       blocks.splice(this.docEditingBlockIndex, 1);
     }
-    this.docEditorBlocks = blocks;
-    this.docEditorContent = assembleMarkdownBlocks(blocks);
+    this.docEditorBlocks = normalizeDocumentBlocks(blocks);
+    this.docEditorContent = assembleMarkdownBlocks(this.docEditorBlocks);
     this.docEditingBlockIndex = -1;
     this.docBlockBuffer = '';
     this.scheduleDocAutosave();
@@ -1841,7 +1857,7 @@ export const docsManagerMixin = {
       record_id: recordId,
       owner_npub: ownerNpub,
       title,
-      content: '',
+      ...buildDocumentContentModel([]),
       parent_directory_id: parentDirectoryId,
       ...scopedAccess,
       sync_status: 'pending',
@@ -2004,8 +2020,9 @@ export const docsManagerMixin = {
     const nextTitle = this.docEditorTitle.trim() || 'Untitled document';
     const currentSharesSerialized = this.serializeDocShares(this.getEffectiveDocShares(item));
     const editorSharesSerialized = this.serializeDocShares(this.docEditorShares || []);
+    const contentModel = buildDocumentContentModel(this.docEditorBlocks);
     const hasChanges = nextTitle !== (item.title ?? 'Untitled document')
-      || (this.docEditorContent || '') !== (item.content || '')
+      || (contentModel.content || '') !== (item.content || '')
       || currentSharesSerialized !== editorSharesSerialized;
     if (!hasChanges) {
       this.docAutosaveState = 'saved';
@@ -2022,7 +2039,7 @@ export const docsManagerMixin = {
       const draft = {
         ...item,
         title: nextTitle,
-        content: this.docEditorContent,
+        ...contentModel,
         shares,
         group_ids: this.getShareGroupIds(shares),
         write_group_id: item.write_group_id || null,
@@ -2136,6 +2153,8 @@ export const docsManagerMixin = {
             version: ver.version ?? doc.version ?? 1,
             title: doc.title || 'Untitled',
             content: doc.content || '',
+            content_format: doc.content_format || null,
+            content_blocks: doc.content_blocks || [],
             updated_at: ver.updated_at || doc.updated_at || '',
           });
         } catch (decryptErr) {
@@ -2248,7 +2267,8 @@ export const docsManagerMixin = {
     if (!ver || !this.selectedDocId) return;
     this.docEditorTitle = ver.title;
     this.docEditorContent = ver.content;
-    this.docEditorBlocks = parseMarkdownBlocks(ver.content);
+    this.docEditorBlocks = normalizeDocumentBlocks(ver.content_blocks, ver.content);
+    this.docEditorContent = assembleMarkdownBlocks(this.docEditorBlocks);
     this.docEditingBlockIndex = -1;
     this.docBlockBuffer = '';
     this.closeDocVersioning();

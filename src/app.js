@@ -74,6 +74,7 @@ import {
   sameListBySignature,
   parseMarkdownBlocks,
   assembleMarkdownBlocks,
+  normalizeDocumentBlocks,
 } from './utils/state-helpers.js';
 import { getShortNpub, getInitials } from './utils/naming.js';
 import {
@@ -2108,10 +2109,12 @@ export function initApp() {
       if (!item) return;
       this.docEditorTitle = item.title ?? '';
       this.docEditorContent = item.content ?? '';
+      const contentBlocks = normalizeDocumentBlocks(item.content_blocks, this.docEditorContent);
       this.docEditorShares = this.getEffectiveDocShares(item)
         .map((share) => ({ ...share }));
       this.docEditorSharesDirty = false;
-      this.docEditorBlocks = parseMarkdownBlocks(this.docEditorContent);
+      this.docEditorBlocks = contentBlocks;
+      this.docEditorContent = assembleMarkdownBlocks(contentBlocks);
       this.docEditingBlockIndex = -1;
       this.docBlockBuffer = '';
       this.docEditingTitle = false;

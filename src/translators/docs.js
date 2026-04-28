@@ -2,6 +2,7 @@ import { recordFamilyHash } from './chat.js';
 import { APP_NPUB } from '../app-identity.js';
 import { buildGroupPayloads as buildEncryptedGroupPayloads, decryptRecordPayload, encryptOwnerPayload } from './record-crypto.js';
 import { buildWriteGroupFields, buildGroupRefMap, extractGroupIds, normalizeGroupRef, normalizeShareGroupRefs } from './group-refs.js';
+import { BLOCK_DOCUMENT_FORMAT, normalizeDocumentBlocks } from '../utils/state-helpers.js';
 
 export async function inboundDirectory(record) {
   const payload = await decryptRecordPayload(record);
@@ -95,6 +96,8 @@ export async function inboundDocument(record) {
     owner_npub: record.owner_npub,
     title: data.title ?? 'Untitled document',
     content: data.content ?? '',
+    content_format: data.content_format === BLOCK_DOCUMENT_FORMAT ? BLOCK_DOCUMENT_FORMAT : null,
+    content_blocks: normalizeDocumentBlocks(data.content_blocks, data.content ?? ''),
     parent_directory_id: data.parent_directory_id ?? null,
     scope_id: data.scope_id ?? null,
     scope_l1_id: data.scope_l1_id ?? null,
@@ -118,6 +121,8 @@ export async function outboundDocument({
   owner_npub,
   title,
   content,
+  content_format = BLOCK_DOCUMENT_FORMAT,
+  content_blocks = null,
   parent_directory_id = null,
   scope_id = null,
   scope_l1_id = null,
@@ -142,6 +147,8 @@ export async function outboundDocument({
     data: {
       title,
       content,
+      content_format,
+      content_blocks: normalizeDocumentBlocks(content_blocks, content),
       parent_directory_id,
       scope_id,
       scope_l1_id,

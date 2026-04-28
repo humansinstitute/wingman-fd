@@ -68,13 +68,86 @@ export function sameListBySignature(current = [], next = [], signatureFor = defa
   return true;
 }
 
-export function parseMarkdownBlocks(content) {
+const BLOCK_DOCUMENT_FORMAT = 'block_document_v1';
+
+function makeBlockId(index, startLine) {
+  return `block-${index}-${startLine}`;
+}
+
+function blockText(block) {
+  return String(block?.raw ?? block?.text ?? '').trimEnd();
+}
+
+export function normalizeDocumentBlocks(blocks = [], fallbackContent = '') {
+  const sourceBlocks = Array.isArray(blocks) ? blocks : [];
+  if (sourceBlocks.length === 0 && String(fallbackContent || '').trim()) {
+    return parseMarkdownBlocks(fallbackContent);
+  }
+
+  let line = 1;
+  return sourceBlocks
+    .map((block, index) => {
+      const raw = blockText(block);
+      if (!raw) return null;
+      const lineCount = raw.split('\n').length;
+      const normalized = {
+        id: String(block?.id || '').trim() || makeBlockId(index, line),
+        type: String(block?.type || '').trim() || 'markdown',
+        raw,
+        text: raw,
+        attrs: block?.attrs && typeof block.attrs === 'object' && !Array.isArray(block.attrs)
+          ? { ...block.attrs }
+          : {},
+        start_line: line,
+        end_line: line + lineCount - 1,
+      };
+      line += lineCount + 1;
+      return normalized;
+    })
+    .filter(Boolean);
+}
+
+export function createDocumentBlock(raw = '', options = {}) {
+  const text = String(raw || '').trimEnd();
+  const id = String(options.id || '').trim()
+    || (globalThis.crypto?.randomUUID ? `blk_${globalThis.crypto.randomUUID()}` : `blk_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  return {
+    id,
+    type: String(options.type || '').trim() || 'markdown',
+    raw: text,
+    text,
+    attrs: options.attrs && typeof options.attrs === 'object' && !Array.isArray(options.attrs)
+      ? { ...options.attrs }
+      : {},
+  };
+}
+
+export function serializeDocumentBlocks(blocks = []) {
+  return normalizeDocumentBlocks(blocks).map((block) => ({
+    id: block.id,
+    type: block.type || 'markdown',
+    text: blockText(block),
+    attrs: block.attrs && typeof block.attrs === 'object' && !Array.isArray(block.attrs)
+      ? { ...block.attrs }
+      : {},
+  }));
+}
+
+export function documentBlocksToMarkdown(blocks = []) {
+  return normalizeDocumentBlocks(blocks)
+    .map((block) => blockText(block))
+    .filter((raw) => raw.length > 0)
+    .join('\n\n');
+}
+
+export function parseMarkdownBlocks(content, options = {}) {
   const source = String(content || '').replace(/\r\n?/g, '\n');
   if (!source.trim()) return [];
   const lines = source.split('\n');
   const blocks = [];
   let currentLines = [];
   let startLine = 1;
+  const previousBlocks = Array.isArray(options?.previousBlocks) ? options.previousBlocks : [];
 
   const flush = () => {
     if (currentLines.length === 0) return;
@@ -83,9 +156,15 @@ export function parseMarkdownBlocks(content) {
       currentLines = [];
       return;
     }
+    const previous = previousBlocks[blocks.length] || null;
     blocks.push({
-      id: `block-${blocks.length}-${startLine}`,
+      id: String(previous?.id || '').trim() || makeBlockId(blocks.length, startLine),
+      type: String(previous?.type || '').trim() || 'markdown',
       raw,
+      text: raw,
+      attrs: previous?.attrs && typeof previous.attrs === 'object' && !Array.isArray(previous.attrs)
+        ? { ...previous.attrs }
+        : {},
       start_line: startLine,
       end_line: startLine + currentLines.length - 1,
     });
@@ -108,8 +187,16 @@ export function parseMarkdownBlocks(content) {
 }
 
 export function assembleMarkdownBlocks(blocks = []) {
-  return (blocks || [])
-    .map((block) => String(block?.raw || '').trimEnd())
-    .filter((raw) => raw.length > 0)
-    .join('\n\n');
+  return documentBlocksToMarkdown(blocks);
 }
+
+export function buildDocumentContentModel(blocks = []) {
+  const normalizedBlocks = normalizeDocumentBlocks(blocks);
+  return {
+    content: documentBlocksToMarkdown(normalizedBlocks),
+    content_format: BLOCK_DOCUMENT_FORMAT,
+    content_blocks: serializeDocumentBlocks(normalizedBlocks),
+  };
+}
+
+export { BLOCK_DOCUMENT_FORMAT };

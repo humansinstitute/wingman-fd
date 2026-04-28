@@ -9,6 +9,8 @@ import {
   sameListBySignature,
   parseMarkdownBlocks,
   assembleMarkdownBlocks,
+  buildDocumentContentModel,
+  normalizeDocumentBlocks,
 } from '../src/utils/state-helpers.js';
 
 describe('toRaw', () => {
@@ -193,6 +195,14 @@ describe('parseMarkdownBlocks', () => {
     expect(blocks[0].id).toMatch(/^block-0-/);
     expect(blocks[1].id).toMatch(/^block-1-/);
   });
+
+  it('preserves previous block ids during source edits by position', () => {
+    const previousBlocks = parseMarkdownBlocks('A\n\nB');
+    const blocks = parseMarkdownBlocks('A edited\n\nB', { previousBlocks });
+
+    expect(blocks[0].id).toBe(previousBlocks[0].id);
+    expect(blocks[1].id).toBe(previousBlocks[1].id);
+  });
 });
 
 describe('assembleMarkdownBlocks', () => {
@@ -215,5 +225,26 @@ describe('assembleMarkdownBlocks', () => {
     const original = 'First paragraph\n\nSecond paragraph\nwith two lines\n\nThird';
     const blocks = parseMarkdownBlocks(original);
     expect(assembleMarkdownBlocks(blocks)).toBe(original);
+  });
+});
+
+describe('document block content model', () => {
+  it('normalizes persisted blocks and derives markdown fallback', () => {
+    const model = buildDocumentContentModel([
+      { id: 'blk-a', type: 'markdown', text: 'First paragraph', attrs: { tone: 'plain' } },
+      { id: 'blk-b', type: 'markdown', raw: 'Second paragraph' },
+    ]);
+
+    expect(model.content_format).toBe('block_document_v1');
+    expect(model.content).toBe('First paragraph\n\nSecond paragraph');
+    expect(model.content_blocks.map((block) => block.id)).toEqual(['blk-a', 'blk-b']);
+  });
+
+  it('converts legacy markdown into normalized blocks', () => {
+    const blocks = normalizeDocumentBlocks([], 'One\n\nTwo');
+
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].raw).toBe('One');
+    expect(blocks[1].raw).toBe('Two');
   });
 });
