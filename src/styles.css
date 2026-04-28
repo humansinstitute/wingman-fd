@@ -25,6 +25,7 @@
   --shadow-soft: 0 6px 18px rgba(15, 23, 42, 0.1);
   --shadow-strong: 0 12px 30px rgba(15, 23, 42, 0.16);
   --app-header-offset: 4.6rem;
+  --doc-comments-top-offset: 8.75rem;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -4261,7 +4262,7 @@ button:disabled {
 
 .doc-comment-thread-panel {
   position: fixed;
-  top: var(--app-header-offset);
+  top: var(--doc-comments-top-offset);
   right: 0;
   bottom: 0;
   display: flex;
@@ -4269,7 +4270,7 @@ button:disabled {
   gap: 0.9rem;
   width: min(28rem, calc(100vw - 1rem));
   max-width: calc(100vw - 1rem);
-  max-height: calc(100dvh - var(--app-header-offset));
+  max-height: calc(100dvh - var(--doc-comments-top-offset));
   box-sizing: border-box;
   padding: 0.85rem 0.9rem;
   border: 1px solid var(--border);
@@ -4304,7 +4305,7 @@ button:disabled {
 
 .doc-comment-drawer-rail {
   position: fixed;
-  top: var(--app-header-offset);
+  top: var(--doc-comments-top-offset);
   right: 0;
   bottom: 0;
   display: inline-flex;
@@ -8047,7 +8048,7 @@ button:disabled {
   }
 
   .doc-comment-thread-panel {
-    top: var(--app-header-offset);
+    top: var(--doc-comments-top-offset);
     right: 0;
     bottom: 0;
     width: calc(100vw - 0.75rem);
