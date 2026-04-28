@@ -24,6 +24,7 @@
   --radius-lg: 14px;
   --shadow-soft: 0 6px 18px rgba(15, 23, 42, 0.1);
   --shadow-strong: 0 12px 30px rgba(15, 23, 42, 0.16);
+  --app-header-offset: 4.6rem;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -4260,19 +4261,20 @@ button:disabled {
 
 .doc-comment-thread-panel {
   position: fixed;
-  top: 5.25rem;
-  right: 1rem;
-  bottom: 1rem;
+  top: var(--app-header-offset);
+  right: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
-  width: min(26rem, calc(100vw - 2rem));
-  max-width: calc(100vw - 2rem);
-  max-height: calc(100vh - 6.25rem);
+  width: min(28rem, calc(100vw - 1rem));
+  max-width: calc(100vw - 1rem);
+  max-height: calc(100dvh - var(--app-header-offset));
   box-sizing: border-box;
   padding: 0.85rem 0.9rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-right: 0;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
   background: var(--surface);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
   overflow: hidden;
@@ -4302,16 +4304,18 @@ button:disabled {
 
 .doc-comment-drawer-rail {
   position: fixed;
-  top: 5.25rem;
-  right: 1rem;
+  top: var(--app-header-offset);
+  right: 0;
+  bottom: 0;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   gap: 0.45rem;
-  width: 2.25rem;
-  min-height: 9rem;
+  width: 2.5rem;
+  min-height: 0;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-right: 0;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
   background: var(--surface);
   color: var(--muted);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
@@ -4325,7 +4329,7 @@ button:disabled {
 }
 
 .doc-comment-drawer-rail span {
-  margin-top: 0.75rem;
+  margin-top: 1rem;
   font-size: 1.4rem;
   line-height: 1;
 }
@@ -8043,11 +8047,11 @@ button:disabled {
   }
 
   .doc-comment-thread-panel {
-    top: 4.5rem;
-    right: 0.5rem;
-    bottom: 0.5rem;
-    width: calc(100vw - 1rem);
-    max-width: calc(100vw - 1rem);
+    top: var(--app-header-offset);
+    right: 0;
+    bottom: 0;
+    width: calc(100vw - 0.75rem);
+    max-width: calc(100vw - 0.75rem);
   }
 
   .doc-block-row {
