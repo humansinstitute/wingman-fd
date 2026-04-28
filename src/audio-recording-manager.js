@@ -246,7 +246,14 @@ export const audioRecordingManagerMixin = {
     );
   },
 
-  async materializeAudioDrafts({ drafts = [], target_record_id = null, target_record_family_hash = null, target_group_ids = [], write_group_npub = null }) {
+  async materializeAudioDrafts({
+    drafts = [],
+    target_record_id = null,
+    target_record_family_hash = null,
+    target_group_ids = [],
+    write_group_ref = null,
+    write_group_npub = null,
+  }) {
     const audioNotes = [];
     const attachments = [];
 
@@ -290,7 +297,7 @@ export const audioRecordingManagerMixin = {
         ...localRow,
         target_group_ids,
         signature_npub: this.signingNpub,
-        write_group_npub,
+        write_group_ref: write_group_ref || write_group_npub,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -354,6 +361,9 @@ export const audioRecordingManagerMixin = {
       return normalizeStorageAccessGroupIds(this.editingTask?.group_ids ?? []);
     }
     if (context === 'doc-comment' || context === 'doc-reply') {
+      if (typeof this.getEncryptableDocCommentGroupIds === 'function') {
+        return normalizeStorageAccessGroupIds(this.getEncryptableDocCommentGroupIds(this.selectedDocument) || []);
+      }
       return normalizeStorageAccessGroupIds(this.selectedDocument?.group_ids ?? []);
     }
     return [];
