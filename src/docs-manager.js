@@ -838,7 +838,7 @@ export const docsManagerMixin = {
   getRootDocComments() {
     return this.docComments
       .filter((comment) => !comment.parent_comment_id && comment.record_state !== 'deleted')
-      .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+      .sort((a, b) => this.compareDocCommentsByAnchor(a, b));
   },
 
   getDocCommentReplies(commentId) {
@@ -857,6 +857,31 @@ export const docsManagerMixin = {
   getPendingDocCommentAnchorLabel() {
     if (!this.docCommentAnchorLine) return 'Choose a block to anchor this comment.';
     return `New comment on line ${this.docCommentAnchorLine}`;
+  },
+
+  getDocCommentAnchorSortKey(comment = null) {
+    const anchorBlockId = String(comment?.anchor_block_id || '').trim();
+    const blocks = Array.isArray(this.docEditorBlocks) ? this.docEditorBlocks : [];
+    const blockIndex = anchorBlockId
+      ? blocks.findIndex((block) => String(block?.id || '').trim() === anchorBlockId)
+      : -1;
+    const block = blockIndex >= 0 ? blocks[blockIndex] : null;
+    const line = Number(block?.start_line ?? comment?.anchor_line_number);
+    const anchorLine = Number.isFinite(line) && line > 0 ? line : Number.MAX_SAFE_INTEGER;
+    const anchorOrder = blockIndex >= 0 ? blockIndex : Number.MAX_SAFE_INTEGER;
+    const timestamp = String(comment?.created_at || comment?.updated_at || '');
+    const recordId = String(comment?.record_id || '');
+    return { anchorLine, anchorOrder, timestamp, recordId };
+  },
+
+  compareDocCommentsByAnchor(a, b) {
+    const left = this.getDocCommentAnchorSortKey(a);
+    const right = this.getDocCommentAnchorSortKey(b);
+    if (left.anchorLine !== right.anchorLine) return left.anchorLine - right.anchorLine;
+    if (left.anchorOrder !== right.anchorOrder) return left.anchorOrder - right.anchorOrder;
+    const timestampCompare = left.timestamp.localeCompare(right.timestamp);
+    if (timestampCompare !== 0) return timestampCompare;
+    return left.recordId.localeCompare(right.recordId);
   },
 
   getDocBlockIdentity(block = null, index = -1) {
@@ -898,7 +923,7 @@ export const docsManagerMixin = {
     if (!Number.isFinite(startLine) && !block?.id) return [];
     return this.docComments
       .filter((comment) => commentBelongsToDocBlock(comment, block))
-      .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+      .sort((a, b) => this.compareDocCommentsByAnchor(a, b));
   },
 
   blockHasSelectedDocComment(block) {

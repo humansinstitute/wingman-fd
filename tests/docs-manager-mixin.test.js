@@ -289,6 +289,51 @@ describe('docsManagerMixin comment drawer', () => {
     expect(store.getRootDocComments().map((comment) => comment.record_id)).toEqual(['root-1']);
     expect(store.getDocCommentReplies('root-1').map((comment) => comment.record_id)).toEqual(['reply-1']);
   });
+
+  it('orders root comment threads by document block position before timestamp', () => {
+    const store = createStore({
+      docEditorBlocks: [
+        { id: 'block-1', start_line: 1 },
+        { id: 'block-2', start_line: 8 },
+        { id: 'block-3', start_line: 14 },
+      ],
+      docComments: [
+        {
+          record_id: 'late-block-1',
+          parent_comment_id: null,
+          anchor_block_id: 'block-1',
+          anchor_line_number: 1,
+          record_state: 'active',
+          created_at: '2026-01-01T00:04:00Z',
+          updated_at: '2026-01-01T00:04:00Z',
+        },
+        {
+          record_id: 'early-block-3',
+          parent_comment_id: null,
+          anchor_block_id: 'block-3',
+          anchor_line_number: 14,
+          record_state: 'active',
+          created_at: '2026-01-01T00:01:00Z',
+          updated_at: '2026-01-01T00:01:00Z',
+        },
+        {
+          record_id: 'line-fallback-block-2',
+          parent_comment_id: null,
+          anchor_block_id: null,
+          anchor_line_number: 8,
+          record_state: 'active',
+          created_at: '2026-01-01T00:03:00Z',
+          updated_at: '2026-01-01T00:03:00Z',
+        },
+      ],
+    });
+
+    expect(store.getRootDocComments().map((comment) => comment.record_id)).toEqual([
+      'late-block-1',
+      'line-fallback-block-2',
+      'early-block-3',
+    ]);
+  });
 });
 
 describe('docsManagerMixin checkout orchestration', () => {
