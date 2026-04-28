@@ -12,6 +12,10 @@ import { getSyncFamilyHash } from '../src/sync-families.js';
 import { createNip98AuthHeader, createNip98AuthHeaderForSecret } from '../src/auth/nostr.js';
 import { getActiveWorkspaceKeySecretForAuth } from '../src/crypto/workspace-keys.js';
 
+vi.mock('../src/crypto/group-keys.js', () => ({
+  hasGroupKey: vi.fn(() => true),
+}));
+
 vi.mock('../src/api.js', () => ({
   fetchRecordHistory: vi.fn(),
   syncRecords: vi.fn(),

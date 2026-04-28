@@ -23,6 +23,11 @@ import {
 } from './storage-payloads.js';
 import { decryptAudioBytes, encryptAudioBlob, measureAudioDuration } from './audio-notes.js';
 import { sameListBySignature } from './utils/state-helpers.js';
+import {
+  getEncryptableRecordGroupRefsForStore,
+  getRecordGroupKeyState,
+  getRecordWriteFieldsForStore,
+} from './preferred-write-group.js';
 
 // ---------------------------------------------------------------------------
 // Mixin — methods that use `this` (the Alpine store)
@@ -260,6 +265,14 @@ export const audioRecordingManagerMixin = {
   }) {
     const audioNotes = [];
     const attachments = [];
+    const audioWriteFields = await getRecordWriteFieldsForStore(this, {
+      group_ids: target_group_ids,
+    }, {
+      label: 'Audio note write',
+      writeGroupRef: write_group_ref || write_group_npub,
+    });
+    const encryptableGroupIds = audioWriteFields.group_ids;
+    const resolvedWriteGroupRef = audioWriteFields.write_group_ref;
 
     for (const draft of drafts) {
       const recordId = crypto.randomUUID();
@@ -281,7 +294,7 @@ export const audioRecordingManagerMixin = {
         transcript: null,
         summary: null,
         sender_npub: this.session?.npub,
-        group_ids: [...target_group_ids],
+        group_ids: [...encryptableGroupIds],
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -299,9 +312,9 @@ export const audioRecordingManagerMixin = {
 
       const envelope = await outboundAudioNote({
         ...localRow,
-        target_group_ids,
+        target_group_ids: encryptableGroupIds,
         signature_npub: this.signingNpub,
-        write_group_ref: write_group_ref || write_group_npub,
+        write_group_ref: resolvedWriteGroupRef,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -358,11 +371,18 @@ export const audioRecordingManagerMixin = {
   },
 
   getAudioRecorderStorageGroupIds(context = this.audioRecorderContext) {
+    const encryptableGroupIds = (record) => getRecordGroupKeyState(record, {
+      resolveGroupId: (value) => (
+        typeof this.resolveGroupId === 'function'
+          ? this.resolveGroupId(value)
+          : String(value || '').trim() || null
+      ),
+    }).encryptableGroupIds;
     if (context === 'chat' || context === 'thread') {
-      return normalizeStorageAccessGroupIds(this.selectedChannel?.group_ids ?? []);
+      return normalizeStorageAccessGroupIds(encryptableGroupIds(this.selectedChannel));
     }
     if (context === 'task-comment') {
-      return normalizeStorageAccessGroupIds(this.editingTask?.group_ids ?? []);
+      return normalizeStorageAccessGroupIds(encryptableGroupIds(this.editingTask));
     }
     if (context === 'doc-comment' || context === 'doc-reply') {
       if (typeof this.getEncryptableDocCommentGroupIds === 'function') {

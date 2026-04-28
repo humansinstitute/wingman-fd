@@ -34,6 +34,8 @@ export const FLIGHT_DECK_RECORD_CHECKOUT_POLICY_CONFIG = Object.freeze({
     chat_message: OPTIMISTIC_WRITE,
     channel: OPTIMISTIC_WRITE,
     comment: OPTIMISTIC_WRITE,
+    flow: OPTIMISTIC_WRITE,
+    approval: OPTIMISTIC_WRITE,
   }),
 });
 

@@ -23,6 +23,7 @@ import {
   getDirectoryById,
   upsertReport,
   upsertTask,
+  getTaskById,
   upsertSchedule,
   upsertComment,
   upsertAudioNote,
@@ -78,6 +79,60 @@ const ORGANISATION_FAMILY = organisationFamilyHash('organisation');
 const OPPORTUNITY_FAMILY = opportunityFamilyHash('opportunity');
 const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
 const WRITE_BATCH_SIZE = 25;
+
+function stablePolicyConfigKey(config = null) {
+  if (!config || typeof config !== 'object') return '';
+  const normalizeMap = (map = {}) => Object.fromEntries(
+    Object.entries(map || {})
+      .filter(([key, value]) => key && value)
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
+  return JSON.stringify({
+    recordFamilyHashes: normalizeMap(config.recordFamilyHashes),
+    familySuffixes: normalizeMap(config.familySuffixes),
+  });
+}
+
+function pendingWriteCheckoutPolicyConfig(pendingWrite, options = {}) {
+  return pendingWrite?.checkout_policy_config || options.checkoutPolicyConfig || null;
+}
+
+async function normalizePendingWritesForFlush(pendingWrites = []) {
+  const normalized = [];
+  for (const pendingWrite of pendingWrites) {
+    const familyHash = String(pendingWrite?.record_family_hash || pendingWrite?.envelope?.record_family_hash || '').trim();
+    if (
+      familyHash === TASK_FAMILY
+      && pendingWrite?.checkout_policy_config
+      && !pendingWrite?.envelope?.checkout?.checkout_id
+    ) {
+      const task = await getTaskById(String(pendingWrite?.record_id || pendingWrite?.envelope?.record_id || '').trim());
+      if (task?.state === 'archive' || task?.state === 'done') {
+        const { checkout_policy_config: _checkoutPolicyConfig, ...optimisticPendingWrite } = pendingWrite;
+        normalized.push(optimisticPendingWrite);
+        continue;
+      }
+    }
+    normalized.push(pendingWrite);
+  }
+  return normalized;
+}
+
+function nextPendingWriteBatch(pending, offset, options = {}) {
+  const firstConfig = pendingWriteCheckoutPolicyConfig(pending[offset], options);
+  const firstKey = stablePolicyConfigKey(firstConfig);
+  let end = offset;
+  while (end < pending.length && end - offset < WRITE_BATCH_SIZE) {
+    const candidateKey = stablePolicyConfigKey(pendingWriteCheckoutPolicyConfig(pending[end], options));
+    if (candidateKey !== firstKey) break;
+    end += 1;
+  }
+  return {
+    batch: pending.slice(offset, end),
+    nextOffset: end,
+    checkoutPolicyConfig: firstConfig,
+  };
+}
 
 function describePendingWriteForError(pendingWrite, options = {}) {
   const envelope = pendingWrite?.envelope || {};
@@ -164,6 +219,12 @@ async function markLockManagedWriteState(recordId, familyHash, patch = {}, optio
     const current = await getDocumentById(recordId);
     if (!current) return;
     await upsertDocument({ ...current, ...patch });
+    return;
+  }
+  if (familyHash === TASK_FAMILY) {
+    const current = await getTaskById(recordId);
+    if (!current) return;
+    await upsertTask({ ...current, ...patch });
   }
 }
 
@@ -172,7 +233,7 @@ async function markLockManagedWriteState(recordId, familyHash, patch = {}, optio
  */
 export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
   openWorkspaceDb(resolveWorkspaceDbKey(ownerNpub, options));
-  const pending = await getPendingWrites();
+  const pending = await normalizePendingWritesForFlush(await getPendingWrites());
   if (pending.length === 0) return { pushed: 0 };
   let pushed = 0;
 
@@ -184,12 +245,21 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
     batchSize: WRITE_BATCH_SIZE,
   });
 
-  for (let offset = 0; offset < pending.length; offset += WRITE_BATCH_SIZE) {
-    const batch = pending.slice(offset, offset + WRITE_BATCH_SIZE);
+  let offset = 0;
+  let batchNumber = 0;
+  while (offset < pending.length) {
+    const {
+      batch,
+      nextOffset,
+      checkoutPolicyConfig,
+    } = nextPendingWriteBatch(pending, offset, options);
+    offset = nextOffset;
+    batchNumber += 1;
+    const batchOptions = { ...options, checkoutPolicyConfig };
     const envelopes = batch.map((pw) => pw.envelope);
     flightDeckLog('debug', 'sync', 'syncing pending write batch', {
       ownerNpub,
-      batchNumber: Math.floor(offset / WRITE_BATCH_SIZE) + 1,
+      batchNumber,
       batchCount: batch.length,
       pendingCount: pending.length,
       recordIds: batch.map((pw) => pw.record_id),
@@ -200,14 +270,14 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       result = await syncRecords({
         owner_npub: ownerNpub,
         records: envelopes,
-        checkout_policy_config: options.checkoutPolicyConfig,
+        checkout_policy_config: checkoutPolicyConfig,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       const punctuatedReason = /[.!?]$/.test(reason) ? reason : `${reason}.`;
       flightDeckLog('error', 'sync', 'pending write batch failed', {
         ownerNpub,
-        batchNumber: Math.floor(offset / WRITE_BATCH_SIZE) + 1,
+        batchNumber,
         batchCount: batch.length,
         pushed,
         pendingCount: pending.length,
@@ -216,9 +286,9 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
         error: reason,
       });
       throw new Error(
-        `Pending write sync failed for batch ${Math.floor(offset / WRITE_BATCH_SIZE) + 1} `
+        `Pending write sync failed for batch ${batchNumber} `
         + `(${batch.length} records, ${pushed}/${pending.length} flushed): ${punctuatedReason} `
-        + `Batch records: ${batch.map((pendingWrite) => describePendingWriteForError(pendingWrite, options)).join('; ')}`
+        + `Batch records: ${batch.map((pendingWrite) => describePendingWriteForError(pendingWrite, batchOptions)).join('; ')}`
       );
     }
 
@@ -238,7 +308,7 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
               coedit_state: rej.code === 'prior_version_mismatch' ? 'conflicted' : 'rejected',
               conflict_reason: rej.code || rej.reason || null,
             },
-            options,
+            batchOptions,
           );
         } else {
           hasUnscopedRejection = true;
@@ -270,7 +340,7 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
             coedit_state: 'deferred',
             conflict_reason: null,
           },
-          options,
+          batchOptions,
         );
       }
     }
@@ -291,7 +361,7 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
     if (onProgress) onProgress({ phase: 'pushing', pushed, pushTotal: pending.length });
     flightDeckLog('info', 'sync', 'pending write batch flushed', {
       ownerNpub,
-      batchNumber: Math.floor(offset / WRITE_BATCH_SIZE) + 1,
+      batchNumber,
       batchCount: batch.length,
       pushed,
       pendingCount: pending.length,

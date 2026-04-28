@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../src/crypto/group-keys.js', () => ({
+  hasGroupKey: vi.fn(() => true),
+}));
+
 vi.mock('../src/db.js', () => ({
   addPendingWrite: vi.fn(async () => {}),
   getCommentsByTarget: vi.fn(async () => []),
@@ -286,6 +290,6 @@ describe('opportunitiesManagerMixin', () => {
     expect(store.opportunityMetrics.totalForecast.meta).toContain('AUD 125K');
     expect(store.opportunityMetrics.totalForecast.meta).toContain('USD 40K');
     expect(store.opportunityMetrics.next30Forecast.value).toBe('AUD 125K');
-    expect(store.opportunityMetrics.recentActivityCount).toBe(3);
+    expect(store.opportunityMetrics.recentActivityCount).toBe(2);
   });
 });

@@ -840,6 +840,7 @@
                         <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id)">Approve</button>
                         <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id)">Reject</button>
                         <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, prompt('Improvement notes:') || '')">Improve</button>
+                        <button type="button" class="btn-archive" @click="$store.chat.archiveApproval(approval.record_id)">Archive</button>
                       </div>
                     </article>
                   </template>
@@ -1319,6 +1320,34 @@
                   Back
                 </button>
                 <div class="task-detail-actions">
+                  <span
+                    class="task-detail-mode-pill"
+                    :class="$store.chat.isTaskDetailEditing() ? 'task-detail-mode-edit' : 'task-detail-mode-view'"
+                    x-text="$store.chat.isTaskDetailEditing() ? 'Editing checkout' : 'View mode'"
+                  ></span>
+                  <button
+                    type="button"
+                    class="task-copy-btn task-edit-btn"
+                    x-show="!$store.chat.isTaskDetailEditing()"
+                    @click="$store.chat.enterTaskDetailEditMode()"
+                    :disabled="$store.chat.taskDetailCheckoutPending"
+                    x-text="$store.chat.taskDetailCheckoutPending ? 'Checking out...' : 'Edit'"
+                  ></button>
+                  <button
+                    type="button"
+                    class="task-copy-btn task-save-btn"
+                    x-show="$store.chat.isTaskDetailEditing()"
+                    @click="$store.chat.saveEditingTask()"
+                    :disabled="$store.chat.taskDetailSaving || $store.chat.containsInlineImageUploadToken($store.chat.editingTask?.description)"
+                    x-text="$store.chat.taskDetailSaving ? 'Saving...' : 'Save'"
+                  ></button>
+                  <button
+                    type="button"
+                    class="task-copy-btn"
+                    x-show="$store.chat.isTaskDetailEditing()"
+                    @click="$store.chat.cancelTaskDetailEdit()"
+                    :disabled="$store.chat.taskDetailSaving"
+                  >Cancel</button>
                   <button
                     type="button"
                     class="task-copy-btn"
@@ -1358,7 +1387,8 @@
                     class="task-detail-title"
                     type="text"
                     x-model="$store.chat.editingTask.title"
-                    @change="$store.chat.saveEditingTask()"
+                    :readonly="!$store.chat.isTaskDetailEditing()"
+                    :class="{ 'task-readonly-control': !$store.chat.isTaskDetailEditing() }"
                     placeholder="Task title"
                   />
 
@@ -1366,7 +1396,7 @@
                   <div class="task-detail-fields">
                     <div class="task-field">
                       <label class="task-field-label">Status</label>
-                      <select x-model="$store.chat.editingTask.state" @change="$store.chat.saveEditingTask()">
+                      <select x-model="$store.chat.editingTask.state" :disabled="!$store.chat.isTaskDetailEditing()">
                         <option value="new">New</option>
                         <option value="ready">Ready</option>
 
@@ -1376,14 +1406,14 @@
                         <option value="archive">Archive</option>
                       </select>
                       <span class="task-quick-date-links">
-                        <button type="button" class="task-quick-date-link" @click="$store.chat.quickSetTaskState('done')">Done</button>
+                        <button type="button" class="task-quick-date-link" :disabled="!$store.chat.isTaskDetailEditing()" @click="$store.chat.quickSetTaskState('done')">Done</button>
                         <span class="task-quick-date-sep">|</span>
-                        <button type="button" class="task-quick-date-link" @click="$store.chat.quickSetTaskState('archive')">Archive</button>
+                        <button type="button" class="task-quick-date-link" :disabled="!$store.chat.isTaskDetailEditing()" @click="$store.chat.quickSetTaskState('archive')">Archive</button>
                       </span>
                     </div>
                     <div class="task-field">
                       <label class="task-field-label">Priority</label>
-                      <select x-model="$store.chat.editingTask.priority" @change="$store.chat.saveEditingTask()">
+                      <select x-model="$store.chat.editingTask.priority" :disabled="!$store.chat.isTaskDetailEditing()">
                         <option value="rock">Rock (High)</option>
                         <option value="pebble">Pebble (Med)</option>
                         <option value="sand">Sand (Low)</option>
@@ -1391,16 +1421,16 @@
                     </div>
                     <div class="task-field">
                       <label class="task-field-label">Scheduled</label>
-                      <input type="date" x-model="$store.chat.editingTask.scheduled_for" @change="$store.chat.saveEditingTask()" />
+                      <input type="date" x-model="$store.chat.editingTask.scheduled_for" :disabled="!$store.chat.isTaskDetailEditing()" />
                       <span class="task-quick-date-links">
-                        <button type="button" class="task-quick-date-link" @click="$store.chat.setTaskDueToday()">Today</button>
+                        <button type="button" class="task-quick-date-link" :disabled="!$store.chat.isTaskDetailEditing()" @click="$store.chat.setTaskDueToday()">Today</button>
                         <span class="task-quick-date-sep">|</span>
-                        <button type="button" class="task-quick-date-link" @click="$store.chat.setTaskDueThisWeek()">This Week</button>
+                        <button type="button" class="task-quick-date-link" :disabled="!$store.chat.isTaskDetailEditing()" @click="$store.chat.setTaskDueThisWeek()">This Week</button>
                       </span>
                     </div>
                     <div class="task-field">
                       <label class="task-field-label">Tags</label>
-                      <input type="text" x-model="$store.chat.editingTask.tags" @change="$store.chat.saveEditingTask()" placeholder="comma,separated" />
+                      <input type="text" x-model="$store.chat.editingTask.tags" :readonly="!$store.chat.isTaskDetailEditing()" placeholder="comma,separated" />
                       <template x-if="$store.chat.getTaskTags($store.chat.editingTask).length > 0">
                         <div class="task-detail-tags">
                           <template x-for="tag in $store.chat.getTaskTags($store.chat.editingTask)" :key="`detail-${tag}`">
@@ -1425,16 +1455,17 @@
                           <span class="new-channel-profile-name" x-text="$store.chat.getSenderName($store.chat.editingTask.assigned_to_npub)"></span>
                           <small x-text="$store.chat.editingTask.assigned_to_npub"></small>
                         </div>
-                        <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearEditingTaskAssignee()">Clear</button>
+                        <button type="button" class="task-inline-clear-btn" x-show="$store.chat.isTaskDetailEditing()" @click="$store.chat.clearEditingTaskAssignee()">Clear</button>
                       </div>
                     </template>
                     <input
+                      x-show="$store.chat.isTaskDetailEditing()"
                       type="text"
                       x-model="$store.chat.taskAssigneeQuery"
                       @input="$store.chat.handleTaskAssigneeInput($event.target.value)"
                       placeholder="Type a name or npub"
                     />
-                    <ul class="docs-share-suggestions" x-show="$store.chat.taskAssigneeSuggestions.length > 0">
+                    <ul class="docs-share-suggestions" x-show="$store.chat.isTaskDetailEditing() && $store.chat.taskAssigneeSuggestions.length > 0">
                       <template x-for="person in $store.chat.taskAssigneeSuggestions" :key="`task-assignee-${person.npub}`">
                         <li>
                           <button type="button" class="docs-share-suggestion" @click="$store.chat.assignEditingTask(person.npub)">
@@ -1461,12 +1492,13 @@
                       <div class="scope-picker-selected">
                         <span class="scope-level-badge" :data-level="$store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level" x-text="$store.chat.scopeLevelLabel($store.chat.scopesMap.get($store.chat.editingTask.scope_id)?.level)"></span>
                         <span x-text="$store.chat.getScopeBreadcrumb($store.chat.editingTask.scope_id)"></span>
-                        <button type="button" class="scope-clear-btn" @click="$store.chat.clearTaskScope()" :disabled="$store.chat.taskScopeCascadePending" title="Remove scope">x</button>
+                        <button type="button" class="scope-clear-btn" x-show="$store.chat.isTaskDetailEditing()" @click="$store.chat.clearTaskScope()" :disabled="$store.chat.taskScopeCascadePending" title="Remove scope">x</button>
                       </div>
                     </template>
                     <div class="scope-typeahead-wrapper">
                       <input
                         type="text"
+                        x-show="$store.chat.isTaskDetailEditing()"
                         x-model="$store.chat.scopePickerQuery"
                         placeholder="Search scopes..."
                         @focus="$store.chat.openScopePicker(); scopeIdx = 0"
@@ -1475,7 +1507,7 @@
                         @keydown.arrow-up.prevent="scopeIdx = Math.max(scopeIdx - 1, 0)"
                         @keydown.enter.prevent="if ($store.chat.scopePickerFlat[scopeIdx]) $store.chat.selectScopeForTask($store.chat.scopePickerFlat[scopeIdx].record_id)"
                       />
-                      <ul class="scope-typeahead-results" x-show="$store.chat.showScopePicker && $store.chat.scopePickerFlat.length > 0" x-cloak>
+                      <ul class="scope-typeahead-results" x-show="$store.chat.isTaskDetailEditing() && $store.chat.showScopePicker && $store.chat.scopePickerFlat.length > 0" x-cloak>
                         <template x-for="(item, idx) in $store.chat.scopePickerFlat" :key="item.record_id">
                           <li
                             class="scope-typeahead-option"
@@ -1489,7 +1521,7 @@
                           </li>
                         </template>
                       </ul>
-                      <div class="scope-typeahead-empty" x-show="$store.chat.showScopePicker && $store.chat.scopePickerFlat.length === 0">
+                      <div class="scope-typeahead-empty" x-show="$store.chat.isTaskDetailEditing() && $store.chat.showScopePicker && $store.chat.scopePickerFlat.length === 0">
                         No scopes found.
                       </div>
                     </div>
@@ -1521,13 +1553,14 @@
                             </span>
                             <span class="task-predecessor-meta" x-text="$store.chat.getPredecessorTaskScopeMeta(pred)"></span>
                           </button>
-                          <button type="button" class="task-inline-clear-btn" @click.stop="$store.chat.removeEditingTaskPredecessor(pred.record_id)">Remove</button>
+                          <button type="button" class="task-inline-clear-btn" x-show="$store.chat.isTaskDetailEditing()" @click.stop="$store.chat.removeEditingTaskPredecessor(pred.record_id)">Remove</button>
                         </div>
                       </template>
                     </div>
                     <div class="scope-typeahead-wrapper">
                       <input
                         type="text"
+                        x-show="$store.chat.isTaskDetailEditing()"
                         x-model="$store.chat.predecessorTaskQuery"
                         placeholder="Type to add predecessor tasks from the same scope tree..."
                         @focus="$store.chat.openPredecessorTaskPicker(); predIdx = 0"
@@ -1537,7 +1570,7 @@
                         @keydown.arrow-up.prevent="predIdx = Math.max(predIdx - 1, 0)"
                         @keydown.enter.prevent="if ($store.chat.predecessorTaskSuggestions[predIdx]) $store.chat.addEditingTaskPredecessor($store.chat.predecessorTaskSuggestions[predIdx].record_id)"
                       />
-                      <ul class="scope-typeahead-results task-predecessor-results" x-show="$store.chat.showPredecessorTaskPicker && $store.chat.predecessorTaskSuggestions.length > 0" x-cloak>
+                      <ul class="scope-typeahead-results task-predecessor-results" x-show="$store.chat.isTaskDetailEditing() && $store.chat.showPredecessorTaskPicker && $store.chat.predecessorTaskSuggestions.length > 0" x-cloak>
                         <template x-for="(item, idx) in $store.chat.predecessorTaskSuggestions" :key="item.record_id">
                           <li
                             class="scope-typeahead-option task-predecessor-option"
@@ -1553,7 +1586,7 @@
                           </li>
                         </template>
                       </ul>
-                      <div class="scope-typeahead-empty" x-show="$store.chat.showPredecessorTaskPicker && $store.chat.predecessorTaskSuggestions.length === 0">
+                      <div class="scope-typeahead-empty" x-show="$store.chat.isTaskDetailEditing() && $store.chat.showPredecessorTaskPicker && $store.chat.predecessorTaskSuggestions.length === 0">
                         No matching tasks found.
                       </div>
                     </div>
@@ -1588,7 +1621,7 @@
                             ></span>
                           </button>
                           <div class="task-flow-actions">
-                            <button type="button" class="task-inline-clear-btn" @click="$store.chat.detachFlowFromEditingTask()" title="Detach flow">x</button>
+                            <button type="button" class="task-inline-clear-btn" x-show="$store.chat.isTaskDetailEditing()" @click="$store.chat.detachFlowFromEditingTask()" title="Detach flow">x</button>
                           </div>
                         </div>
                         <div class="task-flow-step-list" x-show="flowExpanded && (flowInfo.steps || []).length > 0" x-cloak x-transition>
@@ -1617,7 +1650,7 @@
                         </div>
                       </div>
                     </template>
-                    <template x-if="!flowInfo">
+                    <template x-if="!flowInfo && $store.chat.isTaskDetailEditing()">
                       <div class="task-flow-attach" @click.outside="$store.chat.showFlowPicker = false">
                         <button type="button" class="task-flow-attach-btn" @click="$store.chat.showFlowPicker = !$store.chat.showFlowPicker">Attach flow...</button>
                         <div class="task-flow-picker" x-show="$store.chat.showFlowPicker" x-cloak x-transition>
@@ -1640,19 +1673,18 @@
                       <label class="task-field-label">Description</label>
                       <a
                         class="task-desc-toggle"
-                        x-show="$store.chat.taskDescriptionEditing && $store.chat.editingTask.description"
+                        x-show="$store.chat.isTaskDetailEditing() && $store.chat.taskDescriptionEditing && $store.chat.editingTask.description"
                         @click.prevent="$store.chat.taskDescriptionEditing = false"
                       >Preview</a>
                       <a
                         class="task-desc-toggle"
-                        x-show="!$store.chat.taskDescriptionEditing"
+                        x-show="$store.chat.isTaskDetailEditing() && !$store.chat.taskDescriptionEditing"
                         @click.prevent="$store.chat.taskDescriptionEditing = true"
                       >Edit</a>
                     </div>
                     <textarea
                       x-show="$store.chat.taskDescriptionEditing"
                       x-model="$store.chat.editingTask.description"
-                      @change="$store.chat.saveEditingTask()"
                       @input="$store.chat.handleMentionInput($event.target)"
                       @keydown="$store.chat.handleMentionKeydown($event)"
                       @paste="$store.chat.handleTaskDescriptionPaste($event)"
@@ -1678,7 +1710,7 @@
                         </div>
                       </template>
                       <template x-if="!$store.chat.editingTask.parent_task_id">
-                        <div class="subtask-add-inline">
+                        <div class="subtask-add-inline" x-show="$store.chat.isTaskDetailEditing()">
                           <input
                             type="text"
                             x-model="$store.chat.newSubtaskTitle"
@@ -4215,6 +4247,7 @@
                       <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id)">Approve</button>
                       <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id)">Reject</button>
                       <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, prompt('Improvement notes:') || '')">Improve</button>
+                      <button type="button" class="btn-archive" @click="$store.chat.archiveApproval(approval.record_id)">Archive</button>
                     </div>
                   </article>
                 </template>
@@ -4826,8 +4859,8 @@
               <!-- Left column: approval info -->
               <div class="approval-detail-left">
                 <div class="approval-detail-status-row">
-                  <span class="approval-status-badge" :style="'background:' + ({pending:'#fbbf24',approved:'#34d399',rejected:'#f87171',needs_revision:'#a78bfa'}[approval?.status] || '#9ca3af')"
-                    x-text="{pending:'Pending',approved:'Approved',rejected:'Rejected',needs_revision:'Needs Revision'}[approval?.status] || approval?.status"></span>
+                  <span class="approval-status-badge" :style="'background:' + ({pending:'#fbbf24',approved:'#34d399',rejected:'#f87171',needs_revision:'#a78bfa',archived:'#94a3b8'}[approval?.status] || '#9ca3af')"
+                    x-text="{pending:'Pending',approved:'Approved',rejected:'Rejected',needs_revision:'Needs Revision',archived:'Archived'}[approval?.status] || approval?.status"></span>
                   <span x-show="approval?.confidence_score != null" x-text="'Confidence: ' + Math.round((approval?.confidence_score || 0) * 100) + '%'"></span>
                   <span x-show="approval?.approval_mode" x-text="approval?.approval_mode === 'agent' ? 'Agent review' : 'Manual review'"></span>
                 </div>
@@ -4888,6 +4921,7 @@
                   <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Approve</button>
                   <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Reject</button>
                   <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Improve</button>
+                  <button type="button" class="btn-archive" @click="$store.chat.archiveApproval(approval.record_id, $store.chat.approvalDecisionNote); $store.chat.showApprovalDetail = false">Archive</button>
                   <input type="text" x-model="$store.chat.approvalDecisionNote" placeholder="Decision note (optional)" class="approval-decision-input" />
                 </div>
               </div>

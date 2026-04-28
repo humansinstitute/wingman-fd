@@ -10,6 +10,7 @@ const state = {
   summaryResponse: null,
   documentsById: new Map(),
   directoriesById: new Map(),
+  tasksById: new Map(),
 };
 
 vi.mock('../src/db.js', () => ({
@@ -30,7 +31,10 @@ vi.mock('../src/db.js', () => ({
   }),
   getDocumentById: vi.fn(async (recordId) => state.documentsById.get(recordId) || null),
   getDirectoryById: vi.fn(async (recordId) => state.directoriesById.get(recordId) || null),
-  upsertTask: vi.fn(),
+  upsertTask: vi.fn(async (record) => {
+    state.tasksById.set(record.record_id, record);
+  }),
+  getTaskById: vi.fn(async (recordId) => state.tasksById.get(recordId) || null),
   upsertSchedule: vi.fn(),
   upsertComment: vi.fn(),
   upsertAudioNote: vi.fn(),
@@ -62,6 +66,7 @@ describe('sync worker pending write batching', () => {
     state.summaryResponse = null;
     state.documentsById = new Map();
     state.directoriesById = new Map();
+    state.tasksById = new Map();
     vi.resetModules();
   });
 
@@ -110,6 +115,100 @@ describe('sync worker pending write batching', () => {
       familySuffixes: { task: 'checkout_required' },
     });
     expect(state.removed).toEqual([1]);
+  });
+
+  it('uses pending-write policy config without flipping unrelated task writes', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'task-create',
+        record_family_hash: taskFamilyHash,
+        envelope: {
+          record_id: 'task-create',
+          record_family_hash: taskFamilyHash,
+        },
+      },
+      {
+        row_id: 2,
+        record_id: 'task-edit',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: checkoutPolicyConfig,
+        envelope: {
+          record_id: 'task-edit',
+          record_family_hash: taskFamilyHash,
+          checkout: { checkout_id: 'checkout-task-edit', consume_on_success: true },
+        },
+      },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords.mockImplementation(async (args) => {
+      state.syncCalls.push(args.records.map((record) => record.record_id));
+      state.syncArgs.push(args);
+      return { synced: args.records.length, rejected: [] };
+    });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+    await flushPendingWrites('npub-owner');
+
+    expect(state.syncCalls).toEqual([
+      ['task-create'],
+      ['task-edit'],
+    ]);
+    expect(state.syncArgs[0].checkout_policy_config).toBeNull();
+    expect(state.syncArgs[1].checkout_policy_config).toEqual(checkoutPolicyConfig);
+    expect(state.removed).toEqual([1, 2]);
+  });
+
+  it('flushes terminal task pending writes optimistically when stale checkout config is attached', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
+    state.tasksById.set('task-archived', {
+      record_id: 'task-archived',
+      state: 'archive',
+    });
+    state.tasksById.set('task-done', {
+      record_id: 'task-done',
+      state: 'done',
+    });
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'task-archived',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: checkoutPolicyConfig,
+        envelope: {
+          record_id: 'task-archived',
+          record_family_hash: taskFamilyHash,
+        },
+      },
+      {
+        row_id: 2,
+        record_id: 'task-done',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: checkoutPolicyConfig,
+        envelope: {
+          record_id: 'task-done',
+          record_family_hash: taskFamilyHash,
+        },
+      },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords.mockImplementation(async (args) => {
+      state.syncCalls.push(args.records.map((record) => record.record_id));
+      state.syncArgs.push(args);
+      return { synced: args.records.length, rejected: [] };
+    });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+    await flushPendingWrites('npub-owner');
+
+    expect(state.syncCalls).toEqual([['task-archived', 'task-done']]);
+    expect(state.syncArgs[0].checkout_policy_config).toBeNull();
+    expect(state.removed).toEqual([1, 2]);
   });
 
   it('keeps the failing batch pending and reports batch context', async () => {

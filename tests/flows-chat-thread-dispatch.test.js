@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('../src/crypto/group-keys.js', () => ({
+  hasGroupKey: vi.fn(() => true),
+}));
+
 vi.mock('../src/db.js', () => ({
   upsertFlow: vi.fn(async () => {}),
   getFlowById: vi.fn(async () => null),

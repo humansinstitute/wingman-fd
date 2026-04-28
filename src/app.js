@@ -151,7 +151,6 @@ import {
 } from './task-board-scopes.js';
 import {
   buildCascadedSubtaskUpdate,
-  taskScopeAssignmentChanged,
 } from './task-scope-cascade.js';
 import { parseSuperBasedToken } from './superbased-token.js';
 import {
@@ -170,6 +169,10 @@ import {
   setActiveSessionNpub,
   wrapKnownGroupKeyForMember,
 } from './crypto/group-keys.js';
+import {
+  getEncryptableRecordGroupRefsForStore,
+  getRecordWriteFieldsForStore,
+} from './preferred-write-group.js';
 import {
   bootstrapWorkspaceSessionKey,
   getActiveWorkspaceKeyNpub,
@@ -462,6 +465,10 @@ export function initApp() {
     newTaskCommentBody: '',
     copiedTaskLinkId: null,
     editingTask: null,
+    taskDetailMode: 'view',
+    taskEditOriginal: null,
+    taskDetailSaving: false,
+    taskDetailCheckoutPending: false,
     taskAssigneeQuery: '',
     predecessorTaskQuery: '',
     showPredecessorTaskPicker: false,
@@ -1142,8 +1149,8 @@ export function initApp() {
 
     get canCurrentActorEditSelectedLockManagedRecord() {
       if (!this.selectedDocRequiresCheckout) return true;
-      return typeof this.canCurrentActorEditOwnerOnlyLockManagedRecord === 'function'
-        ? this.canCurrentActorEditOwnerOnlyLockManagedRecord()
+      return typeof this.canCurrentActorAcquireCheckoutRequiredRecord === 'function'
+        ? this.canCurrentActorAcquireCheckoutRequiredRecord()
         : false;
     },
 
@@ -2869,10 +2876,15 @@ export function initApp() {
         await upsertSchedule(localRow);
         this.schedules = [localRow, ...this.schedules];
 
+        const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
+          label: 'Schedule write',
+          writeGroupRef: groupId,
+        });
         const envelope = await outboundSchedule({
           ...localRow,
+          group_ids: writeFields.group_ids,
           signature_npub: this.signingNpub,
-          write_group_ref: groupId,
+          write_group_ref: writeFields.write_group_ref,
         });
         await addPendingWrite({
           record_id: localRow.record_id,
@@ -2926,12 +2938,14 @@ export function initApp() {
         sync_status: 'pending',
         updated_at: new Date().toISOString(),
       });
-      const writeGroupId = this.getPreferredRecordWriteGroup(updated)
-        || updated.assigned_group_id
-        || updated.group_ids?.[0]
-        || current.group_ids?.[0]
-        || null;
-      if (!writeGroupId) {
+      const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+        label: 'Schedule write',
+        writeGroupRef: updated.assigned_group_id
+          || this.getPreferredRecordWriteGroup(updated)
+          || current.group_ids?.[0]
+          || null,
+      });
+      if (!writeFields.write_group_ref) {
         this.error = 'Schedule is missing a writable group.';
         return;
       }
@@ -2942,9 +2956,10 @@ export function initApp() {
 
         const envelope = await outboundSchedule({
           ...updated,
+          group_ids: writeFields.group_ids,
           previous_version: current.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: writeGroupId,
+          write_group_ref: writeFields.write_group_ref,
         });
         await addPendingWrite({
           record_id: updated.record_id,
@@ -2989,11 +3004,15 @@ export function initApp() {
         this.schedules = this.schedules.filter((item) => item.record_id !== scheduleId);
         if (this.editingScheduleId === scheduleId) this.cancelEditSchedule();
 
+        const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+          label: 'Schedule delete',
+        });
         const envelope = await outboundSchedule({
           ...updated,
+          group_ids: writeFields.group_ids,
           previous_version: schedule.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: this.getPreferredRecordWriteGroup(updated),
+          write_group_ref: writeFields.write_group_ref,
         });
         await addPendingWrite({
           record_id: updated.record_id,
@@ -3063,10 +3082,12 @@ export function initApp() {
       this.tasks = mergeTaskIntoList(this.tasks, localRow);
       this.newTaskTitle = '';
 
+      const taskWriteFields = await this.getTaskWriteFieldsForWrite(localRow);
       const envelope = await outboundTask({
         ...localRow,
+        group_ids: taskWriteFields.group_ids,
         signature_npub: this.signingNpub,
-        write_group_ref: this.getPreferredRecordWriteGroup(localRow),
+        write_group_ref: taskWriteFields.write_group_ref,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -3077,21 +3098,61 @@ export function initApp() {
       await this.refreshTasks();
     },
 
-    async queueTaskWrite(updatedTask, previousTask) {
+    getTaskDetailCheckoutPolicyConfig() {
+      const baseConfig = this.recordCheckoutPolicyConfig || {};
+      return {
+        recordFamilyHashes: {
+          ...(baseConfig.recordFamilyHashes || {}),
+        },
+        familySuffixes: {
+          ...(baseConfig.familySuffixes || {}),
+          task: 'checkout_required',
+        },
+      };
+    },
+
+    async getEncryptableTaskGroupIdsForWrite(record = null) {
+      return getEncryptableRecordGroupRefsForStore(this, record, {
+        label: 'Task write',
+      });
+    },
+
+    async getTaskWriteFieldsForWrite(record = null) {
+      return getRecordWriteFieldsForStore(this, record, {
+        label: 'Task write',
+      });
+    },
+
+    isTaskDetailEditing() {
+      return this.taskDetailMode === 'edit';
+    },
+
+    async queueTaskWrite(updatedTask, previousTask, options = {}) {
+      const hasExplicitCheckoutPolicyConfig = Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig');
+      const checkoutPolicyConfig = hasExplicitCheckoutPolicyConfig
+        ? options.checkoutPolicyConfig
+        : this.getTaskDetailCheckoutPolicyConfig();
+      const taskWriteFields = await this.getTaskWriteFieldsForWrite(updatedTask);
       const envelope = await outboundTask({
         ...updatedTask,
+        group_ids: taskWriteFields.group_ids,
         previous_version: previousTask?.version ?? 0,
         signature_npub: this.signingNpub,
-        write_group_ref: this.getPreferredRecordWriteGroup(updatedTask),
+        write_group_ref: taskWriteFields.write_group_ref,
       });
       const managedEnvelope = typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
-        ? await this.attachCheckoutRequiredCheckoutToEnvelope(updatedTask, envelope, { intent: 'edit' })
+        ? await this.attachCheckoutRequiredCheckoutToEnvelope(updatedTask, envelope, {
+          intent: options.intent || 'edit',
+          checkoutPolicyConfig,
+        })
         : envelope;
-      await addPendingWrite({
+      const pendingWrite = {
         record_id: updatedTask.record_id,
         record_family_hash: managedEnvelope.record_family_hash,
         envelope: managedEnvelope,
-      });
+      };
+      if (checkoutPolicyConfig) pendingWrite.checkout_policy_config = checkoutPolicyConfig;
+      await addPendingWrite(pendingWrite);
     },
 
     async applyTaskPatch(taskId, patch = {}, options = {}) {
@@ -3119,7 +3180,12 @@ export function initApp() {
         this.editingTask = { ...updated };
       }
 
-      await this.queueTaskWrite(updated, task);
+      const queueOptions = {};
+      if (Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig')) {
+        queueOptions.checkoutPolicyConfig = options.checkoutPolicyConfig;
+      }
+      if (options.intent) queueOptions.intent = options.intent;
+      await this.queueTaskWrite(updated, task, queueOptions);
 
       const newAssignee = updated.assigned_to_npub;
       if (newAssignee && newAssignee !== task.assigned_to_npub) {
@@ -3224,10 +3290,12 @@ export function initApp() {
       this.tasks = mergeTaskIntoList(this.tasks, localRow);
       this.newSubtaskTitle = '';
 
+      const taskWriteFields = await this.getTaskWriteFieldsForWrite(localRow);
       const envelope = await outboundTask({
         ...localRow,
+        group_ids: taskWriteFields.group_ids,
         signature_npub: this.signingNpub,
-        write_group_ref: this.getPreferredRecordWriteGroup(localRow),
+        write_group_ref: taskWriteFields.write_group_ref,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -3243,39 +3311,95 @@ export function initApp() {
     },
 
     setTaskDueToday() {
-      if (!this.editingTask) return;
+      if (!this.editingTask || !this.isTaskDetailEditing()) return;
       const today = new Date();
       this.editingTask.scheduled_for = today.toISOString().slice(0, 10);
-      this.saveEditingTask();
     },
 
     setTaskDueThisWeek() {
-      if (!this.editingTask) return;
+      if (!this.editingTask || !this.isTaskDetailEditing()) return;
       const today = new Date();
       const dayOfWeek = today.getDay();
       const daysUntilFriday = dayOfWeek <= 5 ? (5 - dayOfWeek) : 6;
       const friday = new Date(today);
       friday.setDate(today.getDate() + (daysUntilFriday === 0 ? 7 : daysUntilFriday));
       this.editingTask.scheduled_for = friday.toISOString().slice(0, 10);
-      this.saveEditingTask();
     },
 
     async quickSetTaskState(state) {
-      if (!this.editingTask) return;
+      if (!this.editingTask || !this.isTaskDetailEditing()) return;
       this.editingTask.state = state;
       this.editingTask.assigned_to_npub = null;
-      await this.saveEditingTask();
-      this.closeTaskDetail();
+    },
+
+    async enterTaskDetailEditMode() {
+      if (!this.editingTask || !this.session?.npub || this.taskDetailCheckoutPending) return false;
+      const task = this.tasks.find(t => t.record_id === this.editingTask.record_id);
+      if (!task) return false;
+      const checkoutPolicyConfig = this.getTaskDetailCheckoutPolicyConfig();
+      this.taskDetailCheckoutPending = true;
+      try {
+        await this.ensureLockManagedCheckout(task, taskFamilyHash('task'), {
+          intent: 'edit',
+          checkoutPolicyConfig,
+        });
+        this.taskEditOriginal = toRaw(task);
+        this.editingTask = toRaw(task);
+        this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
+        this.taskDetailMode = 'edit';
+        this.taskDescriptionEditing = !this.editingTask?.description;
+        this.error = '';
+        return true;
+      } catch (error) {
+        this.taskDetailMode = 'view';
+        this.taskDescriptionEditing = false;
+        if (error?.userMessage) this.error = error.userMessage;
+        return false;
+      } finally {
+        this.taskDetailCheckoutPending = false;
+      }
+    },
+
+    async cancelTaskDetailEdit(options = {}) {
+      if (!this.editingTask) return;
+      const task = this.tasks.find(t => t.record_id === this.editingTask.record_id) || this.taskEditOriginal;
+      const checkoutPolicyConfig = this.getTaskDetailCheckoutPolicyConfig();
+      if (task?.record_id) {
+        await this.releaseLockManagedCheckout(task, taskFamilyHash('task'), {
+          reportError: options.reportError === true,
+          force: true,
+          checkoutPolicyConfig,
+        });
+      }
+      const latest = task?.record_id ? this.tasks.find(t => t.record_id === task.record_id) || task : null;
+      this.editingTask = latest ? toRaw(latest) : null;
+      if (this.editingTask) {
+        this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
+      }
+      this.taskEditOriginal = null;
+      this.taskDetailMode = 'view';
+      this.taskDescriptionEditing = false;
+      this.taskAssigneeQuery = '';
+      this.predecessorTaskQuery = '';
+      this.showPredecessorTaskPicker = false;
+      this.showFlowPicker = false;
+      this.closeScopePicker();
     },
 
     async saveEditingTask() {
       if (!this.editingTask || !this.session?.npub) return;
+      if (!this.isTaskDetailEditing()) {
+        this.error = 'Click Edit before changing this task.';
+        return;
+      }
+      if (this.taskDetailSaving) return;
       if (this.containsInlineImageUploadToken(this.editingTask.description)) {
         this.error = 'Wait for image upload to finish.';
         return;
       }
       const task = this.tasks.find(t => t.record_id === this.editingTask.record_id);
       if (!task) return;
+      const checkoutPolicyConfig = this.getTaskDetailCheckoutPolicyConfig();
 
       if (this.editingTask.state === 'done' || this.editingTask.state === 'archive') {
         this.editingTask.assigned_to_npub = null;
@@ -3347,32 +3471,44 @@ export function initApp() {
         updated_at: new Date().toISOString(),
       });
 
-      await upsertTask(updated);
-      this.tasks = this.tasks.map(t => t.record_id === updated.record_id ? updated : t);
-      this.editingTask = { ...updated };
-      this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
-      if (this.activeTaskId === updated.record_id) this.scheduleStorageImageHydration();
+      this.taskDetailSaving = true;
+      try {
+        await upsertTask(updated);
+        this.tasks = this.tasks.map(t => t.record_id === updated.record_id ? updated : t);
+        this.editingTask = { ...updated };
+        this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
+        if (this.activeTaskId === updated.record_id) this.scheduleStorageImageHydration();
 
-      await this.queueTaskWrite(updated, task);
-      if (this.isParentTask(updated.record_id) && taskScopeAssignmentChanged(task, updated)) {
-        await this.cascadeTaskScopeToSubtasks(task, updated);
-      }
-      if (updated.description && updated.description !== task.description) {
-        this._fireMentionTriggers(updated.description, `task "${updated.title}"`);
-      }
-      // Fire trigger when task is assigned to a bot
-      const newAssignee = updated.assigned_to_npub;
-      if (newAssignee && newAssignee !== task.assigned_to_npub) {
-        for (const trigger of (this.workspaceTriggers || [])) {
-          if (!trigger.enabled || !trigger.botNpub || trigger.triggerType !== 'chat_bot_tagged') continue;
-          if (newAssignee === trigger.botNpub) {
-            this._checkTriggerRules('chat_bot_tagged', trigger.botPubkeyHex,
-              `Task assigned to bot: "${updated.title}" [${updated.state}]`);
+        await this.queueTaskWrite(updated, task, { checkoutPolicyConfig, intent: 'edit' });
+        // Task checkout edits commit one task record. Subtask scope cascades
+        // need their own explicit transaction if we bring them back here.
+        if (updated.description && updated.description !== task.description) {
+          this._fireMentionTriggers(updated.description, `task "${updated.title}"`);
+        }
+        // Fire trigger when task is assigned to a bot
+        const newAssignee = updated.assigned_to_npub;
+        if (newAssignee && newAssignee !== task.assigned_to_npub) {
+          for (const trigger of (this.workspaceTriggers || [])) {
+            if (!trigger.enabled || !trigger.botNpub || trigger.triggerType !== 'chat_bot_tagged') continue;
+            if (newAssignee === trigger.botNpub) {
+              this._checkTriggerRules('chat_bot_tagged', trigger.botPubkeyHex,
+                `Task assigned to bot: "${updated.title}" [${updated.state}]`);
+            }
           }
         }
+        const flushResult = await this.flushAndBackgroundSync();
+        if ((flushResult?.pushed ?? 0) > 0) {
+          this.clearLockManagedCheckoutSession(updated.record_id, taskFamilyHash('task'));
+          this.taskDetailMode = 'view';
+          this.taskEditOriginal = null;
+          this.taskDescriptionEditing = false;
+        }
+        await this.refreshTasks();
+      } catch (error) {
+        this.error = error?.message || 'Failed to save task.';
+      } finally {
+        this.taskDetailSaving = false;
       }
-      await this.flushAndBackgroundSync();
-      await this.refreshTasks();
     },
 
     async deleteTask(taskId) {
@@ -3419,24 +3555,17 @@ export function initApp() {
       await upsertTask(updated);
       this.tasks = this.tasks.filter(t => t.record_id !== task.record_id);
 
-      const envelope = await outboundTask({
-        ...updated,
-        previous_version: task.version ?? 1,
-        signature_npub: this.signingNpub,
-        record_state: 'deleted',
-        write_group_ref: this.getPreferredRecordWriteGroup(updated),
-      });
-      await addPendingWrite({
-        record_id: task.record_id,
-        record_family_hash: envelope.record_family_hash,
-        envelope,
-      });
+      await this.queueTaskWrite(updated, task, { intent: 'delete' });
     },
 
     openTaskDetail(taskId) {
       this.activeTaskId = taskId;
       const task = this.tasks.find(t => t.record_id === taskId);
       this.editingTask = task ? toRaw(task) : null;
+      this.taskEditOriginal = this.editingTask ? toRaw(this.editingTask) : null;
+      this.taskDetailMode = 'view';
+      this.taskDetailSaving = false;
+      this.taskDetailCheckoutPending = false;
       if (this.editingTask) {
         // Hydrate references from description for tasks that predate the feature
         const hasStoredRefs = Array.isArray(this.editingTask.references) && this.editingTask.references.length > 0;
@@ -3452,7 +3581,7 @@ export function initApp() {
       this.predecessorTaskQuery = '';
       this.showPredecessorTaskPicker = false;
       this.showTaskDetail = true;
-      this.taskDescriptionEditing = !this.editingTask?.description;
+      this.taskDescriptionEditing = false;
       this.newSubtaskTitle = '';
       this.newTaskCommentBody = '';
       this.loadTaskComments(taskId);
@@ -3461,11 +3590,18 @@ export function initApp() {
       this.syncRoute();
     },
 
-    closeTaskDetail(options = {}) {
+    async closeTaskDetail(options = {}) {
+      if (this.isTaskDetailEditing() && options.releaseCheckout !== false) {
+        await this.cancelTaskDetailEdit({ reportError: false });
+      }
       this.stopTaskCommentsLiveQuery();
       this.showTaskDetail = false;
       this.activeTaskId = null;
       this.editingTask = null;
+      this.taskEditOriginal = null;
+      this.taskDetailMode = 'view';
+      this.taskDetailSaving = false;
+      this.taskDetailCheckoutPending = false;
       this.taskAssigneeQuery = '';
       this.predecessorTaskQuery = '';
       this.showPredecessorTaskPicker = false;
@@ -3498,18 +3634,16 @@ export function initApp() {
     },
 
     async attachFlowToEditingTask(flowId) {
-      if (!this.editingTask) return;
+      if (!this.editingTask || !this.isTaskDetailEditing()) return;
       const patch = buildAttachFlowPatch(flowId, this.editingTask.references || []);
       Object.assign(this.editingTask, patch);
       this.showFlowPicker = false;
-      await this.saveEditingTask();
     },
 
     async detachFlowFromEditingTask() {
-      if (!this.editingTask) return;
+      if (!this.editingTask || !this.isTaskDetailEditing()) return;
       const patch = buildDetachFlowPatch(this.editingTask.references || []);
       Object.assign(this.editingTask, patch);
-      await this.saveEditingTask();
     },
 
     openCalendarTask(taskId) {
@@ -3590,34 +3724,31 @@ export function initApp() {
     },
 
     async addEditingTaskPredecessor(taskId) {
-      if (!this.editingTask || !this.session?.npub) return;
+      if (!this.editingTask || !this.session?.npub || !this.isTaskDetailEditing()) return;
       this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds([
         ...(this.editingTask.predecessor_task_ids || []),
         taskId,
       ], this.editingTask.record_id);
       this.predecessorTaskQuery = '';
       this.showPredecessorTaskPicker = false;
-      await this.saveEditingTask();
     },
 
     async removeEditingTaskPredecessor(taskId) {
-      if (!this.editingTask || !this.session?.npub) return;
+      if (!this.editingTask || !this.session?.npub || !this.isTaskDetailEditing()) return;
       this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(
         (this.editingTask.predecessor_task_ids || []).filter((candidate) => candidate !== taskId),
         this.editingTask.record_id,
       );
-      await this.saveEditingTask();
     },
 
     async assignEditingTask(npub) {
-      if (!this.editingTask || !this.session?.npub) return;
+      if (!this.editingTask || !this.session?.npub || !this.isTaskDetailEditing()) return;
       const nextNpub = String(npub || '').trim();
       this.editingTask.assigned_to_npub = nextNpub || null;
       this.taskAssigneeQuery = '';
       if (nextNpub) {
         await this.rememberPeople([nextNpub], 'task-assignee');
       }
-      await this.saveEditingTask();
     },
 
     async clearEditingTaskAssignee() {
@@ -3625,12 +3756,10 @@ export function initApp() {
     },
 
     async doTaskWithDefaultAgent() {
-      if (!this.editingTask || !this.defaultAgentNpub || !this.session?.npub) return;
+      if (!this.editingTask || !this.defaultAgentNpub || !this.session?.npub || !this.isTaskDetailEditing()) return;
       this.editingTask.assigned_to_npub = this.defaultAgentNpub;
       this.editingTask.state = 'ready';
       this.taskAssigneeQuery = '';
-      await this.saveEditingTask();
-      this.closeTaskDetail();
       this.rememberPeople([this.defaultAgentNpub], 'task-assignee');
     },
 
@@ -3715,12 +3844,13 @@ export function initApp() {
       const now = new Date().toISOString();
       const recordId = crypto.randomUUID();
       const ownerNpub = this.workspaceOwnerNpub;
+      const taskWriteFields = await this.getTaskWriteFieldsForWrite(task);
       const { attachments } = await this.materializeAudioDrafts({
         drafts,
         target_record_id: recordId,
         target_record_family_hash: recordFamilyHash('comment'),
-        target_group_ids: toRaw(task?.group_ids ?? []),
-        write_group_ref: this.getPreferredRecordWriteGroup(task),
+        target_group_ids: taskWriteFields.group_ids,
+        write_group_ref: taskWriteFields.write_group_ref,
       });
 
       const localRow = {
@@ -3746,9 +3876,9 @@ export function initApp() {
 
       const envelope = await outboundComment({
         ...localRow,
-        target_group_ids: toRaw(task?.group_ids ?? []),
+        target_group_ids: taskWriteFields.group_ids,
         signature_npub: this.signingNpub,
-        write_group_ref: this.getPreferredRecordWriteGroup(task),
+        write_group_ref: taskWriteFields.write_group_ref,
       });
       await addPendingWrite({
         record_id: recordId,
@@ -4139,11 +4269,13 @@ export function initApp() {
         await upsertTask(subUpdated);
         this.tasks = this.tasks.map(t => t.record_id === sub.record_id ? subUpdated : t);
 
+        const subWriteFields = await this.getTaskWriteFieldsForWrite(subUpdated);
         const subEnvelope = await outboundTask({
           ...subUpdated,
+          group_ids: subWriteFields.group_ids,
           previous_version: sub.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: this.getPreferredRecordWriteGroup(subUpdated),
+          write_group_ref: subWriteFields.write_group_ref,
         });
         await addPendingWrite({
           record_id: sub.record_id,
@@ -4152,11 +4284,13 @@ export function initApp() {
         });
       }
 
+      const taskWriteFields = await this.getTaskWriteFieldsForWrite(updated);
       const envelope = await outboundTask({
         ...updated,
+        group_ids: taskWriteFields.group_ids,
         previous_version: task.version ?? 1,
         signature_npub: this.signingNpub,
-        write_group_ref: this.getPreferredRecordWriteGroup(updated),
+        write_group_ref: taskWriteFields.write_group_ref,
       });
       await addPendingWrite({
         record_id: taskId,

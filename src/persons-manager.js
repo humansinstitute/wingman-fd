@@ -12,7 +12,7 @@ import {
 import { outboundPerson } from './translators/persons.js';
 import { outboundOrganisation } from './translators/organisations.js';
 import { toRaw } from './utils/state-helpers.js';
-import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
+import { getRecordWriteFieldsForStore } from './preferred-write-group.js';
 
 export const personsManagerMixin = {
   applyPersons(persons) {
@@ -75,10 +75,15 @@ export const personsManagerMixin = {
     await upsertPerson(localRow);
     this.persons = [...this.persons, localRow];
 
+    const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
+      label: 'Person write',
+      writeGroupRef,
+    });
     const envelope = await outboundPerson({
       ...localRow,
+      group_ids: writeFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: writeGroupRef,
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -107,11 +112,15 @@ export const personsManagerMixin = {
     await upsertPerson(updated);
     this.persons = this.persons.map((p) => p.record_id === personId ? updated : p);
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Person write',
+    });
     const envelope = await outboundPerson({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: person.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -140,11 +149,15 @@ export const personsManagerMixin = {
     await upsertPerson(updated);
     this.persons = this.persons.filter((p) => p.record_id !== personId);
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Person delete',
+    });
     const envelope = await outboundPerson({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: person.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, person),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -197,10 +210,15 @@ export const personsManagerMixin = {
     await upsertOrganisation(localRow);
     this.organisations = [...this.organisations, localRow];
 
+    const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
+      label: 'Organisation write',
+      writeGroupRef,
+    });
     const envelope = await outboundOrganisation({
       ...localRow,
+      group_ids: writeFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: writeGroupRef,
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -229,11 +247,15 @@ export const personsManagerMixin = {
     await upsertOrganisation(updated);
     this.organisations = this.organisations.map((o) => o.record_id === orgId ? updated : o);
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Organisation write',
+    });
     const envelope = await outboundOrganisation({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: org.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -262,11 +284,15 @@ export const personsManagerMixin = {
     await upsertOrganisation(updated);
     this.organisations = this.organisations.filter((o) => o.record_id !== orgId);
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Organisation delete',
+    });
     const envelope = await outboundOrganisation({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: org.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, org),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({

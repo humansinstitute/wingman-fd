@@ -37,7 +37,9 @@ import {
 import { normalizeArtifactRef, resolveArtifactRef } from './approval-helpers.js';
 import { commentBelongsToDocBlock } from './doc-comment-anchors.js';
 import { renderMarkdownToHtml } from './markdown.js';
-import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
+import {
+  getRecordWriteFieldsForStore,
+} from './preferred-write-group.js';
 import {
   ALL_TASK_BOARD_ID,
   RECENT_TASK_BOARD_ID,
@@ -95,12 +97,18 @@ function filterScopedFlowRecords(records, selectedBoardId, scopesMap = new Map()
 }
 
 export function pendingApprovals(approvals) {
-  return approvals.filter((a) => a.status === 'pending' && a.record_state !== 'deleted');
+  return approvals.filter((a) => a.status === 'pending' && !isArchivedApproval(a));
 }
 
 export function approvalsByFlowRun(approvals, flowRunId) {
   if (!flowRunId) return [];
-  return approvals.filter((a) => a.flow_run_id === flowRunId && a.record_state !== 'deleted');
+  return approvals.filter((a) => a.flow_run_id === flowRunId && !isArchivedApproval(a));
+}
+
+export function isArchivedApproval(approval) {
+  return approval?.record_state === 'deleted'
+    || approval?.record_state === 'archived'
+    || approval?.status === 'archived';
 }
 
 export function formatApprovalStatus(status) {
@@ -109,6 +117,7 @@ export function formatApprovalStatus(status) {
     approved: 'Approved',
     rejected: 'Rejected',
     needs_revision: 'Needs Revision',
+    archived: 'Archived',
   };
   return labels[status] || status || '';
 }
@@ -119,6 +128,7 @@ export function approvalStatusColor(status) {
     approved: '#34d399',
     rejected: '#f87171',
     needs_revision: '#a78bfa',
+    archived: '#94a3b8',
   };
   return colors[status] || '#9ca3af';
 }
@@ -339,7 +349,7 @@ export const flowsManagerMixin = {
   },
 
   get approvalHistory() {
-    let list = this.approvals.filter((a) => a.record_state !== 'deleted');
+    let list = this.approvals.filter((a) => !isArchivedApproval(a));
     if (this.approvalHistoryScope === 'scope') {
       list = filterScopedFlowRecords(list, this.selectedBoardId, this.scopesMap);
     }
@@ -632,11 +642,14 @@ export const flowsManagerMixin = {
     this.approvalPreviewCommentBody = '';
     this.approvalPreviewAnchorLine = null;
 
+    const targetWriteFields = await getRecordWriteFieldsForStore(this, record, {
+      label: 'Approval preview comment write',
+    });
     const envelope = await outboundComment({
       ...localRow,
-      target_group_ids: toRaw(record.group_ids ?? []),
+      target_group_ids: targetWriteFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, record),
+      write_group_ref: targetWriteFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: commentId,
@@ -699,10 +712,15 @@ export const flowsManagerMixin = {
     await upsertFlow(localRow);
     this.flows = [...this.flows, localRow];
 
+    const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
+      label: 'Flow write',
+      writeGroupRef: write_group_ref,
+    });
     const envelope = await outboundFlow({
       ...localRow,
+      group_ids: writeFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: write_group_ref || getPreferredRecordWriteGroupForStore(this, localRow),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -766,11 +784,15 @@ export const flowsManagerMixin = {
     await upsertFlow(updated);
     this.flows = this.flows.map((f) => f.record_id === flowId ? updated : f);
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Flow write',
+    });
     const envelope = await outboundFlow({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: flow.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -799,11 +821,15 @@ export const flowsManagerMixin = {
     await upsertFlow(updated);
     this.flows = this.flows.filter((f) => f.record_id !== flowId);
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Flow delete',
+    });
     const envelope = await outboundFlow({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: flow.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, flow),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -839,10 +865,14 @@ export const flowsManagerMixin = {
     await upsertTask(task);
     this.tasks = [...this.tasks, task];
 
+    const writeFields = await getRecordWriteFieldsForStore(this, task, {
+      label: 'Flow kickoff task write',
+    });
     const envelope = await outboundTask({
       ...task,
+      group_ids: writeFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, task),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -891,10 +921,14 @@ export const flowsManagerMixin = {
     await upsertTask(task);
     this.tasks = [...this.tasks, task];
 
+    const writeFields = await getRecordWriteFieldsForStore(this, task, {
+      label: 'Chat thread flow task write',
+    });
     const envelope = await outboundTask({
       ...task,
+      group_ids: writeFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, task),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -926,7 +960,12 @@ export const flowsManagerMixin = {
     // Move linked tasks to done
     if (Array.isArray(approval.task_ids)) {
       for (const taskId of approval.task_ids) {
-        await this.applyTaskPatch(taskId, { state: 'done' }, { silent: true, sync: true });
+        await this.applyTaskPatch(taskId, { state: 'done' }, {
+          silent: true,
+          sync: true,
+          checkoutPolicyConfig: null,
+          intent: 'approval_approve',
+        });
       }
     }
 
@@ -987,10 +1026,14 @@ export const flowsManagerMixin = {
     await upsertTask(revisionTask);
     this.tasks = [...this.tasks, revisionTask];
 
+    const taskWriteFields = await getRecordWriteFieldsForStore(this, revisionTask, {
+      label: 'Revision task write',
+    });
     const taskEnvelope = await outboundTask({
       ...revisionTask,
+      group_ids: taskWriteFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, revisionTask),
+      write_group_ref: taskWriteFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -1010,6 +1053,33 @@ export const flowsManagerMixin = {
 
     const updated = await this._patchApproval(approval, patch);
     await this.flushAndBackgroundSync();
+    return updated;
+  },
+
+  async archiveApproval(approvalId, decisionNote = null) {
+    const approval = this.approvals.find((a) => a.record_id === approvalId);
+    if (!approval || !this.session?.npub) return null;
+
+    const now = new Date().toISOString();
+    const updated = await this._patchApproval(approval, {
+      status: 'archived',
+      record_state: 'archived',
+      approved_by: this.session.npub,
+      approved_at: now,
+      decision_note: decisionNote || approval.decision_note || null,
+    });
+
+    if (Array.isArray(approval.task_ids)) {
+      for (const taskId of approval.task_ids) {
+        await this.applyTaskPatch(taskId, { state: 'archive' }, {
+          silent: true,
+          sync: true,
+          checkoutPolicyConfig: null,
+          intent: 'approval_archive',
+        });
+      }
+    }
+
     return updated;
   },
 
@@ -1055,11 +1125,15 @@ export const flowsManagerMixin = {
       a.record_id === approval.record_id ? updated : a
     );
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Approval write',
+    });
     const envelope = await outboundApproval({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: approval.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({
@@ -1136,10 +1210,15 @@ export const flowsManagerMixin = {
     await upsertApproval(localRow);
     this.approvals = [...this.approvals, localRow];
 
+    const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
+      label: 'Approval write',
+      writeGroupRef: write_group_ref,
+    });
     const envelope = await outboundApproval({
       ...localRow,
+      group_ids: writeFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: write_group_ref || getPreferredRecordWriteGroupForStore(this, localRow),
+      write_group_ref: writeFields.write_group_ref,
     });
 
     await addPendingWrite({

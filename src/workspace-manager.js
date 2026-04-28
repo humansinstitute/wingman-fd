@@ -59,6 +59,7 @@ import { buildStoragePrepareBody } from './storage-payloads.js';
 import { buildSuperBasedConnectionToken } from './superbased-token.js';
 import { flightDeckLog } from './logging.js';
 import { DEFAULT_SUPERBASED_URL } from './app-identity.js';
+import { getRecordWriteFieldsForStore } from './preferred-write-group.js';
 
 export function guessDefaultBackendUrl() {
   return DEFAULT_SUPERBASED_URL || '';
@@ -719,6 +720,10 @@ export const workspaceManagerMixin = {
     await upsertWorkspaceSettings(localRow);
     this.applyWorkspaceSettingsRow(localRow);
 
+    const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
+      label: 'Workspace settings write',
+      writeGroupRef,
+    });
     const envelope = await outboundWorkspaceSettings({
       record_id: recordId,
       owner_npub: workspaceOwnerNpub,
@@ -728,11 +733,11 @@ export const workspaceManagerMixin = {
       workspace_avatar_url: workspaceAvatarUrl,
       wingman_harness_url: normalizedUrl,
       triggers: toRaw(this.workspaceTriggers || []),
-      group_ids: groupIds,
+      group_ids: writeFields.group_ids,
       version: nextVersion,
       previous_version: Math.max(0, nextVersion - 1),
       signature_npub: this.session.npub,
-      write_group_ref: writeGroupRef,
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: recordId,

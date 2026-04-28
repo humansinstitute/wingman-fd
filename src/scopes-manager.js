@@ -50,7 +50,10 @@ import {
   sameScopePolicyGroupIds,
   shouldRefreshScopedPolicy,
 } from './scope-policy-helpers.js';
-import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
+import {
+  getRecordWriteFieldsForStore,
+  getPreferredRecordWriteGroupForStore,
+} from './preferred-write-group.js';
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
@@ -497,14 +500,13 @@ export const scopesManagerMixin = {
   // --- scope assignment (task, doc, channel) ---
 
   async selectScopeForTask(scopeId) {
-    if (!this.editingTask || !this.session?.npub) return;
+    if (!this.editingTask || !this.session?.npub || !this.isTaskDetailEditing?.()) return;
     Object.assign(this.editingTask, this.buildTaskBoardAssignment(scopeId, this.editingTask));
     this.closeScopePicker();
-    await this.saveEditingTask();
   },
 
   async clearTaskScope() {
-    if (!this.editingTask || !this.session?.npub) return;
+    if (!this.editingTask || !this.session?.npub || !this.isTaskDetailEditing?.()) return;
     Object.assign(this.editingTask, {
       scope_id: null,
       scope_l1_id: null,
@@ -514,7 +516,6 @@ export const scopesManagerMixin = {
       scope_l5_id: null,
     });
     this.closeScopePicker();
-    await this.saveEditingTask();
   },
 
   async selectScopeForDoc(scopeId) {
@@ -684,11 +685,15 @@ export const scopesManagerMixin = {
     });
     await upsertChannel(updated);
     this.channels = this.channels.map(c => c.record_id === updated.record_id ? updated : c);
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Channel scope write',
+    });
     const envelope = await outboundChannel({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: ch.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -792,10 +797,14 @@ export const scopesManagerMixin = {
     this.newScopeGroupQuery = '';
     this.showNewScopeForm = false;
 
+    const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
+      label: 'Scope write',
+    });
     const envelope = await outboundScope({
       ...localRow,
+      group_ids: writeFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, localRow),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: recordId,
@@ -891,11 +900,15 @@ export const scopesManagerMixin = {
     this.editingScopeAssignedGroupIds = [];
     this.editingScopeGroupQuery = '';
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Scope write',
+    });
     const envelope = await outboundScope({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: scope.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -977,11 +990,15 @@ export const scopesManagerMixin = {
     if (this.editingTask?.record_id === updated.record_id) {
       this.editingTask = { ...updated };
     }
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Task scope repair write',
+    });
     const envelope = await outboundTask({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: task.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1317,11 +1334,15 @@ export const scopesManagerMixin = {
     });
     await upsertFlow(updated);
     this.flows = this.flows.map((entry) => entry.record_id === updated.record_id ? updated : entry);
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Flow scope repair write',
+    });
     const envelope = await outboundFlow({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: flow.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1348,11 +1369,15 @@ export const scopesManagerMixin = {
     });
     await upsertApproval(updated);
     this.approvals = this.approvals.map((entry) => entry.record_id === updated.record_id ? updated : entry);
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Approval scope repair write',
+    });
     const envelope = await outboundApproval({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: approval.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1375,11 +1400,15 @@ export const scopesManagerMixin = {
     });
     await upsertChannel(updated);
     this.channels = this.channels.map((entry) => entry.record_id === updated.record_id ? updated : entry);
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Channel scope repair write',
+    });
     const envelope = await outboundChannel({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: channel.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1405,8 +1434,12 @@ export const scopesManagerMixin = {
     if (this.selectedReportId === updated.record_id) {
       await this.applySelectedReport(updated);
     }
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Report scope repair write',
+    });
     const envelope = await outboundReport({
       ...updated,
+      group_ids: writeFields.group_ids,
       metadata: updated.metadata,
       data: {
         declaration_type: updated.declaration_type,
@@ -1414,7 +1447,7 @@ export const scopesManagerMixin = {
       },
       previous_version: report.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updated.record_id,
@@ -1545,12 +1578,16 @@ export const scopesManagerMixin = {
     await upsertScope(updated);
     this.scopes = this.scopes.filter(s => s.record_id !== scopeId);
 
+    const writeFields = await getRecordWriteFieldsForStore(this, updated, {
+      label: 'Scope delete',
+    });
     const envelope = await outboundScope({
       ...updated,
+      group_ids: writeFields.group_ids,
       previous_version: scope.version ?? 1,
       signature_npub: this.signingNpub,
       record_state: 'deleted',
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: scopeId,

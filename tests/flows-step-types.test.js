@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 
+vi.mock('../src/crypto/group-keys.js', () => ({
+  hasGroupKey: vi.fn(() => true),
+}));
+
 import {
   buildFlowEditorForm,
   normalizeStepType,

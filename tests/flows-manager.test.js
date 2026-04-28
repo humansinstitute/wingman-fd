@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   pendingApprovals,
   approvalsByFlowRun,
+  isArchivedApproval,
   formatApprovalStatus,
   approvalStatusColor,
   confidenceLabel,
@@ -14,6 +15,10 @@ import {
   UNSCOPED_TASK_BOARD_ID,
 } from '../src/task-board-state.js';
 
+vi.mock('../src/crypto/group-keys.js', () => ({
+  hasGroupKey: vi.fn(() => true),
+}));
+
 vi.mock('../src/db.js', () => ({
   upsertFlow: vi.fn(async () => {}),
   getFlowById: vi.fn(async () => null),
@@ -23,6 +28,7 @@ vi.mock('../src/db.js', () => ({
   getApprovalById: vi.fn(async () => null),
   getApprovalsByScope: vi.fn(async () => []),
   getApprovalsByStatus: vi.fn(async () => []),
+  getAllApprovals: vi.fn(async () => []),
   upsertTask: vi.fn(async () => {}),
   addPendingWrite: vi.fn(async () => {}),
 }));
@@ -65,6 +71,8 @@ describe('pendingApprovals', () => {
       { record_id: 'a2', status: 'approved', record_state: 'active' },
       { record_id: 'a3', status: 'pending', record_state: 'deleted' },
       { record_id: 'a4', status: 'pending', record_state: 'active' },
+      { record_id: 'a5', status: 'archived', record_state: 'archived' },
+      { record_id: 'a6', status: 'pending', record_state: 'archived' },
     ];
     const result = pendingApprovals(list);
     expect(result).toHaveLength(2);
@@ -78,9 +86,19 @@ describe('approvalsByFlowRun', () => {
       { record_id: 'a1', flow_run_id: 'run-1', record_state: 'active' },
       { record_id: 'a2', flow_run_id: 'run-2', record_state: 'active' },
       { record_id: 'a3', flow_run_id: 'run-1', record_state: 'deleted' },
+      { record_id: 'a4', flow_run_id: 'run-1', status: 'archived', record_state: 'archived' },
     ];
     expect(approvalsByFlowRun(list, 'run-1')).toHaveLength(1);
     expect(approvalsByFlowRun(list, null)).toEqual([]);
+  });
+});
+
+describe('isArchivedApproval', () => {
+  it('treats deleted, archived record_state, and archived status as hidden', () => {
+    expect(isArchivedApproval({ record_state: 'deleted', status: 'pending' })).toBe(true);
+    expect(isArchivedApproval({ record_state: 'archived', status: 'pending' })).toBe(true);
+    expect(isArchivedApproval({ record_state: 'active', status: 'archived' })).toBe(true);
+    expect(isArchivedApproval({ record_state: 'active', status: 'pending' })).toBe(false);
   });
 });
 
@@ -90,6 +108,7 @@ describe('formatApprovalStatus', () => {
     expect(formatApprovalStatus('approved')).toBe('Approved');
     expect(formatApprovalStatus('rejected')).toBe('Rejected');
     expect(formatApprovalStatus('needs_revision')).toBe('Needs Revision');
+    expect(formatApprovalStatus('archived')).toBe('Archived');
   });
 
   it('returns empty string for null/undefined', () => {
@@ -104,6 +123,7 @@ describe('approvalStatusColor', () => {
     expect(approvalStatusColor('approved')).toBe('#34d399');
     expect(approvalStatusColor('rejected')).toBe('#f87171');
     expect(approvalStatusColor('needs_revision')).toBe('#a78bfa');
+    expect(approvalStatusColor('archived')).toBe('#94a3b8');
   });
 
   it('returns fallback for unknown', () => {
@@ -171,8 +191,18 @@ describe('flowsManagerMixin — approval actions', () => {
     expect(result.approved_at).toBeTruthy();
     expect(result.decision_note).toBe('Looks good');
     expect(store.applyTaskPatch).toHaveBeenCalledTimes(2);
-    expect(store.applyTaskPatch).toHaveBeenCalledWith('task-1', { state: 'done' }, { silent: true, sync: true });
-    expect(store.applyTaskPatch).toHaveBeenCalledWith('task-2', { state: 'done' }, { silent: true, sync: true });
+    expect(store.applyTaskPatch).toHaveBeenCalledWith('task-1', { state: 'done' }, {
+      silent: true,
+      sync: true,
+      checkoutPolicyConfig: null,
+      intent: 'approval_approve',
+    });
+    expect(store.applyTaskPatch).toHaveBeenCalledWith('task-2', { state: 'done' }, {
+      silent: true,
+      sync: true,
+      checkoutPolicyConfig: null,
+      intent: 'approval_approve',
+    });
   });
 
   it('rejectApproval sets status to rejected', async () => {
@@ -236,6 +266,43 @@ describe('flowsManagerMixin — approval actions', () => {
     const store = createStore();
     const result = await store.approveApproval('nonexistent');
     expect(result).toBeNull();
+  });
+
+  it('archiveApproval hides the approval and archives linked in-flight tasks', async () => {
+    const store = createStore({
+      approvals: [
+        {
+          record_id: 'approval-1',
+          status: 'pending',
+          task_ids: ['task-1', 'task-2'],
+          group_ids: ['g1'],
+          version: 1,
+          record_state: 'active',
+        },
+      ],
+    });
+
+    const result = await store.archiveApproval('approval-1', 'Stop this flow');
+
+    expect(result.status).toBe('archived');
+    expect(result.record_state).toBe('archived');
+    expect(result.approved_by).toBe('npub_viewer');
+    expect(result.approved_at).toBeTruthy();
+    expect(result.decision_note).toBe('Stop this flow');
+    expect(store.pendingApprovalsByScope).toHaveLength(0);
+    expect(store.applyTaskPatch).toHaveBeenCalledTimes(2);
+    expect(store.applyTaskPatch).toHaveBeenCalledWith('task-1', { state: 'archive' }, {
+      silent: true,
+      sync: true,
+      checkoutPolicyConfig: null,
+      intent: 'approval_archive',
+    });
+    expect(store.applyTaskPatch).toHaveBeenCalledWith('task-2', { state: 'archive' }, {
+      silent: true,
+      sync: true,
+      checkoutPolicyConfig: null,
+      intent: 'approval_archive',
+    });
   });
 });
 
@@ -310,6 +377,7 @@ describe('flowsManagerMixin — computed getters', () => {
         { record_id: 'a1', status: 'pending', scope_id: 'scope-1', record_state: 'active' },
         { record_id: 'a2', status: 'pending', scope_id: 'scope-2', record_state: 'active' },
         { record_id: 'a3', status: 'approved', scope_id: 'scope-1', record_state: 'active' },
+        { record_id: 'a4', status: 'archived', scope_id: 'scope-1', record_state: 'archived' },
       ],
     });
 

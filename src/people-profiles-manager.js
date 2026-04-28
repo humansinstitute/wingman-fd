@@ -477,6 +477,7 @@ export const peopleProfilesManagerMixin = {
   },
 
   get canDoTaskWithDefaultAgent() {
-    return Boolean(this.defaultAgentNpub && this.editingTask);
+    const editable = typeof this.isTaskDetailEditing === 'function' ? this.isTaskDetailEditing() : true;
+    return Boolean(this.defaultAgentNpub && this.editingTask && editable);
   },
 };

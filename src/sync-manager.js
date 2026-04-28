@@ -54,7 +54,10 @@ import { outboundOpportunity } from './translators/opportunities.js';
 import { decryptRecordPayload } from './translators/record-crypto.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import { outboundComment } from './translators/comments.js';
-import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
+import {
+  getRecordWriteFieldsForStore,
+  getPreferredRecordWriteGroupForStore,
+} from './preferred-write-group.js';
 import { resolveFlightDeckRecordCheckoutPolicy } from './record-checkout-policy.js';
 
 // ---------------------------------------------------------------------------
@@ -501,20 +504,20 @@ export const syncManagerMixin = {
     const isOwnerWrite = realUserNpub === String(ownerNpub || '').trim();
 
     if (familyId === 'task') {
-      const candidateGroupIds = Array.isArray(effectiveLocalRecord.group_ids) ? effectiveLocalRecord.group_ids : [];
-      const nextGroupIds = candidateGroupIds;
-      const nextShares = effectiveLocalRecord.shares || [];
-      const writeGroupRef = getPreferredRecordWriteGroupForStore(this, {
+      const writeFields = await getRecordWriteFieldsForStore(this, {
         ...effectiveLocalRecord,
-        group_ids: nextGroupIds,
-        board_group_id: effectiveLocalRecord.board_group_id || nextGroupIds[0] || null,
+        board_group_id: effectiveLocalRecord.board_group_id || effectiveLocalRecord.group_ids?.[0] || null,
+      }, {
+        label: 'Task force submit',
       });
+      const nextShares = effectiveLocalRecord.shares || [];
+      const writeGroupRef = writeFields.write_group_ref;
       if (!writeGroupRef) throw new Error('Task is missing a writable group.');
       const envelope = await outboundTask({
         ...effectiveLocalRecord,
         owner_npub: ownerNpub,
         board_group_id: writeGroupRef,
-        group_ids: nextGroupIds,
+        group_ids: writeFields.group_ids,
         shares: nextShares,
         version,
         previous_version: previousVersion,
@@ -573,12 +576,16 @@ export const syncManagerMixin = {
     }
 
     if (familyId === 'channel') {
-      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      const writeFields = await getRecordWriteFieldsForStore(this, effectiveLocalRecord, {
+        label: 'Channel force submit',
+        writeGroupRef: this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId),
+      });
+      const writeGroupRef = writeFields.write_group_ref;
       if (!writeGroupRef) throw new Error('Channel is missing a writable group.');
       return outboundChannel({
         ...effectiveLocalRecord,
         owner_npub: ownerNpub,
-        group_ids: effectiveLocalRecord.group_ids ?? [],
+        group_ids: writeFields.group_ids,
         participant_npubs: effectiveLocalRecord.participant_npubs ?? [],
         version,
         previous_version: previousVersion,
@@ -589,7 +596,11 @@ export const syncManagerMixin = {
 
     if (familyId === 'chat_message') {
       if (!channelRecord) throw new Error('Chat message channel is missing locally.');
-      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      const writeFields = await getRecordWriteFieldsForStore(this, channelRecord, {
+        label: 'Chat message force submit',
+        writeGroupRef: this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId),
+      });
+      const writeGroupRef = writeFields.write_group_ref;
       if (!writeGroupRef) throw new Error('Chat message channel is missing a writable group.');
       return outboundChatMessage({
         record_id: effectiveLocalRecord.record_id,
@@ -598,7 +609,7 @@ export const syncManagerMixin = {
         parent_message_id: effectiveLocalRecord.parent_message_id ?? null,
         body: effectiveLocalRecord.body ?? '',
         attachments: Array.isArray(effectiveLocalRecord.attachments) ? effectiveLocalRecord.attachments : [],
-        channel_group_ids: channelRecord.group_ids ?? [],
+        channel_group_ids: writeFields.group_ids,
         write_group_ref: isOwnerWrite ? null : writeGroupRef,
         version,
         previous_version: previousVersion,
@@ -608,11 +619,15 @@ export const syncManagerMixin = {
     }
 
     if (familyId === 'flow') {
-      const writeGroupRef = this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId);
+      const writeFields = await getRecordWriteFieldsForStore(this, effectiveLocalRecord, {
+        label: 'Flow force submit',
+        writeGroupRef: this.getRecordStatusWriteGroupRefFromRecord(effectiveLocalRecord, familyId),
+      });
+      const writeGroupRef = writeFields.write_group_ref;
       return outboundFlow({
         ...effectiveLocalRecord,
         owner_npub: ownerNpub,
-        group_ids: effectiveLocalRecord.group_ids ?? [],
+        group_ids: writeFields.group_ids,
         version,
         previous_version: previousVersion,
         signature_npub: signatureNpub,
@@ -628,8 +643,15 @@ export const syncManagerMixin = {
         writeGroupRef = this.getWorkspaceSettingsGroupRef();
         if (writeGroupRef) groupIds = [writeGroupRef];
       }
+      const writeFields = await getRecordWriteFieldsForStore(this, {
+        ...effectiveLocalRecord,
+        group_ids: groupIds,
+      }, {
+        label: `${familyId} force submit`,
+        writeGroupRef,
+      });
       const shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
-        ? this.buildScopeDefaultShares(groupIds)
+        ? this.buildScopeDefaultShares(writeFields.group_ids)
         : (effectiveLocalRecord.shares || []);
       const outbound = familyId === 'person'
         ? outboundPerson
@@ -639,12 +661,12 @@ export const syncManagerMixin = {
       return outbound({
         ...effectiveLocalRecord,
         owner_npub: ownerNpub,
-        group_ids: groupIds,
+        group_ids: writeFields.group_ids,
         shares,
         version,
         previous_version: previousVersion,
         signature_npub: signatureNpub,
-        write_group_ref: isOwnerWrite ? null : (writeGroupRef || null),
+        write_group_ref: isOwnerWrite ? null : (writeFields.write_group_ref || null),
       });
     }
 
@@ -886,7 +908,10 @@ export const syncManagerMixin = {
         .filter((row) => relevantRecordIds.has(row.record_id));
       const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, { bootstrap });
       const commentEnvelopes = [];
-      const targetGroupIds = Array.isArray(localRecord.group_ids) ? [...localRecord.group_ids] : [];
+      const targetWriteFields = await getRecordWriteFieldsForStore(this, localRecord, {
+        label: `${familyLabel} comment force submit`,
+      });
+      const targetGroupIds = targetWriteFields.group_ids;
 
       for (const comment of relatedComments
         .slice()

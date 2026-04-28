@@ -61,7 +61,7 @@ export function describeCheckoutHolder(checkout = null) {
 export function checkoutErrorMessage(classification, checkout = null) {
   switch (classification) {
     case 'edit_policy_forbidden':
-      return 'Read only for this checkout policy. Only the owner user can edit this record.';
+      return 'Read only for this checkout policy. You need write access to edit this record.';
     case 'record_checked_out': {
       const holder = describeCheckoutHolder(checkout);
       const lease = formatLeaseRemaining(checkout);

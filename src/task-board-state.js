@@ -107,13 +107,23 @@ export function selectPreferredWritableGroupRef(input = {}) {
   const boardGroupId = normalizeResolvedGroupRefs([input.boardGroupId], resolveGroupId)
     .find((groupId) => isAllowed(groupId)) || null;
   const deliverySet = new Set(candidateDeliveryGroupIds);
+  const prioritizedDeliveryGroupIds = hasAllowedFilter
+    ? allowedGroupIds.filter((groupId) => candidateDeliveryGroupIds.includes(groupId))
+    : candidateDeliveryGroupIds;
+  const prioritizedScopePolicyGroupIds = hasAllowedFilter
+    ? allowedGroupIds.filter((groupId) => candidateScopePolicyGroupIds.includes(groupId))
+    : candidateScopePolicyGroupIds;
+  const prioritizedWriteShareGroupIds = hasAllowedFilter
+    ? allowedGroupIds.filter((groupId) => candidateWriteShareGroupIds.includes(groupId))
+    : candidateWriteShareGroupIds;
+  const preferActorAllowedOrder = hasAllowedFilter && prioritizedDeliveryGroupIds.length > 1;
 
   const candidates = [
-    explicitWriteGroupId,
-    boardGroupId,
-    ...candidateScopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
-    ...candidateWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
-    ...candidateDeliveryGroupIds,
+    preferActorAllowedOrder ? null : explicitWriteGroupId,
+    preferActorAllowedOrder ? null : boardGroupId,
+    ...prioritizedScopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...prioritizedWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
+    ...prioritizedDeliveryGroupIds,
   ].filter(Boolean);
 
   for (const groupId of normalizeResolvedGroupRefs(candidates, resolveGroupId)) {
@@ -128,13 +138,12 @@ export function selectPreferredWritableGroupRef(input = {}) {
           ...candidateWriteShareGroupIds,
         ]
       : [
-          explicitWriteGroupId,
-          boardGroupId,
-          ...candidateWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
-          ...candidateScopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
-          ...candidateDeliveryGroupIds,
-          ...candidateScopePolicyGroupIds,
-          ...candidateWriteShareGroupIds,
+          ...(preferActorAllowedOrder ? [] : [explicitWriteGroupId, boardGroupId]),
+          ...prioritizedWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
+          ...prioritizedScopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
+          ...prioritizedDeliveryGroupIds,
+          ...prioritizedScopePolicyGroupIds,
+          ...prioritizedWriteShareGroupIds,
         ]),
   ], resolveGroupId)[0] || null;
 

@@ -20,7 +20,10 @@ import {
   resolveFlowLinkage,
 } from './translators/tasks.js';
 import { toRaw } from './utils/state-helpers.js';
-import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
+import {
+  getRecordWriteFieldsForStore,
+  getPreferredRecordWriteGroupForStore,
+} from './preferred-write-group.js';
 
 const FORECAST_TERMINAL_STAGES = new Set(['won', 'lost', 'abandoned']);
 const INTEGER_FORMATTER = new Intl.NumberFormat();
@@ -651,14 +654,19 @@ export const opportunitiesManagerMixin = {
   },
 
   async queueOpportunityWrite(updatedOpportunity, previousOpportunity = null) {
-    const writeGroupRef = getPreferredRecordWriteGroupForStore(this, updatedOpportunity)
+    const fallbackWriteGroupRef = getPreferredRecordWriteGroupForStore(this, updatedOpportunity)
       || this.getWorkspaceSettingsGroupRef?.()
       || null;
+    const writeFields = await getRecordWriteFieldsForStore(this, updatedOpportunity, {
+      label: 'Opportunity write',
+      writeGroupRef: fallbackWriteGroupRef,
+    });
     const envelope = await outboundOpportunity({
       ...updatedOpportunity,
+      group_ids: writeFields.group_ids,
       previous_version: previousOpportunity?.version ?? 0,
       signature_npub: this.signingNpub,
-      write_group_ref: writeGroupRef,
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updatedOpportunity.record_id,
@@ -668,11 +676,15 @@ export const opportunitiesManagerMixin = {
   },
 
   async queueTaskBacklinkWrite(updatedTask, previousTask) {
+    const writeFields = await getRecordWriteFieldsForStore(this, updatedTask, {
+      label: 'Opportunity task backlink write',
+    });
     const envelope = await outboundTask({
       ...updatedTask,
+      group_ids: writeFields.group_ids,
       previous_version: previousTask?.version ?? 0,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updatedTask),
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: updatedTask.record_id,
@@ -840,12 +852,14 @@ export const opportunitiesManagerMixin = {
       updated_at: now,
     };
     await upsertComment(comment);
-    const targetGroupIds = Array.isArray(opportunity?.group_ids) ? opportunity.group_ids : [];
+    const writeFields = await getRecordWriteFieldsForStore(this, opportunity, {
+      label: 'Opportunity comment write',
+    });
     const envelope = await outboundComment({
       ...comment,
-      target_group_ids: targetGroupIds,
+      target_group_ids: writeFields.group_ids,
       signature_npub: this.signingNpub,
-      write_group_ref: null,
+      write_group_ref: writeFields.write_group_ref,
     });
     await addPendingWrite({
       record_id: comment.record_id,

@@ -620,6 +620,40 @@ describe('docsManagerMixin checkout orchestration', () => {
     }));
   });
 
+  it('can opt one task edit envelope into checkout_required without changing store defaults', async () => {
+    acquireRecordCheckoutMock.mockResolvedValueOnce({
+      checkout: {
+        state: 'checked_out',
+        checkout_id: 'checkout-task-local-1',
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+
+    const store = createStore();
+    const envelope = {
+      record_id: 'task-local',
+      record_family_hash: recordFamilyHash('task'),
+      version: 2,
+    };
+
+    expect(store.isCheckoutRequiredRecordFamily(recordFamilyHash('task'))).toBe(false);
+
+    const managedEnvelope = await store.attachCheckoutRequiredCheckoutToEnvelope(
+      { record_id: 'task-local', sync_status: 'synced', version: 1 },
+      envelope,
+      {
+        reportError: false,
+        checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } },
+      },
+    );
+
+    expect(managedEnvelope.checkout).toEqual({
+      checkout_id: 'checkout-task-local-1',
+      consume_on_success: true,
+    });
+    expect(store.isCheckoutRequiredRecordFamily(recordFamilyHash('task'))).toBe(false);
+  });
+
   it('saveAndExitSelectedDocEditMode saves, returns to read mode, and force-releases checkout', async () => {
     const record = { record_id: 'doc-a', sync_status: 'pending', version: 2 };
     const store = createStore({

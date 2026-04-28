@@ -7485,6 +7485,26 @@ button:disabled {
   gap: 0.5rem;
 }
 
+.task-detail-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.24rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.task-detail-mode-view {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.task-detail-mode-edit {
+  background: #ecfdf5;
+  color: #047857;
+}
+
 .task-actions-menu .doc-actions-popover {
   right: 0;
 }
@@ -7513,6 +7533,28 @@ button:disabled {
 .task-copy-btn:hover {
   background: var(--surface-hover);
   color: var(--text);
+}
+
+.task-copy-btn:disabled,
+.task-quick-date-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.task-edit-btn {
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.task-save-btn {
+  background: #111827;
+  border-color: #111827;
+  color: #fff;
+}
+
+.task-save-btn:hover {
+  background: #020617;
+  color: #fff;
 }
 
 .task-delete-btn {
@@ -7553,6 +7595,11 @@ button:disabled {
 .task-detail-title:focus {
   outline: none;
   border-bottom-color: var(--accent);
+}
+
+.task-detail-title.task-readonly-control {
+  cursor: default;
+  border-bottom-color: transparent;
 }
 
 .task-detail-fields {
@@ -7645,6 +7692,15 @@ button:disabled {
   font-size: 0.85rem;
   background: var(--surface);
   resize: vertical;
+}
+
+.task-field select:disabled,
+.task-field input:disabled,
+.task-field input[readonly],
+.task-field textarea:disabled {
+  color: var(--text);
+  background: #f8fafc;
+  cursor: default;
 }
 
 .task-assignee-selected,
@@ -9477,7 +9533,7 @@ button:disabled {
   gap: 0.35rem;
 }
 
-.btn-approve, .btn-reject, .btn-improve {
+.btn-approve, .btn-reject, .btn-improve, .btn-archive {
   padding: 0.28rem 0.7rem;
   border-radius: 6px;
   font-size: 0.78rem;
@@ -9490,8 +9546,9 @@ button:disabled {
 .btn-approve { background: #34d399; color: #064e3b; }
 .btn-reject { background: #f87171; color: #7f1d1d; }
 .btn-improve { background: #a78bfa; color: #3b0764; }
+.btn-archive { background: #cbd5e1; color: #334155; }
 
-.btn-approve:hover, .btn-reject:hover, .btn-improve:hover {
+.btn-approve:hover, .btn-reject:hover, .btn-improve:hover, .btn-archive:hover {
   opacity: 0.85;
 }
 

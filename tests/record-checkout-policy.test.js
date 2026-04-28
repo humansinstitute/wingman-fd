@@ -15,8 +15,8 @@ describe('Flight Deck record checkout policy registry', () => {
     expect(isFlightDeckCheckoutRequiredRecordFamily('coworker:directory')).toBe(true);
   });
 
-  it('defaults task, chat, and comment families to optimistic_write', () => {
-    for (const family of ['task', 'chat', 'chat_message', 'channel', 'comment']) {
+  it('defaults task, approval, flow, chat, and comment families to optimistic_write', () => {
+    for (const family of ['task', 'approval', 'flow', 'chat', 'chat_message', 'channel', 'comment']) {
       expect(resolveFlightDeckRecordCheckoutPolicy(`coworker:${family}`)).toBe('optimistic_write');
       expect(isFlightDeckCheckoutRequiredRecordFamily(`coworker:${family}`)).toBe(false);
     }

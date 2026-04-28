@@ -32,7 +32,13 @@ import { inboundDocument } from './translators/docs.js';
 import { renderMarkdownToHtml, hydrateStorageImageMarkup } from './markdown.js';
 import { normalizeGroupIds } from './scope-delivery.js';
 import { hasGroupKey } from './crypto/group-keys.js';
-import { getStoreActorWritableGroupRefs } from './preferred-write-group.js';
+import {
+  getEncryptableRecordGroupRefsForStore,
+  getMissingRecordGroupRefsForStore,
+  getRecordGroupKeyState,
+  selectPreferredRecordWriteGroupRef,
+  getStoreActorWritableGroupRefs,
+} from './preferred-write-group.js';
 import { requireFlightDeckIdentityContext } from './superbased/identity-context.js';
 import {
   checkoutErrorMessage,
@@ -154,65 +160,20 @@ export function getPreferredDocWriteGroupRef(item = null, options = {}) {
     ? options.hasKey
     : hasGroupKey;
   const allowedGroupIds = normalizeGroupIds(options?.allowedGroupIds || []);
-  const hasAllowedFilter = allowedGroupIds.length > 0;
-  const allowedSet = new Set(allowedGroupIds);
-  const isAllowed = (groupId) => !hasAllowedFilter || allowedSet.has(groupId);
   const shares = getStoredDocShares(item);
   const groupIds = normalizeGroupIds(
     Array.isArray(item?.group_ids) && item.group_ids.length > 0
       ? item.group_ids
       : getShareGroupIds(shares),
   );
-  const candidateGroupIds = hasAllowedFilter
-    ? groupIds.filter((groupId) => isAllowed(groupId))
-    : groupIds;
-  const explicitWriteGroupId = String(item?.write_group_id || '').trim() || null;
-  const scopePolicyGroupIds = normalizeGroupIds(item?.scope_policy_group_ids || [])
-    .filter((groupId) => !hasAllowedFilter || isAllowed(groupId));
-  const writeableGroupIds = getWriteableShareGroupIds(shares);
-  const candidateWriteableGroupIds = writeableGroupIds.filter((groupId) => candidateGroupIds.includes(groupId));
-  const hasWritableCandidates = candidateWriteableGroupIds.length > 0;
-  const prioritizedScopePolicyGroupIds = hasAllowedFilter
-    ? allowedGroupIds.filter((groupId) => scopePolicyGroupIds.includes(groupId))
-    : scopePolicyGroupIds;
-  const prioritizedCandidateGroupIds = hasAllowedFilter
-    ? allowedGroupIds.filter((groupId) => candidateGroupIds.includes(groupId))
-    : candidateGroupIds;
-  const prioritizedWriteableGroupIds = hasAllowedFilter
-    ? allowedGroupIds.filter((groupId) => candidateWriteableGroupIds.includes(groupId))
-    : candidateWriteableGroupIds;
-
-  if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && hasKey(explicitWriteGroupId)) {
-    if (hasAllowedFilter && prioritizedCandidateGroupIds.length > 1) {
-      // In actor-scoped contexts, avoid pinning writes to a stale explicit group
-      // when multiple allowed groups are available for this actor.
-    } else if (hasWritableCandidates && candidateWriteableGroupIds.includes(explicitWriteGroupId)) {
-      return explicitWriteGroupId;
-    } else if (!hasWritableCandidates) {
-      return explicitWriteGroupId;
-    }
-  }
-  for (const groupId of prioritizedScopePolicyGroupIds) {
-    if (hasWritableCandidates && !candidateWriteableGroupIds.includes(groupId)) continue;
-    if (candidateGroupIds.includes(groupId) && hasKey(groupId)) return groupId;
-  }
-
-  const loadedWritableGroupIds = prioritizedWriteableGroupIds.filter((groupId) => hasKey(groupId));
-  if (loadedWritableGroupIds.length > 0) return loadedWritableGroupIds[0];
-  for (const groupId of prioritizedCandidateGroupIds) {
-    if (hasKey(groupId)) return groupId;
-  }
-  if (prioritizedScopePolicyGroupIds.length > 0) return prioritizedScopePolicyGroupIds[0];
-  if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && candidateGroupIds.includes(explicitWriteGroupId)) {
-    return explicitWriteGroupId;
-  }
-  for (const groupId of prioritizedWriteableGroupIds) {
-    if (candidateGroupIds.includes(groupId)) return groupId;
-  }
-
-  if (prioritizedCandidateGroupIds.length > 0) return prioritizedCandidateGroupIds[0];
-  if (hasAllowedFilter) return null;
-  return groupIds[0] || explicitWriteGroupId || null;
+  return selectPreferredRecordWriteGroupRef({
+    ...item,
+    group_ids: groupIds,
+    shares,
+  }, {
+    hasKey,
+    allowedGroupIds,
+  });
 }
 
 export function normalizeDocAccessRow(item, resolverFn = (value) => String(value || '').trim() || null, options = {}) {
@@ -347,20 +308,20 @@ export function buildDocPrintHtml(title, bodyHtml) {
 // ---------------------------------------------------------------------------
 
 export const docsManagerMixin = {
-  getRecordCheckoutPolicyConfig() {
-    return this.recordCheckoutPolicyConfig || null;
+  getRecordCheckoutPolicyConfig(options = {}) {
+    return options.checkoutPolicyConfig || this.recordCheckoutPolicyConfig || null;
   },
 
-  resolveRecordCheckoutPolicy(recordFamilyHash, record = null) {
+  resolveRecordCheckoutPolicy(recordFamilyHash, record = null, options = {}) {
     return resolveFlightDeckRecordCheckoutPolicy(
       recordFamilyHash,
-      this.getRecordCheckoutPolicyConfig(),
+      this.getRecordCheckoutPolicyConfig(options),
       { recordId: record?.record_id },
     );
   },
 
-  isCheckoutRequiredRecordFamily(recordFamilyHash, record = null) {
-    return this.resolveRecordCheckoutPolicy(recordFamilyHash, record) === 'checkout_required';
+  isCheckoutRequiredRecordFamily(recordFamilyHash, record = null, options = {}) {
+    return this.resolveRecordCheckoutPolicy(recordFamilyHash, record, options) === 'checkout_required';
   },
 
   getLockManagedCheckoutSession(recordId, recordFamilyHash) {
@@ -409,13 +370,17 @@ export const docsManagerMixin = {
     }
   },
 
-  canCurrentActorEditOwnerOnlyLockManagedRecord() {
+  canCurrentActorAcquireCheckoutRequiredRecord() {
     try {
       this.buildLockManagedCheckoutIdentityContext();
       return true;
     } catch {
       return false;
     }
+  },
+
+  canCurrentActorEditOwnerOnlyLockManagedRecord() {
+    return this.canCurrentActorAcquireCheckoutRequiredRecord();
   },
 
   normalizeLockManagedCheckoutFailure(error) {
@@ -430,7 +395,7 @@ export const docsManagerMixin = {
 
   assertCanMutateLockManagedRecord(record, recordFamilyHash, options = {}) {
     const familyHash = String(recordFamilyHash || '').trim();
-    if (!record?.record_id || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return true;
+    if (!record?.record_id || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record, options)) return true;
     try {
       this.buildLockManagedCheckoutIdentityContext();
       return true;
@@ -446,7 +411,7 @@ export const docsManagerMixin = {
   async ensureLockManagedCheckout(record, recordFamilyHash, options = {}) {
     const recordId = String(record?.record_id || '').trim();
     const familyHash = String(recordFamilyHash || '').trim();
-    if (!recordId || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return null;
+    if (!recordId || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record, options)) return null;
 
     let existingSession = this.getLockManagedCheckoutSession(recordId, familyHash);
     const submittedVersion = Number(existingSession?.submittedVersion ?? 0) || 0;
@@ -523,7 +488,7 @@ export const docsManagerMixin = {
   async releaseLockManagedCheckout(record, recordFamilyHash, options = {}) {
     const recordId = String(record?.record_id || '').trim();
     const familyHash = String(recordFamilyHash || '').trim();
-    if (!recordId || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return false;
+    if (!recordId || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record, options)) return false;
     const session = this.getLockManagedCheckoutSession(recordId, familyHash);
     if (!isCheckoutHeld(session?.checkout)) return false;
     if (options.force !== true && String(record?.sync_status || '').trim() === 'pending') {
@@ -554,7 +519,7 @@ export const docsManagerMixin = {
 
   async attachCheckoutRequiredCheckoutToEnvelope(record, envelope, options = {}) {
     const familyHash = String(envelope?.record_family_hash || '').trim();
-    if (!record?.record_id || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return envelope;
+    if (!record?.record_id || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record, options)) return envelope;
     const checkout = await this.ensureLockManagedCheckout(record, familyHash, options);
     if (!checkout?.checkout_id) return envelope;
     this.setLockManagedCheckoutSession(record.record_id, familyHash, {
@@ -581,13 +546,10 @@ export const docsManagerMixin = {
         ? payload.content_blocks
         : parseMarkdownBlocks(payload?.content || ''),
     );
-    const requestedGroupIds = normalizeGroupIds((payload?.group_ids || [])
-      .map((value) => this._resolveDocGroupRef(value))
-      .filter(Boolean));
-    const encryptableGroupIds = requestedGroupIds.filter((groupId) => hasGroupKey(groupId));
-    if (requestedGroupIds.length > 0 && encryptableGroupIds.length === 0) {
-      throw new Error(`Document write is missing group keys: ${requestedGroupIds.join(', ')}`);
-    }
+    const encryptableGroupIds = await getEncryptableRecordGroupRefsForStore(this, payload, {
+      label: 'Document write',
+      resolveGroupId: (value) => this._resolveDocGroupRef(value),
+    });
     const envelope = await outboundDocument({
       ...payload,
       ...contentModel,
@@ -597,13 +559,10 @@ export const docsManagerMixin = {
   },
 
   async buildManagedDirectoryEnvelope(payload, record = null, options = {}) {
-    const requestedGroupIds = normalizeGroupIds((payload?.group_ids || [])
-      .map((value) => this._resolveDocGroupRef(value))
-      .filter(Boolean));
-    const encryptableGroupIds = requestedGroupIds.filter((groupId) => hasGroupKey(groupId));
-    if (requestedGroupIds.length > 0 && encryptableGroupIds.length === 0) {
-      throw new Error(`Folder write is missing group keys: ${requestedGroupIds.join(', ')}`);
-    }
+    const encryptableGroupIds = await getEncryptableRecordGroupRefsForStore(this, payload, {
+      label: 'Folder write',
+      resolveGroupId: (value) => this._resolveDocGroupRef(value),
+    });
     const envelope = await outboundDirectory({
       ...payload,
       group_ids: encryptableGroupIds,
@@ -1484,20 +1443,25 @@ export const docsManagerMixin = {
 
   getMissingDocGroupRefs(record) {
     const normalized = this.normalizeDocumentRowGroupRefs(record);
-    const groupIds = normalizeGroupIds(normalized?.group_ids || []);
-    return groupIds.filter((groupId) => !hasGroupKey(groupId));
+    return getMissingRecordGroupRefsForStore(this, normalized, {
+      resolveGroupId: (value) => this._resolveDocGroupRef(value),
+    });
   },
 
   async ensureDocGroupKeysLoaded(record) {
     const normalized = this.normalizeDocumentRowGroupRefs(record);
     const groupIds = normalizeGroupIds(normalized?.group_ids || []);
     if (groupIds.length === 0) return [];
-    let missingGroupRefs = groupIds.filter((groupId) => !hasGroupKey(groupId));
+    let missingGroupRefs = getMissingRecordGroupRefsForStore(this, normalized, {
+      resolveGroupId: (value) => this._resolveDocGroupRef(value),
+    });
     if (missingGroupRefs.length === 0) return [];
     if (typeof this.refreshGroups === 'function') {
       await this.refreshGroups({ force: true });
     }
-    missingGroupRefs = groupIds.filter((groupId) => !hasGroupKey(groupId));
+    missingGroupRefs = getMissingRecordGroupRefsForStore(this, normalized, {
+      resolveGroupId: (value) => this._resolveDocGroupRef(value),
+    });
     if (missingGroupRefs.length === 0) return [];
     const loadedGroupCount = groupIds.length - missingGroupRefs.length;
     if (loadedGroupCount > 0) return [];
@@ -1506,10 +1470,10 @@ export const docsManagerMixin = {
 
   getEncryptableDocCommentGroupIds(record) {
     const normalized = this.normalizeDocumentRowGroupRefs(record);
-    const groupIds = normalizeGroupIds(normalized?.group_ids || []);
-    if (groupIds.length === 0) return [];
-    const encryptableGroupIds = groupIds.filter((groupId) => hasGroupKey(groupId));
-    const missingGroupIds = groupIds.filter((groupId) => !encryptableGroupIds.includes(groupId));
+    const { requestedGroupIds, encryptableGroupIds, missingGroupIds } = getRecordGroupKeyState(normalized, {
+      resolveGroupId: (value) => this._resolveDocGroupRef(value),
+    });
+    if (requestedGroupIds.length === 0) return [];
     if (missingGroupIds.length === 0) return encryptableGroupIds;
     this.error = `Document comment write is missing group keys: ${missingGroupIds.join(', ')}`;
     return null;
@@ -1517,18 +1481,14 @@ export const docsManagerMixin = {
 
   async getEncryptableDocCommentGroupIdsForWrite(record) {
     const normalized = this.normalizeDocumentRowGroupRefs(record);
-    const groupIds = normalizeGroupIds(normalized?.group_ids || []);
-    if (groupIds.length === 0) return [];
-
-    let encryptableGroupIds = groupIds.filter((groupId) => hasGroupKey(groupId));
-    if (encryptableGroupIds.length < groupIds.length && typeof this.refreshGroups === 'function') {
-      await this.refreshGroups({ force: true });
-      encryptableGroupIds = groupIds.filter((groupId) => hasGroupKey(groupId));
+    try {
+      return await getEncryptableRecordGroupRefsForStore(this, normalized, {
+        label: 'Document comment write',
+        resolveGroupId: (value) => this._resolveDocGroupRef(value),
+      });
+    } catch (error) {
+      this.error = error?.message || 'Document comment write is missing group keys.';
     }
-    const missingGroupIds = groupIds.filter((groupId) => !encryptableGroupIds.includes(groupId));
-    if (missingGroupIds.length === 0) return encryptableGroupIds;
-
-    this.error = `Document comment write is missing group keys: ${missingGroupIds.join(', ')}`;
     return null;
   },
 

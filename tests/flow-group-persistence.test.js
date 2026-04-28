@@ -14,6 +14,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { flowsManagerMixin } from '../src/flows-manager.js';
 
+vi.mock('../src/crypto/group-keys.js', () => ({
+  hasGroupKey: vi.fn(() => true),
+}));
+
 const mockUpsertFlow = vi.fn(async () => {});
 const mockAddPendingWrite = vi.fn(async () => {});
 const mockOutboundFlow = vi.fn(async (payload) => ({

@@ -36,6 +36,7 @@ import {
 import { buildStoredFlowKickoffScopeAssignment } from './task-flow-helpers.js';
 import { UNSCOPED_TASK_BOARD_ID } from './task-board-state.js';
 import { sameListBySignature } from './utils/state-helpers.js';
+import { getRecordWriteFieldsForStore } from './preferred-write-group.js';
 
 const chatDerivedCache = new WeakMap();
 
@@ -564,17 +565,20 @@ export const chatMessageManagerMixin = {
           updated_at: now,
         });
 
+        const channelWriteFields = await getRecordWriteFieldsForStore(this, channel, {
+          label: 'Channel write',
+        });
         const envelope = await outboundChannel({
           record_id: channel.record_id,
           owner_npub: ownerNpub,
           title: channel.title,
-          group_ids: channel.group_ids ?? [],
+          group_ids: channelWriteFields.group_ids,
           participant_npubs: channel.participant_npubs ?? [],
           version: nextVersion,
           previous_version: latestTowerVersion,
           record_state: 'deleted',
           signature_npub: this.signingNpub,
-          write_group_ref: this.getPreferredChannelWriteGroup(channel),
+          write_group_ref: channelWriteFields.write_group_ref,
         });
 
         await addPendingWrite({
@@ -626,12 +630,15 @@ export const chatMessageManagerMixin = {
     const msgId = crypto.randomUUID();
     const now = new Date().toISOString();
     const body = this.messageInput.trim();
+    const channelWriteFields = await getRecordWriteFieldsForStore(this, channel, {
+      label: 'Chat message write',
+    });
     const { attachments } = await this.materializeAudioDrafts({
       drafts,
       target_record_id: msgId,
       target_record_family_hash: recordFamilyHash('chat_message'),
-      target_group_ids: channel.group_ids ?? [],
-      write_group_ref: this.getPreferredChannelWriteGroup(channel),
+      target_group_ids: channelWriteFields.group_ids,
+      write_group_ref: channelWriteFields.write_group_ref,
     });
 
     const localRow = {
@@ -662,8 +669,8 @@ export const chatMessageManagerMixin = {
         parent_message_id: null,
         body,
         attachments,
-        channel_group_ids: channel.group_ids ?? [],
-        write_group_ref: this.getPreferredChannelWriteGroup(channel),
+        channel_group_ids: channelWriteFields.group_ids,
+        write_group_ref: channelWriteFields.write_group_ref,
         signature_npub: this.signingNpub,
       });
 
@@ -705,12 +712,15 @@ export const chatMessageManagerMixin = {
     const msgId = crypto.randomUUID();
     const now = new Date().toISOString();
     const body = this.threadInput.trim();
+    const channelWriteFields = await getRecordWriteFieldsForStore(this, channel, {
+      label: 'Chat reply write',
+    });
     const { attachments } = await this.materializeAudioDrafts({
       drafts,
       target_record_id: msgId,
       target_record_family_hash: recordFamilyHash('chat_message'),
-      target_group_ids: channel.group_ids ?? [],
-      write_group_ref: this.getPreferredChannelWriteGroup(channel),
+      target_group_ids: channelWriteFields.group_ids,
+      write_group_ref: channelWriteFields.write_group_ref,
     });
 
     const localRow = {
@@ -740,8 +750,8 @@ export const chatMessageManagerMixin = {
         parent_message_id: this.activeThreadId,
         body,
         attachments,
-        channel_group_ids: channel.group_ids ?? [],
-        write_group_ref: this.getPreferredChannelWriteGroup(channel),
+        channel_group_ids: channelWriteFields.group_ids,
+        write_group_ref: channelWriteFields.write_group_ref,
         signature_npub: this.signingNpub,
       });
 
@@ -1000,6 +1010,9 @@ export const chatMessageManagerMixin = {
 
     const channel = this.selectedChannel;
     const threadMessages = [parent, ...this.threadMessages];
+    const channelWriteFields = await getRecordWriteFieldsForStore(this, channel, {
+      label: 'Chat thread delete',
+    });
 
     for (const message of threadMessages) {
       const nextVersion = (message.version ?? 1) + 1;
@@ -1017,8 +1030,8 @@ export const chatMessageManagerMixin = {
         channel_id: message.channel_id,
         parent_message_id: message.parent_message_id,
         body: message.body,
-        channel_group_ids: channel?.group_ids ?? [],
-        write_group_ref: this.getPreferredChannelWriteGroup(channel),
+        channel_group_ids: channelWriteFields.group_ids,
+        write_group_ref: channelWriteFields.write_group_ref,
         version: nextVersion,
         previous_version: message.version ?? 1,
         signature_npub: this.signingNpub,
