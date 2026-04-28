@@ -32,7 +32,6 @@ import { hasGroupKey } from './crypto/group-keys.js';
 import { getStoreActorWritableGroupRefs } from './preferred-write-group.js';
 import { requireFlightDeckIdentityContext } from './superbased/identity-context.js';
 import {
-  canActorEditOwnerOnlyLockManagedRecord,
   checkoutErrorMessage,
   describeCheckoutHolder,
   formatLeaseRemaining,
@@ -408,10 +407,12 @@ export const docsManagerMixin = {
   },
 
   canCurrentActorEditOwnerOnlyLockManagedRecord() {
-    return canActorEditOwnerOnlyLockManagedRecord({
-      actorNpub: this.session?.npub,
-      creatorNpub: this.currentWorkspace?.creatorNpub,
-    });
+    try {
+      this.buildLockManagedCheckoutIdentityContext();
+      return true;
+    } catch {
+      return false;
+    }
   },
 
   normalizeLockManagedCheckoutFailure(error) {
@@ -427,13 +428,16 @@ export const docsManagerMixin = {
   assertCanMutateLockManagedRecord(record, recordFamilyHash, options = {}) {
     const familyHash = String(recordFamilyHash || '').trim();
     if (!record?.record_id || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return true;
-    if (this.canCurrentActorEditOwnerOnlyLockManagedRecord()) return true;
-    const message = checkoutErrorMessage('edit_policy_forbidden');
-    const error = new Error(message);
-    error.classification = 'edit_policy_forbidden';
-    if (options.autosave === true) this.docAutosaveState = 'error';
-    if (options.reportError !== false) this.error = message;
-    throw error;
+    try {
+      this.buildLockManagedCheckoutIdentityContext();
+      return true;
+    } catch (error) {
+      const normalized = this.normalizeLockManagedCheckoutFailure(error);
+      if (options.autosave === true) this.docAutosaveState = 'error';
+      if (options.reportError !== false) this.error = normalized.message;
+      error.userMessage = normalized.message;
+      throw error;
+    }
   },
 
   async ensureLockManagedCheckout(record, recordFamilyHash, options = {}) {
@@ -457,20 +461,21 @@ export const docsManagerMixin = {
       return existingSession.checkout;
     }
 
-    if (!this.canCurrentActorEditOwnerOnlyLockManagedRecord()) {
-      const classification = 'edit_policy_forbidden';
-      const message = checkoutErrorMessage(classification);
+    let identityContext;
+    try {
+      identityContext = this.buildLockManagedCheckoutIdentityContext();
+    } catch (error) {
+      const normalized = this.normalizeLockManagedCheckoutFailure(error);
       if (options.autosave === true) this.docAutosaveState = 'error';
-      if (options.reportError !== false) this.error = message;
+      if (options.reportError !== false) this.error = normalized.message;
       this.setLockManagedCheckoutSession(recordId, familyHash, {
         acquireState: 'blocked',
         checkout: existingSession?.checkout || null,
-        classification,
-        message,
+        classification: normalized.classification,
+        message: normalized.message,
       });
-      const error = new Error(message);
-      error.classification = classification;
       error.checkout = existingSession?.checkout || null;
+      error.userMessage = normalized.message;
       throw error;
     }
 
@@ -487,7 +492,7 @@ export const docsManagerMixin = {
       const checkout = await acquireRecordCheckout({
         recordId,
         recordFamilyHash: familyHash,
-        identityContext: this.buildLockManagedCheckoutIdentityContext(),
+        identityContext,
         leaseSeconds: Number.isInteger(options.leaseSeconds) ? options.leaseSeconds : undefined,
         idempotencyKey,
       });

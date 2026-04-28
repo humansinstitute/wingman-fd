@@ -1170,7 +1170,7 @@ export function initApp() {
     get selectedDocPhaseOneStateLabel() {
       if (!this.selectedDocRequiresCheckout) return '';
       if (!this.canCurrentActorEditSelectedLockManagedRecord) {
-        return checkoutErrorMessage('edit_policy_forbidden');
+        return checkoutErrorMessage('identity_alias_mismatch');
       }
       const session = this.selectedDocCheckoutSessionState;
       if (session?.message) return session.message;

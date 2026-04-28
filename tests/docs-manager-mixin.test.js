@@ -318,10 +318,54 @@ describe('docsManagerMixin checkout orchestration', () => {
     expect(store.setDocEditorMode).toHaveBeenCalledWith('block');
   });
 
-  it('blocks non-owner checkout_required edit attempts before acquire', async () => {
+  it('allows delegated workspace-key checkout attempts when local creator differs', async () => {
+    acquireRecordCheckoutMock.mockResolvedValueOnce({
+      checkout: {
+        state: 'checked_out',
+        checkout_id: 'checkout-delegated-owner-1',
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+    const store = createStore({
+      session: { npub: 'npub1owneruser' },
+      currentWorkspace: { creatorNpub: 'npub1workspaceservice' },
+      buildLockManagedCheckoutIdentityContext: vi.fn(() => ({
+        workspaceServiceNpub: 'npub1workspaceservice',
+        userNpub: 'npub1owneruser',
+        workspaceUserKeyNpub: 'npub1workspacekey',
+        signerNpub: 'npub1workspacekey',
+      })),
+    });
+
+    const checkout = await store.ensureLockManagedCheckout(
+      { record_id: 'doc-a', sync_status: 'synced', version: 1 },
+      documentFamilyHash,
+      { reportError: false },
+    );
+
+    expect(checkout?.checkout_id).toBe('checkout-delegated-owner-1');
+    expect(acquireRecordCheckoutMock).toHaveBeenCalledTimes(1);
+    expect(acquireRecordCheckoutMock).toHaveBeenCalledWith(expect.objectContaining({
+      identityContext: expect.objectContaining({
+        userNpub: 'npub1owneruser',
+        workspaceUserKeyNpub: 'npub1workspacekey',
+      }),
+    }));
+  });
+
+  it('maps Tower non-owner checkout_required rejections after acquire attempt', async () => {
+    const forbidden = new Error('not owner');
+    forbidden.classification = 'edit_policy_forbidden';
+    acquireRecordCheckoutMock.mockRejectedValueOnce(forbidden);
     const store = createStore({
       session: { npub: 'npub1collaborator' },
-      currentWorkspace: { creatorNpub: 'npub1owner' },
+      currentWorkspace: { creatorNpub: 'npub1workspaceservice' },
+      buildLockManagedCheckoutIdentityContext: vi.fn(() => ({
+        workspaceServiceNpub: 'npub1workspace',
+        userNpub: 'npub1collaborator',
+        workspaceUserKeyNpub: 'npub1workspacekey',
+        signerNpub: 'npub1workspacekey',
+      })),
     });
 
     await expect(store.ensureLockManagedCheckout(
@@ -330,27 +374,35 @@ describe('docsManagerMixin checkout orchestration', () => {
       { reportError: false },
     )).rejects.toMatchObject({ classification: 'edit_policy_forbidden' });
 
-    expect(acquireRecordCheckoutMock).not.toHaveBeenCalled();
+    expect(acquireRecordCheckoutMock).toHaveBeenCalledTimes(1);
     expect(store.getLockManagedCheckoutSession('doc-a', documentFamilyHash)).toMatchObject({
       acquireState: 'blocked',
       classification: 'edit_policy_forbidden',
     });
   });
 
-  it('blocks no-access checkout_required edit attempts before acquire', async () => {
+  it('blocks missing checkout identity before acquire', async () => {
+    const missingIdentity = new Error('missing workspace key');
+    missingIdentity.classification = 'workspace_key_missing';
     const store = createStore({
       session: null,
       currentWorkspace: { creatorNpub: 'npub1owner' },
+      buildLockManagedCheckoutIdentityContext: vi.fn(() => {
+        throw missingIdentity;
+      }),
     });
 
     await expect(store.ensureLockManagedCheckout(
       { record_id: 'doc-a', sync_status: 'synced', version: 1 },
       documentFamilyHash,
       { reportError: false },
-    )).rejects.toMatchObject({ classification: 'edit_policy_forbidden' });
+    )).rejects.toMatchObject({ classification: 'workspace_key_missing' });
 
     expect(acquireRecordCheckoutMock).not.toHaveBeenCalled();
-    expect(store.getLockManagedCheckoutSession('doc-a', documentFamilyHash)?.acquireState).toBe('blocked');
+    expect(store.getLockManagedCheckoutSession('doc-a', documentFamilyHash)).toMatchObject({
+      acquireState: 'blocked',
+      classification: 'workspace_key_missing',
+    });
   });
 
   it('maps blocked checkout errors to deterministic UI state', async () => {
