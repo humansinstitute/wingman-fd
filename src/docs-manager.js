@@ -650,6 +650,7 @@ export const docsManagerMixin = {
     this.docComments = [];
     this.docCommentsVisible = true;
     this.showDocCommentModal = false;
+    this.docSelectedBlockId = null;
     this.docCommentAnchorLine = null;
     this.docCommentAnchorBlockId = null;
     this.newDocCommentBody = '';
@@ -690,6 +691,7 @@ export const docsManagerMixin = {
       this.docComments = [];
       this.docCommentsVisible = true;
       this.showDocCommentModal = false;
+      this.docSelectedBlockId = null;
       this.docCommentAnchorLine = null;
       this.docCommentAnchorBlockId = null;
       this.newDocCommentBody = '';
@@ -715,6 +717,7 @@ export const docsManagerMixin = {
     this.docEditingBlockIndex = -1;
     this.docBlockBuffer = '';
     this.docEditingTitle = false;
+    this.docSelectedBlockId = null;
     this.showDocCommentModal = false;
     this.docCommentAnchorLine = null;
     this.docCommentAnchorBlockId = null;
@@ -856,6 +859,40 @@ export const docsManagerMixin = {
     return `New comment on line ${this.docCommentAnchorLine}`;
   },
 
+  getDocBlockIdentity(block = null, index = -1) {
+    return String(block?.id || (Number.isInteger(index) && index >= 0 ? `index:${index}` : '')).trim();
+  },
+
+  getDocBlockBySelectedId() {
+    const selectedBlockId = String(this.docSelectedBlockId || '').trim();
+    if (!selectedBlockId) return null;
+    return this.docEditorBlocks.find((block, index) => this.getDocBlockIdentity(block, index) === selectedBlockId) || null;
+  },
+
+  getActiveDocCommentAnchorBlock() {
+    if (this.docEditorMode === 'block' && this.docEditingBlockIndex >= 0) {
+      return this.docEditorBlocks[this.docEditingBlockIndex] || null;
+    }
+    return this.getDocBlockBySelectedId();
+  },
+
+  selectDocBlockForComment(block, index = -1, options = {}) {
+    if (!block) return;
+    const blockId = this.getDocBlockIdentity(block, index);
+    if (!blockId) return;
+    this.docSelectedBlockId = blockId;
+    if (options.clearThread !== false) {
+      this.closeDocCommentThread({ syncRoute: false });
+    }
+    this.scheduleDocCommentConnectorUpdate();
+  },
+
+  blockIsSelectedForComment(block, index = -1) {
+    const selectedBlockId = String(this.docSelectedBlockId || '').trim();
+    if (!selectedBlockId) return false;
+    return this.getDocBlockIdentity(block, index) === selectedBlockId;
+  },
+
   getDocCommentsForBlock(block) {
     const startLine = Number(block?.start_line);
     if (!Number.isFinite(startLine) && !block?.id) return [];
@@ -888,6 +925,7 @@ export const docsManagerMixin = {
     if (!rootId) return;
     this.docCommentsVisible = true;
     this.selectedDocCommentId = rootId;
+    this.docSelectedBlockId = null;
     this.showDocCommentModal = false;
     this.docCommentAnchorLine = null;
     this.docCommentAnchorBlockId = null;
@@ -907,6 +945,8 @@ export const docsManagerMixin = {
   openDocCommentModal(block) {
     if (!this.selectedDocId || !block) return;
     this.docCommentsVisible = true;
+    const blockIndex = Array.isArray(this.docEditorBlocks) ? this.docEditorBlocks.indexOf(block) : -1;
+    this.docSelectedBlockId = this.getDocBlockIdentity(block, blockIndex);
     this.docCommentAnchorLine = Number(block.start_line) || 1;
     this.docCommentAnchorBlockId = block.id || null;
     this.selectedDocCommentId = null;
@@ -924,10 +964,15 @@ export const docsManagerMixin = {
   startDocCommentPlacement() {
     this.docCommentsVisible = true;
     this.closeDocCommentThread({ syncRoute: false });
-    this.docCommentAnchorLine = null;
-    this.docCommentAnchorBlockId = null;
     this.newDocCommentBody = '';
     this.showDocCommentModal = false;
+    const block = this.getActiveDocCommentAnchorBlock();
+    if (block) {
+      this.openDocCommentModal(block);
+      return;
+    }
+    this.docCommentAnchorLine = null;
+    this.docCommentAnchorBlockId = null;
     this.scheduleDocCommentConnectorUpdate();
   },
 
@@ -1316,6 +1361,7 @@ export const docsManagerMixin = {
     if (!this.docEditorBlocks[index]) {
       this.docEditorBlocks = [...this.docEditorBlocks, createDocumentBlock('')];
     }
+    this.selectDocBlockForComment(this.docEditorBlocks[index], index, { clearThread: false });
     this.docEditingBlockIndex = index;
     this.docBlockBuffer = this.docEditorBlocks[index]?.raw ?? '';
   },
@@ -2298,6 +2344,7 @@ export const docsManagerMixin = {
     this.docEditorBlocks = normalizeDocumentBlocks(ver.content_blocks, ver.content);
     this.docEditorContent = assembleMarkdownBlocks(this.docEditorBlocks);
     this.docEditingBlockIndex = -1;
+    this.docSelectedBlockId = null;
     this.docBlockBuffer = '';
     this.closeDocVersioning();
     await this.saveSelectedDocItem();

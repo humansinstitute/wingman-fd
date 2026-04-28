@@ -4160,6 +4160,11 @@ button:disabled {
   background: rgba(59, 130, 246, 0.06);
 }
 
+.doc-block-row-anchor-selected .doc-block {
+  border-left-color: var(--accent);
+  background: rgba(59, 130, 246, 0.09);
+}
+
 .doc-block-main {
   min-width: 0;
 }

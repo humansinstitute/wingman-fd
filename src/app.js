@@ -562,6 +562,7 @@ export function initApp() {
     docComments: [],
     docCommentsVisible: true,
     showDocCommentModal: false,
+    docSelectedBlockId: null,
     docCommentAnchorLine: null,
     docCommentAnchorBlockId: null,
     docCommentConnector: { visible: false, path: '' },
@@ -2116,6 +2117,7 @@ export function initApp() {
       this.docEditorBlocks = contentBlocks;
       this.docEditorContent = assembleMarkdownBlocks(contentBlocks);
       this.docEditingBlockIndex = -1;
+      this.docSelectedBlockId = null;
       this.docBlockBuffer = '';
       this.docEditingTitle = false;
       this.docAutosaveState = 'saved';

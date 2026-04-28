@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-CYV0MdM3.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DNvBq-OM.css">
+  <script type="module" crossorigin src="/assets/index-B1xdqjmK.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-B4u4u7y4.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -2501,10 +2501,16 @@
                           </div>
                         </template>
                         <template x-for="(block, index) in $store.chat.docEditorBlocks" :key="block.id || index">
-                          <div class="doc-block-row" :class="{ 'doc-block-row-selected': $store.chat.blockHasSelectedDocComment(block) }">
+                          <div
+                            class="doc-block-row"
+                            :class="{
+                              'doc-block-row-selected': $store.chat.blockHasSelectedDocComment(block),
+                              'doc-block-row-anchor-selected': $store.chat.blockIsSelectedForComment(block, index)
+                            }"
+                          >
                             <template x-if="$store.chat.docEditingBlockIndex !== index">
                               <div class="doc-block-main">
-                                <div class="doc-block" @click="$store.chat.startDocBlockEdit(index)">
+                                <div class="doc-block" @click="$store.chat.selectDocBlockForComment(block, index); $store.chat.startDocBlockEdit(index)">
                                   <div class="doc-block-rendered" x-html="$store.chat.renderMarkdown(block.raw)"></div>
                                 </div>
                               </div>
@@ -2535,7 +2541,7 @@
                                 :class="{
                                   'doc-comment-trigger-open': $store.chat.getDocBlockCommentState(block) === 'open',
                                   'doc-comment-trigger-resolved': $store.chat.getDocBlockCommentState(block) === 'resolved',
-                                  'doc-comment-trigger-selected': $store.chat.blockHasSelectedDocComment(block)
+                                  'doc-comment-trigger-selected': $store.chat.blockHasSelectedDocComment(block) || $store.chat.blockIsSelectedForComment(block, index)
                                 }"
                                 :title="$store.chat.getDocCommentsForBlock(block).length > 0 ? `Open comment thread on line ${block.start_line || 1}` : `Comment on line ${block.start_line || 1}`"
                                 :aria-label="$store.chat.getDocCommentsForBlock(block).length > 0 ? `Open comment thread on line ${block.start_line || 1}` : `Comment on line ${block.start_line || 1}`"
@@ -2627,7 +2633,7 @@
                         </div>
 
                         <div class="doc-thread-placement-hint" x-show="!$store.chat.docCommentAnchorLine">
-                          Click a comment marker beside a block to start a new anchored comment.
+                          Select a block in the document, then click + to start an anchored comment.
                         </div>
 
                         <div class="doc-thread-list">

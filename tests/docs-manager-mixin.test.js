@@ -229,6 +229,54 @@ describe('docsManagerMixin comment drawer', () => {
     expect(store.showDocCommentModal).toBe(false);
   });
 
+  it('uses the selected read-mode block when the drawer plus starts a comment', () => {
+    const blocks = [
+      { id: 'block-1-1', start_line: 1, raw: 'First' },
+      { id: 'block-1-4', start_line: 4, raw: 'Second' },
+    ];
+    const store = createStore({
+      selectedDocId: 'doc-1',
+      docEditorMode: 'preview',
+      docEditorBlocks: blocks,
+      docSelectedBlockId: null,
+      scheduleDocCommentConnectorUpdate: vi.fn(),
+      syncRoute: vi.fn(),
+      clearDocCommentConnector: vi.fn(),
+    });
+
+    store.selectDocBlockForComment(blocks[1], 1);
+    store.startDocCommentPlacement();
+
+    expect(store.docCommentsVisible).toBe(true);
+    expect(store.docSelectedBlockId).toBe('block-1-4');
+    expect(store.docCommentAnchorLine).toBe(4);
+    expect(store.docCommentAnchorBlockId).toBe('block-1-4');
+    expect(store.selectedDocCommentId).toBeNull();
+  });
+
+  it('uses the active edit-mode block when the drawer plus starts a comment', () => {
+    const blocks = [
+      { id: 'block-1-1', start_line: 1, raw: 'First' },
+      { id: 'block-1-6', start_line: 6, raw: 'Editing' },
+    ];
+    const store = createStore({
+      selectedDocId: 'doc-1',
+      docEditorMode: 'block',
+      docEditorBlocks: blocks,
+      docEditingBlockIndex: 1,
+      docSelectedBlockId: null,
+      scheduleDocCommentConnectorUpdate: vi.fn(),
+      syncRoute: vi.fn(),
+      clearDocCommentConnector: vi.fn(),
+    });
+
+    store.startDocCommentPlacement();
+
+    expect(store.docSelectedBlockId).toBe('block-1-6');
+    expect(store.docCommentAnchorLine).toBe(6);
+    expect(store.docCommentAnchorBlockId).toBe('block-1-6');
+  });
+
   it('lists root comments and replies separately for the drawer', () => {
     const store = createStore({
       docComments: [
