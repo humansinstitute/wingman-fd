@@ -1097,10 +1097,44 @@ export const docsManagerMixin = {
     this.docComments = this.docComments.map((candidate) =>
       candidate.record_id === comment.record_id ? updated : candidate
     );
-    if (status === 'resolved' && this.selectedDocCommentId === comment.record_id) {
+    this.syncRoute();
+    this.scheduleDocCommentConnectorUpdate();
+
+    const envelope = await outboundComment({
+      ...updated,
+      previous_version: comment.version ?? 1,
+      target_group_ids: toRaw(targetGroupIds),
+      signature_npub: this.signingNpub,
+      write_group_ref: this.getPreferredDocWriteGroupRef(doc),
+    });
+    await addPendingWrite({
+      record_id: updated.record_id,
+      record_family_hash: envelope.record_family_hash,
+      envelope,
+    });
+    await this.flushAndBackgroundSync();
+  },
+
+  async removeDocComment(commentId) {
+    const comment = this.getDocCommentById(commentId);
+    const doc = this.selectedDocument;
+    if (!comment || !doc || !this.session?.npub) return;
+    const targetGroupIds = await this.getEncryptableDocCommentGroupIdsForWrite(doc);
+    if (targetGroupIds == null) return;
+
+    const updated = {
+      ...comment,
+      record_state: 'deleted',
+      version: (comment.version ?? 1) + 1,
+      updated_at: new Date().toISOString(),
+    };
+    await upsertComment(updated);
+    this.docComments = this.docComments.map((candidate) =>
+      candidate.record_id === comment.record_id ? updated : candidate
+    );
+    if (this.selectedDocCommentId === comment.record_id) {
       this.selectedDocCommentId = null;
       this.newDocCommentReplyBody = '';
-      this.showDocCommentModal = false;
       this.clearDocCommentConnector();
     }
     this.syncRoute();
@@ -1119,12 +1153,6 @@ export const docsManagerMixin = {
       envelope,
     });
     await this.flushAndBackgroundSync();
-    if (status === 'resolved') {
-      this.selectedDocCommentId = null;
-      this.newDocCommentReplyBody = '';
-      this.clearDocCommentConnector();
-      this.syncRoute();
-    }
   },
 
   getDocCommentSummary,

@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-DZKdiiUu.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-Dvm0mfh3.css">
+  <script type="module" crossorigin src="/assets/index-Nbt3aFTX.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CPLZ7LDC.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -2700,11 +2700,23 @@
                               <div class="doc-thread-row-actions" x-show="root.record_id === $store.chat.selectedDocCommentId">
                                 <button
                                   type="button"
-                                  class="doc-thread-action-link"
+                                  class="doc-thread-action-btn doc-thread-action-btn-complete"
                                   :title="root.comment_status === 'resolved' ? 'Reopen comment' : 'Resolve comment'"
                                   @click="$store.chat.setDocCommentStatus(root.record_id, root.comment_status === 'resolved' ? 'open' : 'resolved')"
-                                  x-text="root.comment_status === 'resolved' ? 'Reopen' : 'Resolve'"
+                                  x-text="root.comment_status === 'resolved' ? 'Reopen' : 'Confirm complete'"
                                 ></button>
+                                <button
+                                  type="button"
+                                  class="doc-thread-action-btn doc-thread-action-btn-remove"
+                                  title="Remove comment"
+                                  @click="$store.chat.removeDocComment(root.record_id)"
+                                >Remove comment</button>
+                                <button
+                                  type="button"
+                                  class="doc-thread-action-btn"
+                                  title="Close selected thread"
+                                  @click="$store.chat.closeDocCommentThread()"
+                                >Close</button>
                               </div>
 
                               <div class="doc-thread-reply" x-show="root.record_id === $store.chat.selectedDocCommentId">

@@ -2698,11 +2698,23 @@
                               <div class="doc-thread-row-actions" x-show="root.record_id === $store.chat.selectedDocCommentId">
                                 <button
                                   type="button"
-                                  class="doc-thread-action-link"
+                                  class="doc-thread-action-btn doc-thread-action-btn-complete"
                                   :title="root.comment_status === 'resolved' ? 'Reopen comment' : 'Resolve comment'"
                                   @click="$store.chat.setDocCommentStatus(root.record_id, root.comment_status === 'resolved' ? 'open' : 'resolved')"
-                                  x-text="root.comment_status === 'resolved' ? 'Reopen' : 'Resolve'"
+                                  x-text="root.comment_status === 'resolved' ? 'Reopen' : 'Confirm complete'"
                                 ></button>
+                                <button
+                                  type="button"
+                                  class="doc-thread-action-btn doc-thread-action-btn-remove"
+                                  title="Remove comment"
+                                  @click="$store.chat.removeDocComment(root.record_id)"
+                                >Remove comment</button>
+                                <button
+                                  type="button"
+                                  class="doc-thread-action-btn"
+                                  title="Close selected thread"
+                                  @click="$store.chat.closeDocCommentThread()"
+                                >Close</button>
                               </div>
 
                               <div class="doc-thread-reply" x-show="root.record_id === $store.chat.selectedDocCommentId">

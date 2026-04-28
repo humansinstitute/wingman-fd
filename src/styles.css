@@ -4021,10 +4021,7 @@ button:disabled {
 }
 
 .doc-content-layout-with-thread {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 1rem;
-  align-items: flex-start;
+  display: block;
 }
 
 .doc-comment-connector {
@@ -4262,19 +4259,24 @@ button:disabled {
 }
 
 .doc-comment-thread-panel {
-  position: sticky;
-  top: 5.2rem;
+  position: fixed;
+  top: 5.25rem;
+  right: 1rem;
+  bottom: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
-  width: min(28rem, 34vw);
-  max-height: calc(100vh - 6.5rem);
+  width: min(26rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 6.25rem);
+  box-sizing: border-box;
   padding: 0.85rem 0.9rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-  z-index: 1;
+  overflow: hidden;
+  z-index: 45;
 }
 
 .doc-comment-thread-header {
@@ -4299,9 +4301,9 @@ button:disabled {
 }
 
 .doc-comment-drawer-rail {
-  position: sticky;
-  top: 5.2rem;
-  align-self: flex-start;
+  position: fixed;
+  top: 5.25rem;
+  right: 1rem;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -4314,6 +4316,7 @@ button:disabled {
   color: var(--muted);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
   cursor: pointer;
+  z-index: 45;
 }
 
 .doc-comment-drawer-rail:hover {
@@ -4367,8 +4370,10 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  max-height: 50vh;
+  min-height: 0;
+  flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .doc-thread-empty,
@@ -4436,16 +4441,34 @@ button:disabled {
 
 .doc-thread-row-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 0.4rem;
 }
 
-.doc-thread-action-link {
-  border: 0;
-  background: transparent;
+.doc-thread-action-btn {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
   color: var(--accent);
   cursor: pointer;
-  font-size: 0.78rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.76rem;
   font-weight: 700;
+}
+
+.doc-thread-action-btn:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.doc-thread-action-btn-remove {
+  color: #b91c1c;
+}
+
+.doc-thread-action-btn-remove:hover {
+  border-color: rgba(185, 28, 28, 0.35);
+  background: rgba(185, 28, 28, 0.08);
 }
 
 .doc-thread-entry-header {
@@ -8016,11 +8039,15 @@ button:disabled {
 /* Responsive task board */
 @media (max-width: 768px) {
   .doc-content-layout-with-thread {
-    grid-template-columns: 1fr;
+    display: block;
   }
 
   .doc-comment-thread-panel {
-    position: static;
+    top: 4.5rem;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
   }
 
   .doc-block-row {
