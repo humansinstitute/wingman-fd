@@ -1482,8 +1482,14 @@ export function initApp() {
 
       const layout = document.querySelector('[data-doc-content-layout]');
       const panel = document.querySelector('[data-doc-thread-panel]');
+      const anchorBlockId = String(this.selectedDocComment?.anchor_block_id || '').trim();
       const anchorLine = this.selectedDocComment?.anchor_line_number || 1;
-      const marker = document.querySelector(`[data-doc-anchor-line="${anchorLine}"]`);
+      const escapedBlockId = anchorBlockId && window.CSS?.escape
+        ? window.CSS.escape(anchorBlockId)
+        : anchorBlockId.replace(/"/g, '\\"');
+      const marker = escapedBlockId
+        ? document.querySelector(`[data-doc-anchor-block-id="${escapedBlockId}"]`)
+        : document.querySelector(`[data-doc-anchor-line="${anchorLine}"]`);
 
       if (!layout || !panel || !marker) {
         this.clearDocCommentConnector();

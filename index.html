@@ -2528,6 +2528,7 @@
                               <button
                                 type="button"
                                 class="doc-comment-trigger"
+                                :data-doc-anchor-block-id="block.id || ''"
                                 :data-doc-anchor-line="block.start_line || 1"
                                 :class="{
                                   'doc-comment-trigger-open': $store.chat.getDocBlockCommentState(block) === 'open',
@@ -2536,13 +2537,20 @@
                                 }"
                                 :title="$store.chat.getDocCommentsForBlock(block).length > 0 ? `Open comment thread on line ${block.start_line || 1}` : `Comment on line ${block.start_line || 1}`"
                                 :aria-label="$store.chat.getDocCommentsForBlock(block).length > 0 ? `Open comment thread on line ${block.start_line || 1}` : `Comment on line ${block.start_line || 1}`"
-                                @click.stop="$store.chat.getDocCommentsForBlock(block).length > 0 ? $store.chat.selectDocCommentThread($store.chat.getDocCommentsForBlock(block)[0].record_id) : $store.chat.openDocCommentModal(block)"
+                                @click.stop="$store.chat.openDocCommentModal(block)"
                               >
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                                 </svg>
                               </button>
-                              <span class="doc-comment-count" x-show="$store.chat.getDocBlockCommentCount(block) > 0" x-text="$store.chat.getDocBlockCommentCount(block)"></span>
+                              <button
+                                type="button"
+                                class="doc-comment-count"
+                                x-show="$store.chat.getDocBlockCommentCount(block) > 0"
+                                x-text="$store.chat.getDocBlockCommentCount(block)"
+                                @click.stop="$store.chat.selectDocCommentThread($store.chat.getDocCommentsForBlock(block)[0].record_id)"
+                                title="Open existing comment thread"
+                              ></button>
                             </aside>
                           </div>
                         </template>

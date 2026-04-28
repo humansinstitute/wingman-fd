@@ -4227,13 +4227,20 @@ button:disabled {
 .doc-comment-count {
   min-width: 1.1rem;
   padding: 0 0.22rem;
+  border: 0;
   border-radius: 999px;
   background: var(--surface-muted);
   color: var(--muted);
+  cursor: pointer;
   font-size: 0.68rem;
   font-weight: 700;
   text-align: center;
   line-height: 1.2rem;
+}
+
+.doc-comment-count:hover {
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--accent);
 }
 
 .doc-comment-avatar {

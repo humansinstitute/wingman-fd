@@ -821,7 +821,7 @@ export const docsManagerMixin = {
 
   getDocCommentsForBlock(block) {
     const startLine = Number(block?.start_line);
-    if (!Number.isFinite(startLine)) return [];
+    if (!Number.isFinite(startLine) && !block?.id) return [];
     return this.docComments
       .filter((comment) => commentBelongsToDocBlock(comment, block))
       .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
@@ -921,6 +921,7 @@ export const docsManagerMixin = {
       target_record_id: doc.record_id,
       target_record_family_hash: recordFamilyHash('document'),
       parent_comment_id: null,
+      anchor_block_id: this.docCommentAnchorBlockId || null,
       anchor_line_number: this.docCommentAnchorLine || 1,
       comment_status: 'open',
       body,
@@ -985,6 +986,7 @@ export const docsManagerMixin = {
       target_record_id: doc.record_id,
       target_record_family_hash: recordFamilyHash('document'),
       parent_comment_id: root.record_id,
+      anchor_block_id: root.anchor_block_id || null,
       anchor_line_number: root.anchor_line_number || 1,
       comment_status: 'open',
       body,
@@ -1348,8 +1350,9 @@ export const docsManagerMixin = {
     const groupIds = normalizeGroupIds(normalized?.group_ids || []);
     if (groupIds.length === 0) return [];
     const encryptableGroupIds = groupIds.filter((groupId) => hasGroupKey(groupId));
-    if (encryptableGroupIds.length > 0) return encryptableGroupIds;
-    this.error = `Document comment write is missing group keys: ${groupIds.join(', ')}`;
+    const missingGroupIds = groupIds.filter((groupId) => !encryptableGroupIds.includes(groupId));
+    if (missingGroupIds.length === 0) return encryptableGroupIds;
+    this.error = `Document comment write is missing group keys: ${missingGroupIds.join(', ')}`;
     return null;
   },
 
@@ -1363,9 +1366,10 @@ export const docsManagerMixin = {
       await this.refreshGroups({ force: true });
       encryptableGroupIds = groupIds.filter((groupId) => hasGroupKey(groupId));
     }
-    if (encryptableGroupIds.length > 0) return encryptableGroupIds;
+    const missingGroupIds = groupIds.filter((groupId) => !encryptableGroupIds.includes(groupId));
+    if (missingGroupIds.length === 0) return encryptableGroupIds;
 
-    this.error = `Document comment write is missing group keys: ${groupIds.join(', ')}`;
+    this.error = `Document comment write is missing group keys: ${missingGroupIds.join(', ')}`;
     return null;
   },
 

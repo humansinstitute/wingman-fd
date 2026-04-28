@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-sedKX9OL.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-B1pr_rwI.css">
+  <script type="module" crossorigin src="/assets/index-Dg6HntOU.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-tk2HttZy.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -2530,6 +2530,7 @@
                               <button
                                 type="button"
                                 class="doc-comment-trigger"
+                                :data-doc-anchor-block-id="block.id || ''"
                                 :data-doc-anchor-line="block.start_line || 1"
                                 :class="{
                                   'doc-comment-trigger-open': $store.chat.getDocBlockCommentState(block) === 'open',
@@ -2538,13 +2539,20 @@
                                 }"
                                 :title="$store.chat.getDocCommentsForBlock(block).length > 0 ? `Open comment thread on line ${block.start_line || 1}` : `Comment on line ${block.start_line || 1}`"
                                 :aria-label="$store.chat.getDocCommentsForBlock(block).length > 0 ? `Open comment thread on line ${block.start_line || 1}` : `Comment on line ${block.start_line || 1}`"
-                                @click.stop="$store.chat.getDocCommentsForBlock(block).length > 0 ? $store.chat.selectDocCommentThread($store.chat.getDocCommentsForBlock(block)[0].record_id) : $store.chat.openDocCommentModal(block)"
+                                @click.stop="$store.chat.openDocCommentModal(block)"
                               >
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                                 </svg>
                               </button>
-                              <span class="doc-comment-count" x-show="$store.chat.getDocBlockCommentCount(block) > 0" x-text="$store.chat.getDocBlockCommentCount(block)"></span>
+                              <button
+                                type="button"
+                                class="doc-comment-count"
+                                x-show="$store.chat.getDocBlockCommentCount(block) > 0"
+                                x-text="$store.chat.getDocBlockCommentCount(block)"
+                                @click.stop="$store.chat.selectDocCommentThread($store.chat.getDocCommentsForBlock(block)[0].record_id)"
+                                title="Open existing comment thread"
+                              ></button>
                             </aside>
                           </div>
                         </template>

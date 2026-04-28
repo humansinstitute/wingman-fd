@@ -23,6 +23,18 @@ describe('audioRecordingManagerMixin', () => {
     expect(store.getAudioRecorderStorageGroupIds('doc-reply')).toEqual(['group-readable']);
   });
 
+  it('blocks doc comment audio storage upload when comment group keys are incomplete', () => {
+    const store = createStore({
+      selectedDocument: {
+        record_id: 'doc-1',
+        group_ids: ['group-readable', 'group-inaccessible'],
+      },
+      getEncryptableDocCommentGroupIds: () => null,
+    });
+
+    expect(store.getAudioRecorderStorageGroupIds('doc-comment')).toBeNull();
+  });
+
   it('falls back to selected document groups when the doc comment filter is unavailable', () => {
     const store = createStore({
       selectedDocument: {

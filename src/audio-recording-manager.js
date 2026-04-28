@@ -201,9 +201,13 @@ export const audioRecordingManagerMixin = {
 
     try {
       const encrypted = await encryptAudioBlob(this._audioRecorderBlob);
+      const accessGroupIds = this.getAudioRecorderStorageGroupIds(this.audioRecorderContext);
+      if (accessGroupIds == null) {
+        throw new Error(this.error || 'Voice note upload is missing document comment group keys.');
+      }
       const prepared = await prepareStorageObject(buildStoragePrepareBody({
         ownerNpub: this.workspaceOwnerNpub,
-        accessGroupIds: this.getAudioRecorderStorageGroupIds(this.audioRecorderContext),
+        accessGroupIds,
         contentType: this._audioRecorderBlob.type || 'audio/webm;codecs=opus',
         sizeBytes: encrypted.encryptedBytes.byteLength,
         fileName: `${(this.audioRecorderTitle || this.getAudioRecorderDefaultTitle()).replace(/[^a-zA-Z0-9._-]/g, '_')}.webm`,
@@ -362,7 +366,8 @@ export const audioRecordingManagerMixin = {
     }
     if (context === 'doc-comment' || context === 'doc-reply') {
       if (typeof this.getEncryptableDocCommentGroupIds === 'function') {
-        return normalizeStorageAccessGroupIds(this.getEncryptableDocCommentGroupIds(this.selectedDocument) || []);
+        const groupIds = this.getEncryptableDocCommentGroupIds(this.selectedDocument);
+        return groupIds == null ? null : normalizeStorageAccessGroupIds(groupIds);
       }
       return normalizeStorageAccessGroupIds(this.selectedDocument?.group_ids ?? []);
     }

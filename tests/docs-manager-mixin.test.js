@@ -112,7 +112,7 @@ describe('docsManagerMixin.getMissingDocGroupRefs', () => {
     expect(missing).toEqual(['group-a', 'group-b']);
   });
 
-  it('returns loaded subset for doc comment group payload targets', () => {
+  it('fails doc comment payload targets when any document group key is missing', () => {
     const loadedIdentity = createGroupIdentity();
     cacheGroupKey({
       group_id: 'group-loaded',
@@ -125,7 +125,8 @@ describe('docsManagerMixin.getMissingDocGroupRefs', () => {
       group_ids: ['group-loaded', 'group-missing'],
     });
 
-    expect(groupIds).toEqual(['group-loaded']);
+    expect(groupIds).toBeNull();
+    expect(store.error).toContain('group-missing');
   });
 
   it('fails doc comment payload targets when no group keys are loaded', () => {

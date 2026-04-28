@@ -16,6 +16,22 @@ describe('document comment anchoring', () => {
     expect(commentBelongsToDocBlock(comment, block)).toBe(true);
   });
 
+  it('uses persisted anchor block id when available', () => {
+    const block = {
+      id: 'block-2-5',
+      start_line: 5,
+      end_line: 6,
+    };
+    const comment = {
+      parent_comment_id: null,
+      anchor_block_id: 'block-2-5',
+      anchor_line_number: 1,
+      record_state: 'active',
+    };
+
+    expect(commentBelongsToDocBlock(comment, block)).toBe(true);
+  });
+
   it('does not attach a comment to unrelated blocks', () => {
     const block = {
       start_line: 31,

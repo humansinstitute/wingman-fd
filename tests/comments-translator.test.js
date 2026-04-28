@@ -32,6 +32,7 @@ describe('comment translator — inbound', () => {
             target_record_id: 'task-1',
             target_record_family_hash: `${APP_NPUB}:task`,
             parent_comment_id: null,
+            anchor_block_id: 'block-1-1',
             body: 'Looks good, shipping it.',
             attachments: [{ kind: 'audio', audio_note_record_id: 'audio-1', title: 'Voice note' }],
             record_state: 'active',
@@ -50,6 +51,7 @@ describe('comment translator — inbound', () => {
     expect(row.target_record_id).toBe('task-1');
     expect(row.target_record_family_hash).toBe(`${APP_NPUB}:task`);
     expect(row.parent_comment_id).toBeNull();
+    expect(row.anchor_block_id).toBe('block-1-1');
     expect(row.body).toBe('Looks good, shipping it.');
     expect(row.attachments).toHaveLength(1);
     expect(row.sender_npub).toBe('npub_commenter');
@@ -80,6 +82,7 @@ describe('comment translator — outbound', () => {
       owner_npub: 'npub_owner',
       target_record_id: 'task-1',
       target_record_family_hash: `${APP_NPUB}:task`,
+      anchor_block_id: 'block-1-1',
       body: 'Great progress!',
       attachments: [{ kind: 'audio', audio_note_record_id: 'audio-1', title: 'Voice note' }],
       target_group_ids: ['gpub_abc'],
@@ -98,6 +101,7 @@ describe('comment translator — outbound', () => {
     expect(payload.data.body).toBe('Great progress!');
     expect(payload.data.attachments).toHaveLength(1);
     expect(payload.data.parent_comment_id).toBeNull();
+    expect(payload.data.anchor_block_id).toBe('block-1-1');
   });
 
   it('inherits group_ids from target for fanout', async () => {

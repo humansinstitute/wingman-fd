@@ -1,6 +1,9 @@
 export function commentBelongsToDocBlock(comment, block) {
   if (comment?.parent_comment_id) return false;
   if (comment?.record_state === 'deleted') return false;
+  const anchorBlockId = String(comment?.anchor_block_id || '').trim();
+  const blockId = String(block?.id || '').trim();
+  if (anchorBlockId && blockId && anchorBlockId === blockId) return true;
   const rawAnchor = Number(comment?.anchor_line_number);
   const anchorLine = (!Number.isFinite(rawAnchor) || rawAnchor < 1) ? 1 : rawAnchor;
   const startLine = Number(block?.start_line);
