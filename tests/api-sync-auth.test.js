@@ -333,6 +333,179 @@ describe('api sync auth and owner-write detection', () => {
     }]);
   });
 
+  it('uses canonical checkout identity fields for checkout acquire requests', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1owner';
+
+    const fetchMock = vi.fn(async (_requestUrl, options) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ body: JSON.parse(options.body) }),
+      text: async () => '',
+      headers: new Headers({ 'content-type': 'application/json' }),
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    const result = await api.acquireRecordCheckout({
+      recordId: 'doc-1',
+      recordFamilyHash: 'app:document',
+      identityContext: {
+        workspaceServiceNpub: 'npub1workspaceservicekey',
+        userNpub: 'npub1owner',
+        workspaceUserKeyNpub: 'npub1workspacekey',
+        signerNpub: 'npub1workspacekey',
+      },
+      leaseSeconds: 900,
+      idempotencyKey: 'idem-1',
+    });
+
+    expect(result.body).toEqual({
+      record_family_hash: 'app:document',
+      workspace_service_npub: 'npub1workspaceservicekey',
+      user_npub: 'npub1owner',
+      workspace_user_key_npub: 'npub1workspacekey',
+      signer_npub: 'npub1workspacekey',
+      lease_seconds: 900,
+      idempotency_key: 'idem-1',
+    });
+    expect(result.body.signature_npub).toBeUndefined();
+    expect(createNip98AuthHeaderForSecretMock).toHaveBeenCalled();
+  });
+
+  it('preserves checkout metadata on lock-managed sync envelopes', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1owner';
+    const writeGroupId = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+    groupKeys.set(writeGroupId, {
+      group_id: writeGroupId,
+      group_npub: 'npub1groupkey',
+      key_version: 1,
+      secret: new Uint8Array(32).fill(8),
+    });
+
+    const fetchMock = vi.fn(async (_requestUrl, options) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ body: JSON.parse(options.body) }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    const result = await api.syncRecords({
+      owner_npub: 'npub1workspaceservicekey',
+      records: [{
+        record_id: 'doc-locked',
+        owner_npub: 'npub1workspaceservicekey',
+        record_family_hash: 'app:document',
+        signature_npub: 'npub1workspacekey',
+        write_group_id: writeGroupId,
+        checkout: {
+          checkout_id: 'checkout-1',
+          consume_on_success: true,
+        },
+      }],
+    });
+
+    expect(result.body.records[0].checkout).toEqual({
+      checkout_id: 'checkout-1',
+      consume_on_success: true,
+    });
+  });
+
+  it('strips checkout metadata from default optimistic_write sync envelopes', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1owner';
+    const writeGroupId = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+    groupKeys.set(writeGroupId, {
+      group_id: writeGroupId,
+      group_npub: 'npub1groupkey',
+      key_version: 1,
+      secret: new Uint8Array(32).fill(8),
+    });
+
+    const fetchMock = vi.fn(async (_requestUrl, options) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ body: JSON.parse(options.body) }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    const result = await api.syncRecords({
+      owner_npub: 'npub1workspaceservicekey',
+      records: [{
+        record_id: 'task-default',
+        owner_npub: 'npub1workspaceservicekey',
+        record_family_hash: 'app:task',
+        signature_npub: 'npub1workspacekey',
+        write_group_id: writeGroupId,
+        checkout: {
+          checkout_id: 'stale-checkout',
+          consume_on_success: true,
+        },
+      }],
+    });
+
+    expect(result.body.records[0].checkout).toBeUndefined();
+  });
+
+  it('preserves checkout metadata for policy-opted-in task sync envelopes', async () => {
+    workspaceSecret = new Uint8Array(32).fill(7);
+    workspaceNpub = 'npub1workspacekey';
+    sessionNpub = 'npub1owner';
+    const writeGroupId = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+    groupKeys.set(writeGroupId, {
+      group_id: writeGroupId,
+      group_npub: 'npub1groupkey',
+      key_version: 1,
+      secret: new Uint8Array(32).fill(8),
+    });
+
+    const fetchMock = vi.fn(async (_requestUrl, options) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ body: JSON.parse(options.body) }),
+      text: async () => '',
+    }));
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+
+    const result = await api.syncRecords({
+      owner_npub: 'npub1workspaceservicekey',
+      checkout_policy_config: { familySuffixes: { task: 'checkout_required' } },
+      records: [{
+        record_id: 'task-checkout',
+        owner_npub: 'npub1workspaceservicekey',
+        record_family_hash: 'app:task',
+        signature_npub: 'npub1workspacekey',
+        write_group_id: writeGroupId,
+        checkout: {
+          checkout_id: 'checkout-task-1',
+          consume_on_success: true,
+        },
+      }],
+    });
+
+    expect(result.body.records[0].checkout).toEqual({
+      checkout_id: 'checkout-task-1',
+      consume_on_success: true,
+    });
+  });
+
   it('uses the real user as viewer_npub for record history reads', async () => {
     workspaceSecret = new Uint8Array(32).fill(7);
     workspaceNpub = 'npub1workspacekey';

@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { localEncryptForNpub } from '@superbased/core/client';
-import { clearCryptoContext, setActiveSessionNpub } from '../src/crypto/group-keys.js';
+import {
+  cacheGroupKey,
+  clearCryptoContext,
+  createGroupIdentity,
+  setActiveSessionNpub,
+} from '../src/crypto/group-keys.js';
 import {
   clearActiveWorkspaceKey,
   generateWorkspaceSessionKey,
   setActiveWorkspaceKey,
 } from '../src/crypto/workspace-keys.js';
 import {
+  buildGroupPayloads,
   decryptRecordPayload,
   encryptOwnerPayload,
 } from '../src/translators/record-crypto.js';
@@ -74,5 +80,20 @@ describe('workspace-key owner payload crypto', () => {
       owner_payload: legacyOwnerPayload,
       group_payloads: [],
     })).resolves.toEqual(payload);
+  });
+
+  it('rejects partial group payload encryption when any delivery key is missing', () => {
+    setActiveSessionNpub('npub1real-user');
+    const identity = createGroupIdentity();
+    cacheGroupKey({
+      group_id: 'group-loaded',
+      group_npub: identity.npub,
+      nsec: identity.nsec,
+    });
+
+    expect(() => buildGroupPayloads(
+      ['group-loaded', 'group-missing'],
+      { data: { title: 'Strict delivery groups' } },
+    )).toThrow(/Missing group keys for group-missing/);
   });
 });

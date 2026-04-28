@@ -5,8 +5,11 @@ const state = {
   pending: [],
   removed: [],
   syncCalls: [],
+  syncArgs: [],
   syncStates: {},
   summaryResponse: null,
+  documentsById: new Map(),
+  directoriesById: new Map(),
 };
 
 vi.mock('../src/db.js', () => ({
@@ -14,12 +17,19 @@ vi.mock('../src/db.js', () => ({
   getPendingWrites: vi.fn(async () => state.pending),
   removePendingWrite: vi.fn(async (rowId) => {
     state.removed.push(rowId);
+    state.pending = state.pending.filter((row) => row.row_id !== rowId);
   }),
   upsertWorkspaceSettings: vi.fn(),
   upsertChannel: vi.fn(),
   upsertMessage: vi.fn(),
-  upsertDocument: vi.fn(),
-  upsertDirectory: vi.fn(),
+  upsertDocument: vi.fn(async (record) => {
+    state.documentsById.set(record.record_id, record);
+  }),
+  upsertDirectory: vi.fn(async (record) => {
+    state.directoriesById.set(record.record_id, record);
+  }),
+  getDocumentById: vi.fn(async (recordId) => state.documentsById.get(recordId) || null),
+  getDirectoryById: vi.fn(async (recordId) => state.directoriesById.get(recordId) || null),
   upsertTask: vi.fn(),
   upsertSchedule: vi.fn(),
   upsertComment: vi.fn(),
@@ -35,6 +45,7 @@ vi.mock('../src/api.js', () => ({
   getBaseUrl: vi.fn(() => 'https://sb4.otherstuff.studio'),
   syncRecords: vi.fn(async ({ records }) => {
     state.syncCalls.push(records.map((record) => record.record_id));
+    state.syncArgs.push({ records });
   }),
   fetchRecords: vi.fn(async () => ({ records: [] })),
   fetchRecordsSummary: vi.fn(async () => state.summaryResponse ?? { available: false, families: [] }),
@@ -46,8 +57,11 @@ describe('sync worker pending write batching', () => {
     state.pending = [];
     state.removed = [];
     state.syncCalls = [];
+    state.syncArgs = [];
     state.syncStates = {};
     state.summaryResponse = null;
+    state.documentsById = new Map();
+    state.directoriesById = new Map();
     vi.resetModules();
   });
 
@@ -64,6 +78,38 @@ describe('sync worker pending write batching', () => {
     expect(state.syncCalls).toHaveLength(3);
     expect(state.syncCalls.map((batch) => batch.length)).toEqual([25, 25, 2]);
     expect(state.removed).toEqual(Array.from({ length: 52 }, (_, index) => index + 1));
+  });
+
+  it('passes checkout policy config through pending-write flushes', async () => {
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'task-1',
+        record_family_hash: getSyncFamilyHash('task'),
+        envelope: {
+          record_id: 'task-1',
+          record_family_hash: getSyncFamilyHash('task'),
+          checkout: { checkout_id: 'checkout-task-1', consume_on_success: true },
+        },
+      },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords.mockImplementationOnce(async (args) => {
+      state.syncCalls.push(args.records.map((record) => record.record_id));
+      state.syncArgs.push(args);
+      return { synced: 1, rejected: [] };
+    });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+    await flushPendingWrites('npub-owner', null, {
+      checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } },
+    });
+
+    expect(state.syncArgs[0].checkout_policy_config).toEqual({
+      familySuffixes: { task: 'checkout_required' },
+    });
+    expect(state.removed).toEqual([1]);
   });
 
   it('keeps the failing batch pending and reports batch context', async () => {
@@ -84,12 +130,55 @@ describe('sync worker pending write batching', () => {
     const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
 
     await expect(flushPendingWrites('npub-owner')).rejects.toThrow(
-      'Pending write sync failed for batch 2 (5 records, 25/30 flushed): NetworkError when attempting to fetch resource.'
+      /Pending write sync failed for batch 2 \(5 records, 25\/30 flushed\): NetworkError when attempting to fetch resource\. Batch records: task-26/
     );
 
     expect(state.removed).toEqual(Array.from({ length: 25 }, (_, index) => index + 1));
     expect(state.syncCalls).toHaveLength(2);
     expect(state.syncCalls.map((batch) => batch.length)).toEqual([25, 5]);
+  });
+
+  it('reports pending records with missing checkout metadata in failed batches', async () => {
+    state.pending = [
+      {
+        row_id: 7,
+        record_id: 'doc-1',
+        record_family_hash: getSyncFamilyHash('document'),
+        envelope: {
+          record_id: 'doc-1',
+          record_family_hash: getSyncFamilyHash('document'),
+          version: 2,
+          previous_version: 1,
+        },
+      },
+      {
+        row_id: 8,
+        record_id: 'task-1',
+        record_family_hash: getSyncFamilyHash('task'),
+        envelope: {
+          record_id: 'task-1',
+          record_family_hash: getSyncFamilyHash('task'),
+          version: 4,
+          previous_version: 3,
+        },
+      },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords.mockImplementationOnce(async ({ records }) => {
+      state.syncCalls.push(records.map((record) => record.record_id));
+      throw new Error('checkout_required record doc-1 requires checkout_id.');
+    });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+
+    await expect(flushPendingWrites('npub-owner', null, {
+      checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } },
+    })).rejects.toThrow(
+      /Batch records: doc-1 .* checkout_id=missing row=7; task-1 .* checkout_id=missing row=8/
+    );
+
+    expect(state.removed).toEqual([]);
   });
 
   it('emits progress callbacks during flush', async () => {
@@ -131,13 +220,13 @@ describe('sync worker pending write batching', () => {
     expect(state.removed).toEqual([2]);
   });
 
-  it('skips inbound apply when local pending version is newer/equal', async () => {
+  it('skips inbound apply when a lock-managed pending write is newer than Tower', async () => {
     state.pending = [
       {
         row_id: 1,
         record_id: 'doc-1',
         record_family_hash: getSyncFamilyHash('document'),
-        envelope: { record_id: 'doc-1', version: 2 },
+        envelope: { record_id: 'doc-1', version: 3 },
       },
     ];
 
@@ -173,6 +262,108 @@ describe('sync worker pending write batching', () => {
     await pullRecordsForFamilies('npub-owner', 'npub-owner', [getSyncFamilyHash('document')]);
 
     expect(inboundDocument).not.toHaveBeenCalled();
+  });
+
+  it('applies equal-version inbound records for lock-managed families so accepted writes materialize', async () => {
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'doc-1',
+        record_family_hash: getSyncFamilyHash('document'),
+        envelope: { record_id: 'doc-1', version: 2 },
+      },
+    ];
+
+    const inboundDocument = vi.fn(async (record) => ({
+      record_id: record.record_id,
+      owner_npub: 'npub-owner',
+      title: 'accepted',
+      content: 'accepted',
+      sync_status: 'synced',
+      version: record.version,
+      updated_at: record.updated_at,
+    }));
+    vi.doMock('../src/translators/docs.js', () => ({
+      inboundDocument,
+      inboundDirectory: vi.fn(async () => ({})),
+    }));
+
+    const { fetchRecords } = await import('../src/api.js');
+    fetchRecords.mockImplementation(async ({ record_family_hash }) => {
+      if (record_family_hash !== getSyncFamilyHash('document')) return { records: [] };
+      return {
+        records: [{
+          record_id: 'doc-1',
+          record_family_hash: getSyncFamilyHash('document'),
+          owner_npub: 'npub-owner',
+          version: 2,
+          updated_at: '2026-04-23T00:00:00.000Z',
+        }],
+      };
+    });
+
+    const { pullRecordsForFamilies } = await import('../src/worker/sync-worker.js');
+    await pullRecordsForFamilies('npub-owner', 'npub-owner', [getSyncFamilyHash('document')]);
+
+    expect(inboundDocument).toHaveBeenCalledTimes(1);
+    expect(state.removed).toEqual([1]);
+  });
+
+  it('forced sync pulls and reconciles accepted checkout writes after push retry failure', async () => {
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'doc-1',
+        record_family_hash: getSyncFamilyHash('document'),
+        envelope: {
+          record_id: 'doc-1',
+          record_family_hash: getSyncFamilyHash('document'),
+          version: 8,
+          previous_version: 7,
+          checkout: { checkout_id: 'checkout-consumed', consume_on_success: true },
+        },
+      },
+    ];
+
+    const inboundDocument = vi.fn(async (record) => ({
+      record_id: record.record_id,
+      owner_npub: 'npub-owner',
+      title: 'accepted',
+      content: 'accepted',
+      sync_status: 'synced',
+      version: record.version,
+      updated_at: record.updated_at,
+    }));
+    vi.doMock('../src/translators/docs.js', () => ({
+      inboundDocument,
+      inboundDirectory: vi.fn(async () => ({})),
+    }));
+
+    const { syncRecords, fetchRecords } = await import('../src/api.js');
+    syncRecords.mockImplementationOnce(async ({ records }) => {
+      state.syncCalls.push(records.map((record) => record.record_id));
+      throw new Error('checkout checkout-consumed is no longer active');
+    });
+    fetchRecords.mockImplementation(async ({ record_family_hash }) => {
+      if (record_family_hash !== getSyncFamilyHash('document')) return { records: [] };
+      return {
+        records: [{
+          record_id: 'doc-1',
+          record_family_hash: getSyncFamilyHash('document'),
+          owner_npub: 'npub-owner',
+          version: 8,
+          updated_at: '2026-04-25T06:54:00.000Z',
+        }],
+      };
+    });
+
+    const { runSync } = await import('../src/worker/sync-worker.js');
+    const result = await runSync('npub-owner', 'npub-owner', undefined, { forceFull: true });
+
+    expect(result.pulled).toBeGreaterThan(0);
+    expect(inboundDocument).toHaveBeenCalledTimes(1);
+    expect(state.removed).toEqual([1]);
+    expect(state.pending).toEqual([]);
   });
 
   it('emits progress callbacks during pull', async () => {

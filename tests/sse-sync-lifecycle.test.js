@@ -211,18 +211,22 @@ function bindMethod(methodName, overrides = {}) {
 // ---------------------------------------------------------------------------
 describe('connectSSEStream', () => {
   it('calls connectSSE with NIP-98 auth token, not bootstrap token', async () => {
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
     const { fn } = bindMethod('connectSSEStream', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
       workspaceOwnerNpub: 'npub1owner',
       superbasedTokenInput: 'my-token',
+      recordCheckoutPolicyConfig: checkoutPolicyConfig,
     });
     await fn();
     expect(connectSSE).toHaveBeenCalledTimes(1);
-    const [ownerNpub, viewerNpub, backendUrl, token] = connectSSE.mock.calls[0];
+    const [ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey, options] = connectSSE.mock.calls[0];
     expect(ownerNpub).toBe('npub1owner');
     expect(viewerNpub).toBe('npub1viewer');
     expect(backendUrl).toBe('https://tower.example.com');
+    expect(workspaceDbKey).toBe('npub1owner');
+    expect(options.checkoutPolicyConfig).toBe(checkoutPolicyConfig);
     // Token must be the base64 NIP-98 event, NOT the bootstrap connection token
     expect(token).not.toBe('my-token');
     expect(token).toMatch(/^[A-Za-z0-9+/=]+$/);
@@ -427,18 +431,22 @@ describe('getSyncCadenceMs with SSE', () => {
 // ---------------------------------------------------------------------------
 describe('ensureBackgroundSync wires SSE', () => {
   it('connects SSE when session and backend are available', async () => {
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
     const { fn } = bindMethod('ensureBackgroundSync', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
       workspaceOwnerNpub: 'npub1owner',
+      recordCheckoutPolicyConfig: checkoutPolicyConfig,
     });
     fn(false);
     await flushMicrotasks();
     expect(connectSSE).toHaveBeenCalledTimes(1);
-    const [ownerNpub, viewerNpub, backendUrl, token] = connectSSE.mock.calls[0];
+    const [ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey, options] = connectSSE.mock.calls[0];
     expect(ownerNpub).toBe('npub1owner');
     expect(viewerNpub).toBe('npub1viewer');
     expect(backendUrl).toBe('https://tower.example.com');
+    expect(workspaceDbKey).toBe('npub1owner');
+    expect(options.checkoutPolicyConfig).toBe(checkoutPolicyConfig);
     // Token must be NIP-98, not bootstrap
     expect(token).toMatch(/^[A-Za-z0-9+/=]+$/);
   });
@@ -477,16 +485,19 @@ describe('ensureBackgroundSync wires SSE', () => {
   });
 
   it('still starts worker flush timer alongside SSE', () => {
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
     const { fn } = bindMethod('ensureBackgroundSync', {
       session: { npub: 'npub1viewer' },
       backendUrl: 'https://tower.example.com',
       workspaceOwnerNpub: 'npub1owner',
+      recordCheckoutPolicyConfig: checkoutPolicyConfig,
     });
     fn(false);
     expect(startWorkerFlushTimer).toHaveBeenCalledWith(
       'npub1owner',
       'https://tower.example.com',
       'npub1owner',
+      { checkoutPolicyConfig },
     );
   });
 });

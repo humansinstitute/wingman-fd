@@ -19,6 +19,8 @@ import {
   upsertMessage,
   upsertDocument,
   upsertDirectory,
+  getDocumentById,
+  getDirectoryById,
   upsertReport,
   upsertTask,
   upsertSchedule,
@@ -56,6 +58,7 @@ import { inboundWorkspaceSettings, recordFamilyHash as settingsFamilyHash } from
 import { DEFAULT_SYNC_FAMILY_IDS, getSyncFamilyHash, SYNC_FAMILY_BY_HASH } from '../sync-families.js';
 import { pruneInaccessibleRecords, repairStaleGroupRefs } from '../access-pruner.js';
 import { flightDeckLog } from '../logging.js';
+import { isFlightDeckCheckoutRequiredRecordFamily } from '../record-checkout-policy.js';
 
 const SETTINGS_FAMILY = settingsFamilyHash('settings');
 const CHANNEL_FAMILY = recordFamilyHash('channel');
@@ -75,6 +78,23 @@ const ORGANISATION_FAMILY = organisationFamilyHash('organisation');
 const OPPORTUNITY_FAMILY = opportunityFamilyHash('opportunity');
 const DEFAULT_FAMILIES = DEFAULT_SYNC_FAMILY_IDS.map((familyId) => getSyncFamilyHash(familyId)).filter(Boolean);
 const WRITE_BATCH_SIZE = 25;
+
+function describePendingWriteForError(pendingWrite, options = {}) {
+  const envelope = pendingWrite?.envelope || {};
+  const recordId = String(pendingWrite?.record_id || envelope.record_id || '').trim() || 'unknown-record';
+  const family = String(pendingWrite?.record_family_hash || envelope.record_family_hash || '').trim() || 'unknown-family';
+  const version = Number(envelope.version ?? 0) || 0;
+  const previousVersion = Number(envelope.previous_version ?? 0) || 0;
+  const checkoutId = String(envelope.checkout?.checkout_id || '').trim();
+  const checkoutRequired = isFlightDeckCheckoutRequiredRecordFamily(family, options.checkoutPolicyConfig);
+  const checkoutState = checkoutId
+    ? `checkout_id=${checkoutId}`
+    : checkoutRequired
+      ? 'checkout_id=missing'
+      : 'checkout_id=not-required';
+  const rowId = pendingWrite?.row_id != null ? `row=${pendingWrite.row_id}` : 'row=unknown';
+  return `${recordId} ${family} v${version}/prev${previousVersion} ${checkoutState} ${rowId}`;
+}
 
 function resolveWorkspaceDbKey(ownerNpub, options = {}) {
   return String(options.workspaceDbKey || ownerNpub || '').trim();
@@ -132,6 +152,21 @@ async function materializeRecordForFamily(family, record) {
   }
 }
 
+async function markLockManagedWriteState(recordId, familyHash, patch = {}, options = {}) {
+  if (!recordId || !isFlightDeckCheckoutRequiredRecordFamily(familyHash, options.checkoutPolicyConfig)) return;
+  if (familyHash === DIRECTORY_FAMILY) {
+    const current = await getDirectoryById(recordId);
+    if (!current) return;
+    await upsertDirectory({ ...current, ...patch });
+    return;
+  }
+  if (familyHash === DOCUMENT_FAMILY) {
+    const current = await getDocumentById(recordId);
+    if (!current) return;
+    await upsertDocument({ ...current, ...patch });
+  }
+}
+
 /**
  * Push all pending writes to the backend then clear them locally.
  */
@@ -165,9 +200,11 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       result = await syncRecords({
         owner_npub: ownerNpub,
         records: envelopes,
+        checkout_policy_config: options.checkoutPolicyConfig,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      const punctuatedReason = /[.!?]$/.test(reason) ? reason : `${reason}.`;
       flightDeckLog('error', 'sync', 'pending write batch failed', {
         ownerNpub,
         batchNumber: Math.floor(offset / WRITE_BATCH_SIZE) + 1,
@@ -180,7 +217,8 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       });
       throw new Error(
         `Pending write sync failed for batch ${Math.floor(offset / WRITE_BATCH_SIZE) + 1} `
-        + `(${batch.length} records, ${pushed}/${pending.length} flushed): ${reason}`
+        + `(${batch.length} records, ${pushed}/${pending.length} flushed): ${punctuatedReason} `
+        + `Batch records: ${batch.map((pendingWrite) => describePendingWriteForError(pendingWrite, options)).join('; ')}`
       );
     }
 
@@ -192,6 +230,16 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
       for (const rej of result.rejected) {
         if (rej.record_id) {
           rejectedIds.add(rej.record_id);
+          await markLockManagedWriteState(
+            rej.record_id,
+            rej.record_family_hash || batch.find((entry) => entry.record_id === rej.record_id)?.record_family_hash,
+            {
+              sync_status: 'failed',
+              coedit_state: rej.code === 'prior_version_mismatch' ? 'conflicted' : 'rejected',
+              conflict_reason: rej.code || rej.reason || null,
+            },
+            options,
+          );
         } else {
           hasUnscopedRejection = true;
         }
@@ -214,6 +262,17 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
         deferredCount: deferredIds.size,
         deferredRecordIds: [...deferredIds],
       });
+      for (const deferredRecordId of deferredIds) {
+        await markLockManagedWriteState(
+          deferredRecordId,
+          batch.find((entry) => entry.record_id === deferredRecordId)?.record_family_hash,
+          {
+            coedit_state: 'deferred',
+            conflict_reason: null,
+          },
+          options,
+        );
+      }
     }
 
     let removedInBatch = 0;
@@ -260,10 +319,18 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
   const totalFamilies = families.length;
   const pendingWrites = await getPendingWrites();
   const pendingVersionByRecordId = new Map();
+  const pendingWritesByFamilyRecord = new Map();
   for (const pendingWrite of pendingWrites) {
     const recordId = String(pendingWrite?.record_id ?? pendingWrite?.envelope?.record_id ?? '').trim();
     if (!recordId) continue;
+    const pendingFamily = String(pendingWrite?.record_family_hash ?? pendingWrite?.envelope?.record_family_hash ?? '').trim();
     const pendingVersion = Number(pendingWrite?.envelope?.version ?? 0) || 0;
+    if (pendingFamily) {
+      const key = `${pendingFamily}\u0000${recordId}`;
+      const rows = pendingWritesByFamilyRecord.get(key) || [];
+      rows.push(pendingWrite);
+      pendingWritesByFamilyRecord.set(key, rows);
+    }
     if (pendingVersion <= 0) continue;
     const existingPendingVersion = pendingVersionByRecordId.get(recordId) || 0;
     if (pendingVersion > existingPendingVersion) {
@@ -324,16 +391,34 @@ export async function pullRecordsForFamilies(ownerNpub, viewerNpub = ownerNpub, 
         const recordId = String(record?.record_id || '').trim();
         const inboundVersion = Number(record?.version ?? 0) || 0;
         const pendingVersion = pendingVersionByRecordId.get(recordId) || 0;
-        if (pendingVersion > 0 && inboundVersion > 0 && inboundVersion <= pendingVersion) {
+        const lockManaged = isFlightDeckCheckoutRequiredRecordFamily(family, options.checkoutPolicyConfig);
+        if (
+          pendingVersion > 0
+          && inboundVersion > 0
+          && (
+            (!lockManaged && inboundVersion <= pendingVersion)
+            || (lockManaged && inboundVersion < pendingVersion)
+          )
+        ) {
           flightDeckLog('debug', 'sync', 'skipping inbound record older/equal to local pending write', {
             family,
             recordId,
             inboundVersion,
             pendingVersion,
+            lockManaged,
           });
           continue;
         }
         await materializeRecordForFamily(family, record);
+        if (lockManaged && recordId && inboundVersion > 0) {
+          const pendingRows = pendingWritesByFamilyRecord.get(`${family}\u0000${recordId}`) || [];
+          for (const pendingRow of pendingRows) {
+            const pendingRowVersion = Number(pendingRow?.envelope?.version ?? 0) || 0;
+            if (pendingRowVersion > 0 && pendingRowVersion <= inboundVersion && pendingRow?.row_id != null) {
+              await removePendingWrite(pendingRow.row_id);
+            }
+          }
+        }
         appliedCount++;
         if ((record.updated_at ?? '') > latestApplied) latestApplied = record.updated_at ?? '';
       } catch (error) {
@@ -518,11 +603,28 @@ export async function runSync(ownerNpub, viewerNpub = ownerNpub, onProgress, opt
 
   if (onProgress) onProgress({ phase: 'checking' });
 
-  const pushResult = await flushPendingWrites(ownerNpub, onProgress, options);
+  let pushResult = { pushed: 0 };
+  let pushError = null;
+  try {
+    pushResult = await flushPendingWrites(ownerNpub, onProgress, options);
+  } catch (error) {
+    pushError = error;
+    if (options.forceFull !== true) throw error;
+    flightDeckLog('warn', 'sync', 'push failed during forced sync; continuing pull to reconcile accepted writes', {
+      ownerNpub,
+      viewerNpub,
+      error: error?.message || String(error),
+    });
+  }
 
   if (options.forceFull === true) {
     if (onProgress) onProgress({ phase: 'pulling', completedFamilies: 0, totalFamilies: DEFAULT_FAMILIES.length, currentFamily: null, currentFamilyHash: null, pulled: 0, heartbeat: false });
     const pullResult = await pullRecords(ownerNpub, viewerNpub, onProgress, options);
+    if (pushError) {
+      const remainingPending = await getPendingWrites();
+      if (remainingPending.length > 0) throw pushError;
+      pushError = null;
+    }
 
     if (onProgress) onProgress({ phase: 'applying' });
     const pruneResult = pullResult.pulled > 0

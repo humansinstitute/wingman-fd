@@ -537,6 +537,8 @@ export const scopesManagerMixin = {
       this.error = 'Documents must have a scope.';
       return;
     }
+    this.assertCanMutateLockManagedRecord(doc, recordFamilyHash('document'));
+    await this.ensureLockManagedCheckout(doc, recordFamilyHash('document'), { intent: 'scope' });
     const scopeAssignment = this.buildScopeAssignment(scopeId);
     const previousScopeGroupIds = doc.scope_id ? this.getResolvedScopePolicyGroupIds(doc.scope_id) : [];
     const patch = scopeId
@@ -570,13 +572,15 @@ export const scopesManagerMixin = {
     }));
     await upsertDocument(updated);
     this.patchDocumentLocal(updated);
-    const envelope = await outboundDocument({
+    const envelope = await this.buildManagedDocumentEnvelope({
       ...updated,
       group_ids: updated.group_ids,
       previous_version: doc.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
-    });
+      write_group_ref: typeof this.getPreferredDocWriteGroupRef === 'function'
+        ? this.getPreferredDocWriteGroupRef(updated)
+        : getPreferredRecordWriteGroupForStore(this, updated),
+    }, doc, { intent: 'scope' });
     await addPendingWrite({
       record_id: updated.record_id,
       record_family_hash: envelope.record_family_hash,
@@ -607,6 +611,8 @@ export const scopesManagerMixin = {
       this.error = 'Folders must have a scope.';
       return;
     }
+    this.assertCanMutateLockManagedRecord(dir, recordFamilyHash('directory'));
+    await this.ensureLockManagedCheckout(dir, recordFamilyHash('directory'), { intent: 'scope' });
     const scopeAssignment = this.buildScopeAssignment(scopeId);
     const previousScopeGroupIds = dir.scope_id ? this.getResolvedScopePolicyGroupIds(dir.scope_id) : [];
     const patch = scopeId
@@ -708,14 +714,16 @@ export const scopesManagerMixin = {
   async queueDirectoryRecord(row, previous = null) {
     await upsertDirectory(row);
     this.patchDirectoryLocal(row);
-    const envelope = await outboundDirectory({
+    const envelope = await this.buildManagedDirectoryEnvelope({
       ...row,
       group_ids: row.group_ids,
       version: row.version ?? 1,
       previous_version: previous?.version ?? 0,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, row),
-    });
+      write_group_ref: typeof this.getPreferredDocWriteGroupRef === 'function'
+        ? this.getPreferredDocWriteGroupRef(row)
+        : getPreferredRecordWriteGroupForStore(this, row),
+    }, previous || row, { intent: 'scope' });
     await addPendingWrite({
       record_id: row.record_id,
       record_family_hash: recordFamilyHash('directory'),
@@ -984,6 +992,8 @@ export const scopesManagerMixin = {
   },
 
   async repairScopedDocumentRecord(item, previousScopeGroupIds = [], nextScope = null) {
+    this.assertCanMutateLockManagedRecord(item, recordFamilyHash('document'));
+    await this.ensureLockManagedCheckout(item, recordFamilyHash('document'), { intent: 'scope' });
     const patch = this.buildScopedPolicyRepairPatch(item, {
       scopeId: nextScope?.record_id || item.scope_id,
       previousScopeGroupIds,
@@ -1000,7 +1010,7 @@ export const scopesManagerMixin = {
     }));
     await upsertDocument(updated);
     this.patchDocumentLocal(updated);
-    const envelope = await outboundDocument({
+    const envelope = await this.buildManagedDocumentEnvelope({
       record_id: updated.record_id,
       owner_npub: updated.owner_npub,
       title: updated.title,
@@ -1018,8 +1028,10 @@ export const scopesManagerMixin = {
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
-    });
+      write_group_ref: typeof this.getPreferredDocWriteGroupRef === 'function'
+        ? this.getPreferredDocWriteGroupRef(updated)
+        : getPreferredRecordWriteGroupForStore(this, updated),
+    }, item, { intent: 'scope' });
     await addPendingWrite({
       record_id: updated.record_id,
       record_family_hash: envelope.record_family_hash,
@@ -1029,6 +1041,8 @@ export const scopesManagerMixin = {
   },
 
   async repairScopedDirectoryRecord(item, previousScopeGroupIds = [], nextScope = null) {
+    this.assertCanMutateLockManagedRecord(item, recordFamilyHash('directory'));
+    await this.ensureLockManagedCheckout(item, recordFamilyHash('directory'), { intent: 'scope' });
     const patch = this.buildScopedPolicyRepairPatch(item, {
       scopeId: nextScope?.record_id || item.scope_id,
       previousScopeGroupIds,
@@ -1045,7 +1059,7 @@ export const scopesManagerMixin = {
     }));
     await upsertDirectory(updated);
     this.patchDirectoryLocal(updated);
-    const envelope = await outboundDirectory({
+    const envelope = await this.buildManagedDirectoryEnvelope({
       record_id: updated.record_id,
       owner_npub: updated.owner_npub,
       title: updated.title,
@@ -1062,8 +1076,10 @@ export const scopesManagerMixin = {
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
-    });
+      write_group_ref: typeof this.getPreferredDocWriteGroupRef === 'function'
+        ? this.getPreferredDocWriteGroupRef(updated)
+        : getPreferredRecordWriteGroupForStore(this, updated),
+    }, item, { intent: 'scope' });
     await addPendingWrite({
       record_id: updated.record_id,
       record_family_hash: envelope.record_family_hash,
@@ -1113,6 +1129,8 @@ export const scopesManagerMixin = {
   },
 
   async assignScopeToLegacyDocumentRecord(item, scopeId) {
+    this.assertCanMutateLockManagedRecord(item, recordFamilyHash('document'));
+    await this.ensureLockManagedCheckout(item, recordFamilyHash('document'), { intent: 'scope' });
     const patch = this.buildLegacyDocScopeAssignment(item, scopeId);
     if (!patch?.scope_id) return false;
     const updated = toRaw(this.normalizeDocumentRowGroupRefs({
@@ -1130,7 +1148,7 @@ export const scopesManagerMixin = {
         throw new Error(`Document scope repair is missing group keys: ${missingGroupRefs.join(', ')}`);
       }
     }
-    const envelope = await outboundDocument({
+    const envelope = await this.buildManagedDocumentEnvelope({
       record_id: updated.record_id,
       owner_npub: updated.owner_npub,
       title: updated.title,
@@ -1148,8 +1166,10 @@ export const scopesManagerMixin = {
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
-    });
+      write_group_ref: typeof this.getPreferredDocWriteGroupRef === 'function'
+        ? this.getPreferredDocWriteGroupRef(updated)
+        : getPreferredRecordWriteGroupForStore(this, updated),
+    }, item, { intent: 'scope' });
     await addPendingWrite({
       record_id: updated.record_id,
       record_family_hash: envelope.record_family_hash,
@@ -1159,6 +1179,8 @@ export const scopesManagerMixin = {
   },
 
   async assignScopeToLegacyDirectoryRecord(item, scopeId) {
+    this.assertCanMutateLockManagedRecord(item, recordFamilyHash('directory'));
+    await this.ensureLockManagedCheckout(item, recordFamilyHash('directory'), { intent: 'scope' });
     const patch = this.buildLegacyDocScopeAssignment(item, scopeId);
     if (!patch?.scope_id) return false;
     const updated = toRaw(this.normalizeDirectoryRowGroupRefs({
@@ -1176,7 +1198,7 @@ export const scopesManagerMixin = {
         throw new Error(`Folder scope repair is missing group keys: ${missingGroupRefs.join(', ')}`);
       }
     }
-    const envelope = await outboundDirectory({
+    const envelope = await this.buildManagedDirectoryEnvelope({
       record_id: updated.record_id,
       owner_npub: updated.owner_npub,
       title: updated.title,
@@ -1193,8 +1215,10 @@ export const scopesManagerMixin = {
       version: updated.version,
       previous_version: item.version ?? 1,
       signature_npub: this.signingNpub,
-      write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
-    });
+      write_group_ref: typeof this.getPreferredDocWriteGroupRef === 'function'
+        ? this.getPreferredDocWriteGroupRef(updated)
+        : getPreferredRecordWriteGroupForStore(this, updated),
+    }, item, { intent: 'scope' });
     await addPendingWrite({
       record_id: updated.record_id,
       record_family_hash: envelope.record_family_hash,

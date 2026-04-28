@@ -4,6 +4,10 @@ import { RecordManager } from '@superbased/core/records';
 
 import { getGroupKey } from '../crypto/group-keys.js';
 import { buildFlightDeckIdentityContext } from './identity-context.js';
+import {
+  normalizeFlightDeckRecordCheckoutPolicyConfig,
+  stripCheckoutForOptimisticWrite,
+} from '../record-checkout-policy.js';
 
 function normalizeBaseUrl(baseUrl) {
   return String(baseUrl || '').trim().replace(/\/+$/, '');
@@ -94,6 +98,7 @@ async function buildCompatibilitySyncRequest({
   records,
   identityContext,
   baseUrl,
+  checkoutPolicyConfig,
 }) {
   const identityFields = buildIdentityFields(identityContext);
   const deferredRecordIds = new Set();
@@ -115,7 +120,7 @@ async function buildCompatibilitySyncRequest({
 
   const sendableRecords = records
     .filter((record) => !deferredRecordIds.has(record.record_id))
-    .map(stripHelperFields);
+    .map((record) => stripHelperFields(stripCheckoutForOptimisticWrite(record, checkoutPolicyConfig)));
   const proofBody = {
     owner_npub: workspaceServiceNpub,
     workspace_service_npub: workspaceServiceNpub,
@@ -154,6 +159,7 @@ export async function buildFlightDeckSyncRequest({
   records = [],
   signingNpub = null,
   baseUrl = '',
+  checkoutPolicyConfig = null,
 } = {}) {
   const workspaceServiceNpub = String(ownerNpub || '').trim();
   if (!workspaceServiceNpub) throw new Error('owner_npub is required for record sync');
@@ -170,6 +176,7 @@ export async function buildFlightDeckSyncRequest({
 
   const copiedRecords = records.map((record) => copyRecordForSync(record, workspaceServiceNpub));
   const identityContext = buildIdentityContext({ ownerNpub: workspaceServiceNpub, signingNpub });
+  const policyConfig = normalizeFlightDeckRecordCheckoutPolicyConfig(checkoutPolicyConfig);
 
   if (hasNonOwnerRecordWithoutWriteGroup(copiedRecords)) {
     return buildCompatibilitySyncRequest({
@@ -177,13 +184,15 @@ export async function buildFlightDeckSyncRequest({
       records: copiedRecords,
       identityContext,
       baseUrl,
+      checkoutPolicyConfig: policyConfig,
     });
   }
 
   const recordManager = buildRecordManager(baseUrl);
-  return recordManager.buildSyncRequest({
+  return recordManager.buildCheckoutAwareSyncRequest({
     records: copiedRecords,
     identityContext,
     deferMissingGroupKeys: true,
+    checkoutPolicy: policyConfig,
   });
 }

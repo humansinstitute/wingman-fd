@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchRecordHistory, syncRecords } from '../src/api.js';
+import { getPendingWrites, removePendingWrite } from '../src/db.js';
 import {
   pullRecordsForFamilies,
   pruneOnLogin,
@@ -132,6 +133,11 @@ function createStore(overrides = {}) {
     recordStatusWriteGroupRef: '',
     recordStatusWriteGroupLabel: '',
     recordStatusWriteGroupKeyLoaded: false,
+    pendingWritesModalOpen: false,
+    pendingWritesBusy: false,
+    pendingWritesError: null,
+    pendingWritesNotice: '',
+    pendingWriteDiagnostics: [],
     syncQuarantineError: null,
     syncQuarantineNotice: '',
     syncQuarantineBusy: false,
@@ -292,6 +298,91 @@ describe('record status actions', () => {
     expect(envelope.version).toBe(4);
     expect(envelope.previous_version).toBe(3);
     expect(envelope.channel_group_ids).toEqual(['group-1']);
+  });
+});
+
+describe('pending write diagnostics', () => {
+  it('shows checkout-required pending writes that are missing checkout metadata', async () => {
+    const documentFamilyHash = getSyncFamilyHash('document');
+    getPendingWrites.mockResolvedValueOnce([
+      {
+        row_id: 7,
+        record_id: 'doc-1',
+        record_family_hash: documentFamilyHash,
+        created_at: '2026-04-25T06:54:00.000Z',
+        envelope: {
+          record_id: 'doc-1',
+          record_family_hash: documentFamilyHash,
+          version: 2,
+          previous_version: 1,
+        },
+      },
+    ]);
+    const store = createStore({
+      documents: [{
+        record_id: 'doc-1',
+        title: 'Forked local document',
+      }],
+    });
+
+    await store.refreshPendingWriteDiagnostics();
+
+    expect(store.pendingWritesError).toBeNull();
+    expect(store.pendingWriteDiagnostics).toHaveLength(1);
+    expect(store.pendingWriteDiagnostics[0]).toMatchObject({
+      rowId: 7,
+      recordId: 'doc-1',
+      familyId: 'document',
+      title: 'Forked local document',
+      policy: 'checkout_required',
+      checkoutMissing: true,
+      syncBlocker: 'checkout_required write is missing checkout_id',
+    });
+  });
+
+  it('keeps optimistic pending writes unblocked by default', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    getPendingWrites.mockResolvedValueOnce([
+      {
+        row_id: 8,
+        record_id: 'task-1',
+        record_family_hash: taskFamilyHash,
+        envelope: {
+          record_id: 'task-1',
+          record_family_hash: taskFamilyHash,
+          version: 3,
+          previous_version: 2,
+        },
+      },
+    ]);
+    const store = createStore({
+      tasks: [{
+        record_id: 'task-1',
+        title: 'Task row',
+      }],
+    });
+
+    await store.refreshPendingWriteDiagnostics();
+
+    expect(store.pendingWriteDiagnostics[0]).toMatchObject({
+      rowId: 8,
+      recordId: 'task-1',
+      familyId: 'task',
+      policy: 'optimistic_write',
+      checkoutMissing: false,
+      syncBlocker: '',
+    });
+  });
+
+  it('can discard a queued write without deleting the local record row', async () => {
+    getPendingWrites.mockResolvedValueOnce([]);
+    const refreshSyncStatus = vi.fn().mockResolvedValue(undefined);
+    const store = createStore({ refreshSyncStatus });
+
+    await store.discardPendingWrite(7);
+
+    expect(removePendingWrite).toHaveBeenCalledWith(7);
+    expect(refreshSyncStatus).toHaveBeenCalledWith({ refreshUnread: false });
   });
 });
 

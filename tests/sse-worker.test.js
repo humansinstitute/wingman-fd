@@ -248,6 +248,9 @@ describe('SSE worker message protocol', () => {
       backendUrl: 'https://tower.example.com',
       token: 'base64encodedNip98Token',
       workspaceDbKey: 'ws-db-key',
+      options: {
+        checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } },
+      },
     };
 
     expect(message.type).toBe('sync-worker:sse-connect');
@@ -256,6 +259,25 @@ describe('SSE worker message protocol', () => {
     expect(message.backendUrl).toBeTruthy();
     expect(message.token).toBeTruthy();
     expect(message.workspaceDbKey).toBeTruthy();
+    expect(message.options.checkoutPolicyConfig.familySuffixes.task).toBe('checkout_required');
+  });
+
+  it('sync-worker:start-flush-timer message carries checkout policy config', () => {
+    const message = {
+      type: 'sync-worker:start-flush-timer',
+      ownerNpub: 'npub1owner...',
+      backendUrl: 'https://tower.example.com',
+      workspaceDbKey: 'ws-db-key',
+      options: {
+        checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } },
+      },
+    };
+
+    expect(message.type).toBe('sync-worker:start-flush-timer');
+    expect(message.ownerNpub).toBeTruthy();
+    expect(message.backendUrl).toBeTruthy();
+    expect(message.workspaceDbKey).toBeTruthy();
+    expect(message.options.checkoutPolicyConfig.familySuffixes.task).toBe('checkout_required');
   });
 
   it('SSE status messages have the correct type', () => {
@@ -308,6 +330,20 @@ describe('SSE record-changed event parsing', () => {
     expect(data.record_id).toBe('rec-001');
     expect(data.version).toBe(3);
     expect(data.record_state).toBe('active');
+  });
+
+  it('accepts record_family_hash as the stale family field', () => {
+    const eventData = JSON.stringify({
+      record_family_hash: 'comment_abc123',
+      record_id: 'comment-001',
+      version: 1,
+    });
+
+    let data;
+    try { data = JSON.parse(eventData); } catch { data = null; }
+    const familyHash = String(data?.family_hash || data?.record_family_hash || '').trim();
+
+    expect(familyHash).toBe('comment_abc123');
   });
 
   it('silently ignores malformed JSON', () => {

@@ -100,6 +100,8 @@ export function selectPreferredWritableGroupRef(input = {}) {
   const candidateDeliveryGroupIds = deliveryGroupIds.filter(isAllowed);
   const candidateScopePolicyGroupIds = scopePolicyGroupIds.filter(isAllowed);
   const candidateWriteShareGroupIds = writeShareGroupIds.filter(isAllowed);
+  const writableCandidateSet = new Set(candidateWriteShareGroupIds);
+  const hasWritableCandidates = writableCandidateSet.size > 0;
   const explicitWriteGroupId = normalizeResolvedGroupRefs([input.writeGroupId], resolveGroupId)
     .find((groupId) => isAllowed(groupId)) || null;
   const boardGroupId = normalizeResolvedGroupRefs([input.boardGroupId], resolveGroupId)
@@ -115,17 +117,25 @@ export function selectPreferredWritableGroupRef(input = {}) {
   ].filter(Boolean);
 
   for (const groupId of normalizeResolvedGroupRefs(candidates, resolveGroupId)) {
+    if (hasWritableCandidates && !writableCandidateSet.has(groupId)) continue;
     if (hasKey(groupId)) return groupId;
   }
 
   const fallback = normalizeResolvedGroupRefs([
-    explicitWriteGroupId,
-    boardGroupId,
-    ...candidateWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
-    ...candidateScopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
-    ...candidateDeliveryGroupIds,
-    ...candidateScopePolicyGroupIds,
-    ...candidateWriteShareGroupIds,
+    ...(hasWritableCandidates
+      ? [
+          ...candidateWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
+          ...candidateWriteShareGroupIds,
+        ]
+      : [
+          explicitWriteGroupId,
+          boardGroupId,
+          ...candidateWriteShareGroupIds.filter((groupId) => deliverySet.has(groupId)),
+          ...candidateScopePolicyGroupIds.filter((groupId) => deliverySet.has(groupId)),
+          ...candidateDeliveryGroupIds,
+          ...candidateScopePolicyGroupIds,
+          ...candidateWriteShareGroupIds,
+        ]),
   ], resolveGroupId)[0] || null;
 
   if (fallback) return fallback;
@@ -1169,13 +1179,27 @@ export const taskBoardStateMixin = {
         .filter(Boolean))];
     }
 
-    return [...new Set(candidateGroups
-      .filter((group) => {
-        if (String(group?.private_member_npub || '').trim() === viewerNpub) return true;
-        return Array.isArray(group?.member_npubs) && group.member_npubs.includes(viewerNpub);
-      })
-      .map((group) => resolveGroupRef(group?.group_id || group?.group_npub))
-      .filter(Boolean))];
+    const sharedRefs = [];
+    const privateRefs = [];
+    const seen = new Set();
+
+    for (const group of candidateGroups) {
+      const isViewerPrivate = String(group?.private_member_npub || '').trim() === viewerNpub;
+      const hasMembership = Array.isArray(group?.member_npubs) && group.member_npubs.includes(viewerNpub);
+      if (!isViewerPrivate && !hasMembership) continue;
+
+      const groupRef = resolveGroupRef(group?.group_id || group?.group_npub);
+      if (!groupRef || seen.has(groupRef)) continue;
+      seen.add(groupRef);
+
+      if (isViewerPrivate) {
+        privateRefs.push(groupRef);
+      } else {
+        sharedRefs.push(groupRef);
+      }
+    }
+
+    return [...sharedRefs, ...privateRefs];
   },
 
   getPreferredChannelWriteGroup(channel) {

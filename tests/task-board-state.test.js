@@ -196,6 +196,40 @@ describe('getPreferredChannelWriteGroup', () => {
   });
 });
 
+describe('getActorWritableGroupRefs', () => {
+  it('prioritizes shared groups before viewer-private group for delegated users', () => {
+    const store = {
+      session: { npub: 'npub1viewer' },
+      workspaceOwnerNpub: 'npub1workspace_service',
+      groups: [],
+      currentWorkspaceContentGroups: [
+        {
+          group_id: 'group-private-viewer',
+          private_member_npub: 'npub1viewer',
+          member_npubs: ['npub1viewer'],
+        },
+        {
+          group_id: 'group-shared-a',
+          member_npubs: ['npub1viewer', 'npub1other'],
+        },
+        {
+          group_id: 'group-shared-b',
+          member_npubs: ['npub1viewer'],
+        },
+      ],
+      resolveGroupId(ref) {
+        return String(ref || '').trim() || null;
+      },
+    };
+
+    expect(taskBoardStateMixin.getActorWritableGroupRefs.call(store)).toEqual([
+      'group-shared-a',
+      'group-shared-b',
+      'group-private-viewer',
+    ]);
+  });
+});
+
 describe('selectPreferredWritableGroupRef', () => {
   it('keeps full delivery separate from loaded write authority selection', () => {
     const identity = createGroupIdentity();
@@ -222,6 +256,36 @@ describe('selectPreferredWritableGroupRef', () => {
       groupIds: ['g-hidden'],
       allowedGroupIds: ['g1', 'g2'],
     })).toBeNull();
+  });
+
+  it('does not select explicit writeGroupId when it is non-writable and writable candidates exist', () => {
+    const result = selectPreferredWritableGroupRef({
+      writeGroupId: 'g-private',
+      groupIds: ['g-private', 'g-shared'],
+      scopePolicyGroupIds: ['g-private', 'g-shared'],
+      shares: [
+        { type: 'group', group_id: 'g-private', access: 'read' },
+        { type: 'group', group_id: 'g-shared', access: 'write' },
+      ],
+      hasKey: () => true,
+    });
+
+    expect(result).toBe('g-shared');
+  });
+
+  it('does not select boardGroupId when it is non-writable and writable candidates exist', () => {
+    const result = selectPreferredWritableGroupRef({
+      boardGroupId: 'g-private',
+      groupIds: ['g-private', 'g-shared'],
+      scopePolicyGroupIds: ['g-private', 'g-shared'],
+      shares: [
+        { type: 'group', group_id: 'g-private', access: 'read' },
+        { type: 'group', group_id: 'g-shared', access: 'write' },
+      ],
+      hasKey: () => true,
+    });
+
+    expect(result).toBe('g-shared');
   });
 });
 

@@ -271,6 +271,28 @@ describe('docs-manager pure utilities', () => {
       expect(result.group_ids).toEqual(['g-scope', 'g-direct']);
       expect(result.write_group_id).toBe('g-scope');
     });
+
+    it('filters inaccessible share and group refs when allowedGroupIds are provided', () => {
+      const result = normalizeDocAccessRow({
+        group_ids: ['g-allowed', 'g-hidden'],
+        scope_policy_group_ids: ['g-allowed', 'g-hidden'],
+        write_group_id: 'g-hidden',
+        shares: [
+          { type: 'group', group_id: 'g-allowed', access: 'write' },
+          { type: 'group', group_id: 'g-hidden', access: 'write' },
+          { type: 'person', person_npub: 'npub1friend', via_group_id: 'g-hidden', access: 'read' },
+        ],
+      }, (value) => value, {
+        allowedGroupIds: ['g-allowed'],
+        hasKey: (groupId) => groupId === 'g-allowed',
+      });
+
+      expect(result.group_ids).toEqual(['g-allowed']);
+      expect(result.scope_policy_group_ids).toEqual(['g-allowed']);
+      expect(result.write_group_id).toBe('g-allowed');
+      expect(result.shares).toHaveLength(1);
+      expect(result.shares[0].group_id).toBe('g-allowed');
+    });
   });
 
   describe('getPreferredDocWriteGroupRef', () => {
@@ -372,6 +394,75 @@ describe('docs-manager pure utilities', () => {
         allowedGroupIds: ['g-private', 'g-shared', 'g-external'],
         hasKey: () => true,
       });
+      expect(result).toBe('g-shared');
+    });
+
+    it('ignores explicit write_group_id when it is not writable and writable candidates exist', () => {
+      const result = getPreferredDocWriteGroupRef({
+        write_group_id: 'g-private',
+        group_ids: ['g-private', 'g-shared'],
+        scope_policy_group_ids: ['g-private', 'g-shared'],
+        shares: [
+          { type: 'group', group_id: 'g-private', access: 'read' },
+          { type: 'group', group_id: 'g-shared', access: 'write' },
+        ],
+      }, {
+        allowedGroupIds: ['g-private', 'g-shared'],
+        hasKey: () => true,
+      });
+      expect(result).toBe('g-shared');
+    });
+
+    it('prefers actor-prioritized allowed groups over scope order when writable hints are absent', () => {
+      const result = getPreferredDocWriteGroupRef({
+        group_ids: ['g-private', 'g-shared', 'g-external'],
+        scope_policy_group_ids: ['g-private', 'g-shared', 'g-external'],
+        shares: [
+          { type: 'group', group_id: 'g-private', access: 'read' },
+          { type: 'group', group_id: 'g-shared', access: 'read' },
+          { type: 'group', group_id: 'g-external', access: 'read' },
+        ],
+      }, {
+        allowedGroupIds: ['g-shared', 'g-external', 'g-private'],
+        hasKey: () => true,
+      });
+
+      expect(result).toBe('g-shared');
+    });
+
+    it('does not pin to explicit private fallback when multiple allowed groups are available', () => {
+      const result = getPreferredDocWriteGroupRef({
+        write_group_id: 'g-private',
+        group_ids: ['g-private', 'g-shared', 'g-external'],
+        scope_policy_group_ids: ['g-private', 'g-shared', 'g-external'],
+        shares: [
+          { type: 'group', group_id: 'g-private', access: 'read' },
+          { type: 'group', group_id: 'g-shared', access: 'read' },
+          { type: 'group', group_id: 'g-external', access: 'read' },
+        ],
+      }, {
+        allowedGroupIds: ['g-shared', 'g-external', 'g-private'],
+        hasKey: () => true,
+      });
+
+      expect(result).toBe('g-shared');
+    });
+
+    it('does not pin to explicit private fallback when scope shares mark multiple groups writable', () => {
+      const result = getPreferredDocWriteGroupRef({
+        write_group_id: 'g-private',
+        group_ids: ['g-private', 'g-shared', 'g-external'],
+        scope_policy_group_ids: ['g-private', 'g-shared', 'g-external'],
+        shares: [
+          { type: 'group', group_id: 'g-private', access: 'write' },
+          { type: 'group', group_id: 'g-shared', access: 'write' },
+          { type: 'group', group_id: 'g-external', access: 'write' },
+        ],
+      }, {
+        allowedGroupIds: ['g-shared', 'g-external', 'g-private'],
+        hasKey: () => true,
+      });
+
       expect(result).toBe('g-shared');
     });
   });

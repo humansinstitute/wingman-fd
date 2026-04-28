@@ -132,6 +132,72 @@ describe('worker-only sync enforcement', () => {
     });
     expect(result).toEqual({ pushed: 5 });
   });
+
+  it('startWorkerFlushTimer sends checkout policy config to the worker runner', () => {
+    const messages = [];
+    class MockWorker {
+      addEventListener() {}
+      removeEventListener() {}
+      terminate() {}
+      postMessage(message) {
+        messages.push(message);
+      }
+    }
+
+    globalThis.Worker = MockWorker;
+
+    client.startWorkerFlushTimer(
+      'npub-owner',
+      'https://backend.example.com',
+      'workspace-db',
+      { checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } } },
+    );
+
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: 'sync-worker:start-flush-timer',
+      ownerNpub: 'npub-owner',
+      backendUrl: 'https://backend.example.com',
+      workspaceDbKey: 'workspace-db',
+      options: {
+        checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } },
+      },
+    }));
+  });
+
+  it('connectSSE sends checkout policy config to the worker runner', () => {
+    const messages = [];
+    class MockWorker {
+      addEventListener() {}
+      removeEventListener() {}
+      terminate() {}
+      postMessage(message) {
+        messages.push(message);
+      }
+    }
+
+    globalThis.Worker = MockWorker;
+
+    client.connectSSE(
+      'npub-owner',
+      'npub-viewer',
+      'https://backend.example.com',
+      'nip98-token',
+      'workspace-db',
+      { checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } } },
+    );
+
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: 'sync-worker:sse-connect',
+      ownerNpub: 'npub-owner',
+      viewerNpub: 'npub-viewer',
+      backendUrl: 'https://backend.example.com',
+      token: 'nip98-token',
+      workspaceDbKey: 'workspace-db',
+      options: {
+        checkoutPolicyConfig: { familySuffixes: { task: 'checkout_required' } },
+      },
+    }));
+  });
 });
 
 describe('automatic worker recovery', () => {

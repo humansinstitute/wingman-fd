@@ -55,6 +55,7 @@ import { decryptRecordPayload } from './translators/record-crypto.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import { outboundComment } from './translators/comments.js';
 import { getPreferredRecordWriteGroupForStore } from './preferred-write-group.js';
+import { resolveFlightDeckRecordCheckoutPolicy } from './record-checkout-policy.js';
 
 // ---------------------------------------------------------------------------
 // Mixin — methods and getters that use `this` (the Alpine store)
@@ -204,8 +205,99 @@ export const syncManagerMixin = {
     return getPendingWrites();
   },
 
+  async openPendingWritesModal() {
+    this.showAvatarMenu = false;
+    this.pendingWritesModalOpen = true;
+    await this.refreshPendingWriteDiagnostics();
+  },
+
+  closePendingWritesModal() {
+    this.pendingWritesModalOpen = false;
+    this.pendingWritesError = null;
+    this.pendingWritesNotice = '';
+  },
+
+  describePendingWriteRow(row) {
+    const envelope = row?.envelope || {};
+    const familyHash = String(row?.record_family_hash || envelope.record_family_hash || '').trim();
+    const family = getSyncFamily(familyHash);
+    const familyId = family?.id || familyHash || 'unknown';
+    const recordId = String(row?.record_id || envelope.record_id || '').trim();
+    const localRecord = this.getLocalStatusRecord(familyId, recordId);
+    const title = String(
+      localRecord?.title
+      || localRecord?.name
+      || localRecord?.subject
+      || localRecord?.body
+      || localRecord?.content
+      || ''
+    ).trim();
+    const policy = resolveFlightDeckRecordCheckoutPolicy(familyHash, this.recordCheckoutPolicyConfig, { recordId });
+    const checkoutId = String(envelope.checkout?.checkout_id || '').trim();
+    const version = Number(envelope.version ?? 0) || 0;
+    const previousVersion = Number(envelope.previous_version ?? 0) || 0;
+    const checkoutMissing = policy === 'checkout_required' && !checkoutId;
+    return {
+      rowId: row?.row_id ?? null,
+      recordId,
+      familyId,
+      familyHash,
+      familyLabel: family?.label || familyId,
+      title: title ? (title.length > 96 ? `${title.slice(0, 93)}...` : title) : '',
+      version,
+      previousVersion,
+      createdAt: row?.created_at || '',
+      policy,
+      checkoutId,
+      checkoutMissing,
+      syncBlocker: checkoutMissing
+        ? 'checkout_required write is missing checkout_id'
+        : '',
+    };
+  },
+
+  async refreshPendingWriteDiagnostics() {
+    this.pendingWritesBusy = true;
+    this.pendingWritesError = null;
+    try {
+      const rows = await getPendingWrites();
+      this.pendingWriteDiagnostics = rows
+        .map((row) => this.describePendingWriteRow(row))
+        .sort((left, right) => {
+          if (left.checkoutMissing !== right.checkoutMissing) return left.checkoutMissing ? -1 : 1;
+          return String(left.createdAt || '').localeCompare(String(right.createdAt || ''));
+        });
+      this.pendingWritesNotice = rows.length === 0 ? 'No pending writes.' : '';
+    } catch (error) {
+      this.pendingWritesError = error?.message || 'Failed to load pending writes.';
+    } finally {
+      this.pendingWritesBusy = false;
+    }
+  },
+
   async removeRecordStatusPendingWrite(rowId) {
     return removePendingWrite(rowId);
+  },
+
+  async discardPendingWrite(rowId) {
+    const id = Number(rowId);
+    if (!Number.isFinite(id)) return;
+    const confirmed = typeof window === 'undefined'
+      ? true
+      : window.confirm('Discard this queued local write? This only removes the pending sync envelope; the local record row is not deleted.');
+    if (!confirmed) return;
+    this.pendingWritesBusy = true;
+    this.pendingWritesError = null;
+    try {
+      await removePendingWrite(id);
+      this.pendingWritesNotice = `Discarded pending write row ${id}.`;
+      await this.refreshPendingWriteDiagnostics();
+      await this.refreshSyncStatus({ refreshUnread: false });
+    } catch (error) {
+      this.pendingWritesError = error?.message || 'Failed to discard pending write.';
+    } finally {
+      this.pendingWritesBusy = false;
+    }
   },
 
   async getRecordStatusRelatedComments(recordId, targetFamilyHash) {
@@ -418,7 +510,7 @@ export const syncManagerMixin = {
         board_group_id: effectiveLocalRecord.board_group_id || nextGroupIds[0] || null,
       });
       if (!writeGroupRef) throw new Error('Task is missing a writable group.');
-      return outboundTask({
+      const envelope = await outboundTask({
         ...effectiveLocalRecord,
         owner_npub: ownerNpub,
         board_group_id: writeGroupRef,
@@ -429,6 +521,9 @@ export const syncManagerMixin = {
         signature_npub: signatureNpub,
         write_group_ref: isOwnerWrite ? null : writeGroupRef,
       });
+      return typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
+        ? this.attachCheckoutRequiredCheckoutToEnvelope(effectiveLocalRecord, envelope, { intent: 'retry' })
+        : envelope;
     }
 
     if (familyId === 'document') {
@@ -442,7 +537,7 @@ export const syncManagerMixin = {
         ? this.getPreferredDocWriteGroupRef({ ...localRecord, shares, group_ids: groupIds })
         : (localRecord.write_group_id || groupIds?.[0] || null);
       if (!writeGroupRef) throw new Error('Document is missing a writable group.');
-      return outboundDocument({
+      return this.buildManagedDocumentEnvelope({
         ...localRecord,
         owner_npub: ownerNpub,
         shares,
@@ -451,7 +546,7 @@ export const syncManagerMixin = {
         previous_version: previousVersion,
         signature_npub: signatureNpub,
         write_group_ref: isOwnerWrite ? null : writeGroupRef,
-      });
+      }, localRecord, { intent: 'retry' });
     }
 
     if (familyId === 'directory') {
@@ -465,7 +560,7 @@ export const syncManagerMixin = {
         ? this.getPreferredDocWriteGroupRef({ ...localRecord, shares, group_ids: groupIds })
         : (localRecord.write_group_id || groupIds?.[0] || null);
       if (!writeGroupRef) throw new Error('Folder is missing a writable group.');
-      return outboundDirectory({
+      return this.buildManagedDirectoryEnvelope({
         ...localRecord,
         owner_npub: ownerNpub,
         shares,
@@ -474,7 +569,7 @@ export const syncManagerMixin = {
         previous_version: previousVersion,
         signature_npub: signatureNpub,
         write_group_ref: isOwnerWrite ? null : writeGroupRef,
-      });
+      }, localRecord, { intent: 'retry' });
     }
 
     if (familyId === 'channel') {
@@ -806,6 +901,7 @@ export const syncManagerMixin = {
       const syncResult = await syncRecords({
         owner_npub: this.workspaceOwnerNpub,
         records: [envelope, ...commentEnvelopes],
+        checkout_policy_config: this.recordCheckoutPolicyConfig,
       });
 
       const rejected = Array.isArray(syncResult?.rejected) ? syncResult.rejected : [];
@@ -993,6 +1089,7 @@ export const syncManagerMixin = {
       viewerNpub: this.session.npub,
       backendUrl: this.backendUrl,
       workspaceDbKey: this.workspaceDbKey,
+      checkoutPolicyConfig: this.recordCheckoutPolicyConfig || null,
     };
   },
 
@@ -1003,6 +1100,7 @@ export const syncManagerMixin = {
       viewerNpub: context.viewerNpub,
       backendUrl: context.backendUrl,
       workspaceDbKey: context.workspaceDbKey || context.ownerNpub,
+      checkoutPolicyConfig: context.checkoutPolicyConfig || null,
     });
   },
 
@@ -1123,7 +1221,11 @@ export const syncManagerMixin = {
       context.backendUrl,
       nip98Token,
       context.workspaceDbKey,
-      { force, reason },
+      {
+        force,
+        reason,
+        checkoutPolicyConfig: context.checkoutPolicyConfig,
+      },
     );
     return true;
   },
@@ -1233,7 +1335,9 @@ export const syncManagerMixin = {
     }
     // Start the independent worker flush timer for low-latency outbox delivery
     if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
-      startWorkerFlushTimer(this.workspaceOwnerNpub, this.backendUrl, this.workspaceDbKey);
+      startWorkerFlushTimer(this.workspaceOwnerNpub, this.backendUrl, this.workspaceDbKey, {
+        checkoutPolicyConfig: this.recordCheckoutPolicyConfig,
+      });
     }
     // Connect SSE for live refresh — the primary freshness path
     if (this.session?.npub && this.backendUrl && this.workspaceOwnerNpub) {
@@ -1464,6 +1568,7 @@ export const syncManagerMixin = {
         backendUrl: this.backendUrl,
         workspaceDbKey: this.workspaceDbKey,
         forceFull,
+        checkoutPolicyConfig: this.recordCheckoutPolicyConfig,
       });
       const hasRemoteDataChanges = (result?.pulled ?? 0) > 0 || (result?.pruned ?? 0) > 0;
       refreshUnread = refreshUnread || hasRemoteDataChanges;
@@ -1529,6 +1634,7 @@ export const syncManagerMixin = {
       const result = await flushOnly(this.workspaceOwnerNpub, null, {
         backendUrl: this.backendUrl,
         workspaceDbKey: this.workspaceDbKey,
+        checkoutPolicyConfig: this.recordCheckoutPolicyConfig,
       });
       // A successful flush proves connectivity — update lastSuccessAt so
       // ensureBackgroundSync doesn't show the "Catching up" overlay.
@@ -1655,6 +1761,7 @@ export const syncManagerMixin = {
       authMethod: this.session?.method || '',
       backendUrl: this.backendUrl,
       workspaceDbKey: this.workspaceDbKey,
+      checkoutPolicyConfig: this.recordCheckoutPolicyConfig,
     });
   },
 

@@ -36,6 +36,7 @@ let flushTimerId = null;
 let flushOwnerNpub = null;
 let flushBackendUrl = null;
 let flushWorkspaceDbKey = null;
+let flushCheckoutPolicyConfig = null;
 let flushInProgress = false; // guard against concurrent flushes
 const FLUSH_INTERVAL_MS = 2000;
 
@@ -45,6 +46,7 @@ let sseOwnerNpub = null;
 let sseViewerNpub = null;
 let sseBackendUrl = null;
 let sseWorkspaceDbKey = null;
+let sseCheckoutPolicyConfig = null;
 let sseConnectionKey = null;
 let sseConnectionState = 'disconnected';
 let sseLastEventId = null;
@@ -77,6 +79,7 @@ async function tickFlush() {
     await registerEchoEntries();
     const result = await flushPendingWrites(flushOwnerNpub, null, {
       workspaceDbKey: flushWorkspaceDbKey || flushOwnerNpub,
+      checkoutPolicyConfig: flushCheckoutPolicyConfig,
     });
     if (result.pushed > 0) {
       self.postMessage({ type: FLUSH_RESULT_TYPE, pushed: result.pushed });
@@ -89,11 +92,12 @@ async function tickFlush() {
   }
 }
 
-function startFlushTimer(ownerNpub, backendUrl, workspaceDbKey) {
+function startFlushTimer(ownerNpub, backendUrl, workspaceDbKey, options = {}) {
   stopFlushTimer();
   flushOwnerNpub = ownerNpub;
   flushBackendUrl = backendUrl;
   flushWorkspaceDbKey = workspaceDbKey;
+  flushCheckoutPolicyConfig = options.checkoutPolicyConfig || null;
   flushTimerId = setInterval(tickFlush, FLUSH_INTERVAL_MS);
 }
 
@@ -105,6 +109,7 @@ function stopFlushTimer() {
   flushOwnerNpub = null;
   flushBackendUrl = null;
   flushWorkspaceDbKey = null;
+  flushCheckoutPolicyConfig = null;
 }
 
 // --- Echo suppression ---
@@ -134,12 +139,13 @@ function cleanEchoSet() {
 
 // --- SSE client ---
 
-function buildSSEConnectionKey(ownerNpub, viewerNpub, backendUrl, workspaceDbKey) {
+function buildSSEConnectionKey(ownerNpub, viewerNpub, backendUrl, workspaceDbKey, checkoutPolicyConfig = null) {
   return JSON.stringify({
     ownerNpub,
     viewerNpub,
     backendUrl,
     workspaceDbKey: workspaceDbKey || ownerNpub,
+    checkoutPolicyConfig: checkoutPolicyConfig || null,
   });
 }
 
@@ -162,6 +168,7 @@ function closeSSE({ resetContext = false } = {}) {
     sseViewerNpub = null;
     sseBackendUrl = null;
     sseWorkspaceDbKey = null;
+    sseCheckoutPolicyConfig = null;
     sseConnectionKey = null;
     sseConnectionState = 'disconnected';
     sseLastEventId = null;
@@ -170,7 +177,13 @@ function closeSSE({ resetContext = false } = {}) {
 }
 
 function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey, options = {}) {
-  const connectionKey = buildSSEConnectionKey(ownerNpub, viewerNpub, backendUrl, workspaceDbKey);
+  const connectionKey = buildSSEConnectionKey(
+    ownerNpub,
+    viewerNpub,
+    backendUrl,
+    workspaceDbKey,
+    options.checkoutPolicyConfig || null,
+  );
   const force = Boolean(options?.force);
   const reason = String(options?.reason || 'connect');
   const hasActiveLifecycle = Boolean(eventSource || sseReconnectTimer)
@@ -197,6 +210,7 @@ function connectSSE(ownerNpub, viewerNpub, backendUrl, token, workspaceDbKey, op
   sseViewerNpub = viewerNpub;
   sseBackendUrl = backendUrl;
   sseWorkspaceDbKey = workspaceDbKey;
+  sseCheckoutPolicyConfig = options.checkoutPolicyConfig || null;
   sseConnectionKey = connectionKey;
 
   const sseUrl = new URL(`/api/v4/workspaces/${ownerNpub}/stream`, backendUrl);
@@ -311,8 +325,11 @@ function handleRecordChanged(event) {
   // Echo suppression
   if (isOwnEcho(data.record_id, data.version)) return;
 
+  const familyHash = String(data.family_hash || data.record_family_hash || '').trim();
+  if (!familyHash) return;
+
   // Collect stale family and debounce
-  sseStaleFamilies.add(data.family_hash);
+  sseStaleFamilies.add(familyHash);
   if (sseDebounceTimer) clearTimeout(sseDebounceTimer);
   sseDebounceTimer = setTimeout(flushSSEStaleFamilies, SSE_DEBOUNCE_MS);
 }
@@ -329,7 +346,10 @@ async function flushSSEStaleFamilies() {
       sseOwnerNpub,
       sseViewerNpub || sseOwnerNpub,
       families,
-      { workspaceDbKey: sseWorkspaceDbKey || sseOwnerNpub },
+      {
+        workspaceDbKey: sseWorkspaceDbKey || sseOwnerNpub,
+        checkoutPolicyConfig: sseCheckoutPolicyConfig,
+      },
     );
     postSSEStatus('pull-complete', { families });
   } catch (error) {
@@ -358,6 +378,7 @@ async function flushNow() {
     await registerEchoEntries();
     const result = await flushPendingWrites(flushOwnerNpub, null, {
       workspaceDbKey: flushWorkspaceDbKey || flushOwnerNpub,
+      checkoutPolicyConfig: flushCheckoutPolicyConfig,
     });
     if (result.pushed > 0) {
       self.postMessage({ type: FLUSH_RESULT_TYPE, pushed: result.pushed });
@@ -499,7 +520,12 @@ self.addEventListener('message', async (event) => {
     return;
   }
   if (message.type === START_FLUSH_TIMER_TYPE) {
-    startFlushTimer(message.ownerNpub, message.backendUrl, message.workspaceDbKey);
+    startFlushTimer(
+      message.ownerNpub,
+      message.backendUrl,
+      message.workspaceDbKey,
+      message.options || {},
+    );
     return;
   }
   if (message.type === STOP_FLUSH_TIMER_TYPE) {

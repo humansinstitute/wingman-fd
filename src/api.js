@@ -3,6 +3,7 @@
  * The UI never calls these directly; the worker or explicit user actions do.
  */
 
+import { SuperbasedClient } from '@superbased/core/client';
 import { createNip98AuthHeader, createNip98AuthHeaderForSecret } from './auth/nostr.js';
 import { getActiveSessionNpub } from './crypto/group-keys.js';
 import { getActiveWorkspaceKeySecretForAuth } from './crypto/workspace-keys.js';
@@ -81,6 +82,27 @@ async function signedFetch(path, { method = 'GET', body } = {}) {
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
+  });
+}
+
+function buildCoreApiClient() {
+  return new SuperbasedClient({
+    connection: { url: _baseUrl },
+    auth: {
+      kind: 'wingman-fd-api',
+      async getPublicNpub() {
+        return getActiveSessionNpub() || '';
+      },
+      async createNip98AuthHeader(requestUrl, method, body) {
+        return createApiAuthHeader(requestUrl, method, body ?? null);
+      },
+      async nip44EncryptToNpub() {
+        throw new Error('NIP-44 encryption is not available through the Flight Deck API bridge.');
+      },
+      async nip44DecryptFromNpub() {
+        throw new Error('NIP-44 decryption is not available through the Flight Deck API bridge.');
+      },
+    },
   });
 }
 
@@ -420,12 +442,21 @@ export async function fetchRecordsSummary(ownerNpub) {
 
 // --- Records sync ---
 
-export async function syncRecords({ owner_npub, records, signing_npub }) {
+export async function acquireRecordCheckout(input) {
+  return buildCoreApiClient().records.acquireCheckout(input);
+}
+
+export async function releaseRecordCheckout(input) {
+  return buildCoreApiClient().records.releaseCheckout(input);
+}
+
+export async function syncRecords({ owner_npub, records, signing_npub, checkout_policy_config }) {
   const syncRequest = await buildFlightDeckSyncRequest({
     ownerNpub: owner_npub,
     records,
     signingNpub: signing_npub,
     baseUrl: _baseUrl,
+    checkoutPolicyConfig: checkout_policy_config,
   });
   const deferredRecordIds = Array.isArray(syncRequest.deferred_record_ids)
     ? syncRequest.deferred_record_ids

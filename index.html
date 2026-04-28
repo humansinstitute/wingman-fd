@@ -192,6 +192,7 @@
           <button type="button" @click="$store.chat.showAgentConnect()">Agent Connect</button>
           <button type="button" @click="$store.chat.copyId()">Copy ID</button>
           <button type="button" @click="$store.chat.syncNow()">Sync Now</button>
+          <button type="button" @click="$store.chat.openPendingWritesModal()">Pending Writes</button>
           <button type="button" @click="$store.chat.navigateTo('settings')">Settings</button>
           <button type="button" @click="$store.chat.logout()">Log out</button>
         </div>
@@ -2365,18 +2366,39 @@
                     </div>
                   </div>
                   <div class="doc-editor-actions">
+                    <template x-if="$store.chat.hasSelectedDocCheckout">
+                      <span
+                        class="doc-checkout-pill"
+                        :title="$store.chat.selectedDocCheckoutLeaseLabel ? `Checkout held · ${$store.chat.selectedDocCheckoutLeaseLabel}` : 'Checkout held'"
+                      >
+                        <span>Checked out</span>
+                      </span>
+                    </template>
                     <span class="doc-sync-indicator" :title="$store.chat.docSyncStatusLabel">
                       <span class="doc-sync-dot" :class="$store.chat.docSyncStatusClass"></span>
                     </span>
-                    <button
-                      type="button"
-                      class="doc-icon-btn doc-mode-btn"
-                      :title="$store.chat.docEditorMode === 'preview' ? 'Preview mode' : ($store.chat.docEditorMode === 'block' ? 'Block edit mode' : 'Source mode')"
-                      :aria-label="$store.chat.docEditorMode === 'preview' ? 'Preview mode' : ($store.chat.docEditorMode === 'block' ? 'Block edit mode' : 'Source mode')"
-                      @click="$store.chat.toggleDocEditorMode()"
-                    >
-                      <span class="doc-code-toggle" x-text="$store.chat.docEditorMode === 'preview' ? 'Preview' : ($store.chat.docEditorMode === 'block' ? 'Edit' : 'Source')"></span>
-                    </button>
+                    <div class="doc-mode-switcher">
+                      <button
+                        type="button"
+                        class="doc-mode-chip"
+                        :class="{ 'doc-mode-chip-active': $store.chat.docEditorMode === 'preview' }"
+                        @click="$store.chat.setDocReadMode()"
+                      >Read</button>
+                      <button
+                        type="button"
+                        class="doc-mode-chip"
+                        :class="{ 'doc-mode-chip-active': $store.chat.docEditorMode !== 'preview' }"
+                        :disabled="$store.chat.docEditorMode === 'preview'
+                          ? (!$store.chat.canCurrentActorEditSelectedLockManagedRecord || $store.chat.selectedDocCheckoutSessionState?.acquireState === 'acquiring')
+                          : false"
+                        @click="$store.chat.docEditorMode === 'preview'
+                          ? $store.chat.enterSelectedDocEditMode('block')
+                          : $store.chat.saveAndExitSelectedDocEditMode()"
+                        x-text="$store.chat.docEditorMode === 'preview'
+                          ? ($store.chat.selectedDocCheckoutSessionState?.acquireState === 'acquiring' ? 'Checking out…' : 'Edit')
+                          : 'Save'"
+                      >Edit</button>
+                    </div>
                     <button
                       type="button"
                       class="doc-icon-btn"
@@ -2403,6 +2425,14 @@
                       <div class="doc-actions-popover" x-show="open" x-cloak x-transition>
                         <button type="button" @click="$store.chat.openDocScopeModal(); open = false">Scope</button>
                         <button type="button" @click="$store.chat.openDocMoveModal([$store.chat.selectedDocId]); open = false">Move doc</button>
+                        <button
+                          type="button"
+                          @click="$store.chat.docEditorMode === 'source'
+                            ? $store.chat.enterSelectedDocEditMode('block')
+                            : $store.chat.enterSelectedDocEditMode('source'); open = false"
+                        >
+                          <span x-text="$store.chat.docEditorMode === 'source' ? 'Block editor' : 'Source editor'"></span>
+                        </button>
                         <button
                           type="button"
                           @click="$store.chat.openRecordStatusModal({ familyId: 'document', recordId: $store.chat.selectedDocId, label: $store.chat.docEditorTitle || 'Document' }); open = false"
@@ -6661,7 +6691,7 @@
           </div>
         </div>
 
-        <div class="doc-modal-backdrop" x-show="$store.chat.recordStatusModalOpen" x-cloak @click.self="$store.chat.closeRecordStatusModal()">
+        <div class="doc-modal-backdrop record-status-modal-backdrop" x-show="$store.chat.recordStatusModalOpen" x-cloak @click.self="$store.chat.closeRecordStatusModal()">
           <div class="doc-modal-card record-status-modal">
             <div class="record-status-header">
               <div>
@@ -6736,6 +6766,60 @@
                 <span x-show="!$store.chat.recordStatusSyncBusy">Force submit</span>
                 <span x-show="$store.chat.recordStatusSyncBusy">Pushing...</span>
               </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-modal-backdrop record-status-modal-backdrop" x-show="$store.chat.pendingWritesModalOpen" x-cloak @click.self="$store.chat.closePendingWritesModal()">
+          <div class="doc-modal-card record-status-modal pending-writes-modal">
+            <div class="record-status-header">
+              <div>
+                <h3>Pending Writes</h3>
+                <p x-text="$store.chat.pendingWriteDiagnostics.length + ' queued local write' + ($store.chat.pendingWriteDiagnostics.length === 1 ? '' : 's')"></p>
+              </div>
+              <button type="button" class="modal-close" @click="$store.chat.closePendingWritesModal()">&times;</button>
+            </div>
+
+            <div class="record-status-body">
+              <p class="error-text" x-show="$store.chat.pendingWritesError" x-text="$store.chat.pendingWritesError"></p>
+              <p class="settings-success" x-show="$store.chat.pendingWritesNotice" x-text="$store.chat.pendingWritesNotice"></p>
+              <template x-if="$store.chat.pendingWritesBusy">
+                <p class="record-status-empty">Loading pending writes...</p>
+              </template>
+              <template x-if="!$store.chat.pendingWritesBusy && $store.chat.pendingWriteDiagnostics.length === 0">
+                <p class="record-status-empty">No pending writes.</p>
+              </template>
+              <div class="pending-write-list" x-show="!$store.chat.pendingWritesBusy && $store.chat.pendingWriteDiagnostics.length > 0">
+                <template x-for="row in $store.chat.pendingWriteDiagnostics" :key="row.rowId || row.recordId">
+                  <div class="pending-write-row" :class="{ 'pending-write-row-blocked': row.checkoutMissing }">
+                    <div class="pending-write-main">
+                      <div class="pending-write-title">
+                        <span x-text="row.title || row.recordId || 'Unknown record'"></span>
+                        <span class="pending-write-badge" x-show="row.checkoutMissing">Missing checkout</span>
+                      </div>
+                      <div class="pending-write-meta">
+                        <span x-text="row.familyLabel"></span>
+                        <code x-text="row.recordId"></code>
+                        <span x-text="'v' + row.version + ' / prev ' + row.previousVersion"></span>
+                      </div>
+                      <div class="pending-write-meta">
+                        <span x-text="row.policy"></span>
+                        <span x-text="row.checkoutId ? ('checkout ' + row.checkoutId) : 'no checkout_id'"></span>
+                      </div>
+                      <p class="pending-write-blocker" x-show="row.syncBlocker" x-text="row.syncBlocker"></p>
+                    </div>
+                    <div class="pending-write-actions">
+                      <button type="button" class="btn-cancel" @click="$store.chat.closePendingWritesModal(); $store.chat.openRecordStatusModal({ familyId: row.familyId, recordId: row.recordId, label: row.title || row.recordId })">Inspect</button>
+                      <button type="button" class="btn-danger" @click="$store.chat.discardPendingWrite(row.rowId)" :disabled="row.rowId == null">Discard queued write</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div class="record-status-actions">
+              <button type="button" class="btn-cancel" @click="$store.chat.refreshPendingWriteDiagnostics()" :disabled="$store.chat.pendingWritesBusy">Refresh</button>
+              <button type="button" class="btn-confirm" @click="$store.chat.syncNow()" :disabled="$store.chat.pendingWritesBusy">Sync now</button>
             </div>
           </div>
         </div>

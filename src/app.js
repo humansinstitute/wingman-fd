@@ -25,6 +25,13 @@ import { personsManagerMixin } from './persons-manager.js';
 import { opportunitiesManagerMixin } from './opportunities-manager.js';
 import { createShellState } from './shell-state.js';
 import {
+  checkoutErrorMessage,
+  describeCheckoutHolder,
+  formatLeaseRemaining,
+  isCheckoutHeld,
+} from './lock-managed-records.js';
+import { FLIGHT_DECK_RECORD_CHECKOUT_POLICY_CONFIG } from './record-checkout-policy.js';
+import {
   getTaskFlowInfo,
   buildAttachFlowPatch,
   buildDetachFlowPatch,
@@ -563,6 +570,8 @@ export function initApp() {
     docCommentReplyAudioDrafts: [],
     docAutosaveTimer: null,
     docAutosaveState: 'saved',
+    recordCheckoutPolicyConfig: FLIGHT_DECK_RECORD_CHECKOUT_POLICY_CONFIG,
+    lockManagedCheckoutSessions: {},
     showDocShareModal: false,
     docMoveScopePrompt: null,
     showDocMoveModal: false,
@@ -652,6 +661,11 @@ export function initApp() {
     recordStatusWriteGroupKeyLoaded: false,
     recordStatusDeliveryGroupSummary: '',
     recordStatusDeliveryGroupKeySummary: '',
+    pendingWritesModalOpen: false,
+    pendingWritesBusy: false,
+    pendingWritesError: null,
+    pendingWritesNotice: '',
+    pendingWriteDiagnostics: [],
     syncQuarantine: [],
     syncQuarantineBusy: false,
     syncQuarantineError: null,
@@ -1091,6 +1105,80 @@ export function initApp() {
       if (this.docAutosaveState === 'pending') return 'Autosave pending';
       if (this.docAutosaveState === 'saving') return 'Saving';
       return 'Saved';
+    },
+
+    get selectedDocRequiresCheckout() {
+      return this.selectedDocType === 'document'
+        && (
+          typeof this.isCheckoutRequiredRecordFamily === 'function'
+            ? this.isCheckoutRequiredRecordFamily(recordFamilyHash('document'), this.selectedDocument)
+            : false
+        );
+    },
+
+    get selectedDocIsLockManaged() {
+      return this.selectedDocRequiresCheckout;
+    },
+
+    get selectedDocCheckoutSessionState() {
+      const session = typeof this.getSelectedDocCheckoutSession === 'function'
+        ? this.getSelectedDocCheckoutSession()
+        : null;
+      const submittedVersion = Number(session?.submittedVersion ?? 0) || 0;
+      const localVersion = Number(this.selectedDocument?.version ?? 0) || 0;
+      if (
+        session
+        && isCheckoutHeld(session.checkout)
+        && submittedVersion > 0
+        && String(this.selectedDocument?.sync_status || '').trim() === 'synced'
+        && localVersion >= submittedVersion
+      ) {
+        return null;
+      }
+      return session;
+    },
+
+    get canCurrentActorEditSelectedLockManagedRecord() {
+      if (!this.selectedDocRequiresCheckout) return true;
+      return typeof this.canCurrentActorEditOwnerOnlyLockManagedRecord === 'function'
+        ? this.canCurrentActorEditOwnerOnlyLockManagedRecord()
+        : false;
+    },
+
+    get hasSelectedDocCheckout() {
+      return isCheckoutHeld(this.selectedDocCheckoutSessionState?.checkout);
+    },
+
+    get selectedDocCheckoutHolderLabel() {
+      const holder = describeCheckoutHolder(this.selectedDocCheckoutSessionState?.checkout);
+      return holder.userNpub || '';
+    },
+
+    get selectedDocCheckoutLeaseLabel() {
+      return formatLeaseRemaining(this.selectedDocCheckoutSessionState?.checkout);
+    },
+
+    get selectedDocPhaseOneStateTone() {
+      if (!this.selectedDocRequiresCheckout) return 'info';
+      if (!this.canCurrentActorEditSelectedLockManagedRecord) return 'blocked';
+      const classification = String(this.selectedDocCheckoutSessionState?.classification || '').trim();
+      if (classification) return 'blocked';
+      if (this.hasSelectedDocCheckout) return 'held';
+      return 'info';
+    },
+
+    get selectedDocPhaseOneStateLabel() {
+      if (!this.selectedDocRequiresCheckout) return '';
+      if (!this.canCurrentActorEditSelectedLockManagedRecord) {
+        return checkoutErrorMessage('edit_policy_forbidden');
+      }
+      const session = this.selectedDocCheckoutSessionState;
+      if (session?.message) return session.message;
+      if (this.hasSelectedDocCheckout) {
+        const lease = this.selectedDocCheckoutLeaseLabel;
+        return lease ? `Checkout held. ${lease}.` : 'Checkout held. You can edit this document.';
+      }
+      return 'Read mode. Acquire checkout to enter edit mode.';
     },
 
     // peopleProfilesManagerMixin applied via applyMixins (suggestions, profile resolution)
@@ -2985,10 +3073,13 @@ export function initApp() {
         signature_npub: this.signingNpub,
         write_group_ref: this.getPreferredRecordWriteGroup(updatedTask),
       });
+      const managedEnvelope = typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
+        ? await this.attachCheckoutRequiredCheckoutToEnvelope(updatedTask, envelope, { intent: 'edit' })
+        : envelope;
       await addPendingWrite({
         record_id: updatedTask.record_id,
-        record_family_hash: envelope.record_family_hash,
-        envelope,
+        record_family_hash: managedEnvelope.record_family_hash,
+        envelope: managedEnvelope,
       });
     },
 
@@ -3905,6 +3996,8 @@ export function initApp() {
       }
 
       for (const item of items) {
+        this.assertCanMutateLockManagedRecord(item, recordFamilyHash('document'));
+        await this.ensureLockManagedCheckout(item, recordFamilyHash('document'), { intent: 'delete' });
         const shares = this.getEffectiveDocShares(item);
         const now = new Date().toISOString();
         const nextVersion = (item.version ?? 1) + 1;
@@ -3922,7 +4015,7 @@ export function initApp() {
         await addPendingWrite({
           record_id: item.record_id,
           record_family_hash: recordFamilyHash('document'),
-          envelope: await outboundDocument({
+          envelope: await this.buildManagedDocumentEnvelope({
             record_id: item.record_id,
             owner_npub: ownerNpub,
             title: item.title,
@@ -3942,7 +4035,7 @@ export function initApp() {
             record_state: 'deleted',
             signature_npub: this.signingNpub,
             write_group_ref: this.getPreferredRecordWriteGroup(updated),
-          }),
+          }, item, { intent: 'delete' }),
         });
       }
 
@@ -4189,6 +4282,8 @@ export function initApp() {
         ? this.directories.find((entry) => entry.record_id === recordId)
         : this.documents.find((entry) => entry.record_id === recordId);
       if (!item) return;
+      this.assertCanMutateLockManagedRecord(item, recordFamilyHash(isDirectory ? 'directory' : 'document'));
+      await this.ensureLockManagedCheckout(item, recordFamilyHash(isDirectory ? 'directory' : 'document'), { intent: 'move' });
 
       const explicitShares = this.getExplicitDocShares(item);
       const inheritedShares = targetFolderId ? this.getInheritedDirectoryShares(targetFolderId) : [];
@@ -4239,7 +4334,7 @@ export function initApp() {
       }
 
       const envelope = isDirectory
-        ? await outboundDirectory({
+        ? await this.buildManagedDirectoryEnvelope({
           record_id: updated.record_id,
           owner_npub: ownerNpub,
           title: updated.title,
@@ -4257,8 +4352,8 @@ export function initApp() {
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
           write_group_ref: this.getPreferredRecordWriteGroup(updated),
-        })
-        : await outboundDocument({
+        }, item, { intent: 'move' })
+        : await this.buildManagedDocumentEnvelope({
           record_id: updated.record_id,
           owner_npub: ownerNpub,
           title: updated.title,
@@ -4277,7 +4372,7 @@ export function initApp() {
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
           write_group_ref: this.getPreferredRecordWriteGroup(updated),
-        });
+        }, item, { intent: 'move' });
 
       await addPendingWrite({
         record_id: updated.record_id,
@@ -4585,6 +4680,8 @@ export function initApp() {
 
       const confirmed = window.confirm(`Delete folder "${dir.title}" and all its contents? This cannot be undone.`);
       if (!confirmed) return;
+      this.assertCanMutateLockManagedRecord(dir, recordFamilyHash('directory'));
+      await this.ensureLockManagedCheckout(dir, recordFamilyHash('directory'), { intent: 'delete' });
 
       // Collect all descendant directory IDs recursively
       const allDirIds = new Set([dir.record_id]);
@@ -4622,14 +4719,14 @@ export function initApp() {
         await addPendingWrite({
           record_id: dirId,
           record_family_hash: recordFamilyHash('directory'),
-          envelope: await outboundDirectory({
+          envelope: await this.buildManagedDirectoryEnvelope({
             ...updated,
             previous_version: directory.version ?? 1,
             signature_npub: this.signingNpub,
             shares,
             group_ids: updated.group_ids,
             write_group_ref: this.getPreferredRecordWriteGroup(updated),
-          }),
+          }, directory, { intent: 'delete' }),
         });
       }
 
@@ -4655,14 +4752,14 @@ export function initApp() {
         await addPendingWrite({
           record_id: doc.record_id,
           record_family_hash: recordFamilyHash('document'),
-          envelope: await outboundDocument({
+          envelope: await this.buildManagedDocumentEnvelope({
             ...updated,
             previous_version: doc.version ?? 1,
             signature_npub: this.signingNpub,
             shares,
             group_ids: updated.group_ids,
             write_group_ref: this.getPreferredRecordWriteGroup(updated),
-          }),
+          }, doc, { intent: 'delete' }),
         });
       }
 

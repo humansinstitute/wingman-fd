@@ -24,13 +24,27 @@ export function getStoreActorWritableGroupRefs(store) {
       .filter(Boolean))];
   }
 
-  return [...new Set(groups
-    .filter((group) => {
-      if (String(group?.private_member_npub || '').trim() === viewerNpub) return true;
-      return Array.isArray(group?.member_npubs) && group.member_npubs.includes(viewerNpub);
-    })
-    .map((group) => resolveGroupIdForStore(store, group?.group_id || group?.group_npub))
-    .filter(Boolean))];
+  const sharedRefs = [];
+  const privateRefs = [];
+  const seen = new Set();
+
+  for (const group of groups) {
+    const isViewerPrivate = String(group?.private_member_npub || '').trim() === viewerNpub;
+    const hasMembership = Array.isArray(group?.member_npubs) && group.member_npubs.includes(viewerNpub);
+    if (!isViewerPrivate && !hasMembership) continue;
+
+    const groupRef = resolveGroupIdForStore(store, group?.group_id || group?.group_npub);
+    if (!groupRef || seen.has(groupRef)) continue;
+    seen.add(groupRef);
+
+    if (isViewerPrivate) {
+      privateRefs.push(groupRef);
+    } else {
+      sharedRefs.push(groupRef);
+    }
+  }
+
+  return [...sharedRefs, ...privateRefs];
 }
 
 export function getPreferredRecordWriteGroupForStore(store, record = null) {

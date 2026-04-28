@@ -24,12 +24,22 @@ import { recordFamilyHash } from './translators/chat.js';
 import { outboundDocument, outboundDirectory } from './translators/docs.js';
 import { outboundComment } from './translators/comments.js';
 import { toRaw } from './utils/state-helpers.js';
-import { fetchRecordHistory } from './api.js';
+import { acquireRecordCheckout, fetchRecordHistory, releaseRecordCheckout } from './api.js';
 import { inboundDocument } from './translators/docs.js';
 import { renderMarkdownToHtml, hydrateStorageImageMarkup } from './markdown.js';
 import { normalizeGroupIds } from './scope-delivery.js';
 import { hasGroupKey } from './crypto/group-keys.js';
-import { getPreferredRecordWriteGroupForStore, getStoreActorWritableGroupRefs } from './preferred-write-group.js';
+import { getStoreActorWritableGroupRefs } from './preferred-write-group.js';
+import { requireFlightDeckIdentityContext } from './superbased/identity-context.js';
+import {
+  canActorEditOwnerOnlyLockManagedRecord,
+  checkoutErrorMessage,
+  describeCheckoutHolder,
+  formatLeaseRemaining,
+  isCheckoutHeld,
+  lockManagedRecordKey,
+} from './lock-managed-records.js';
+import { resolveFlightDeckRecordCheckoutPolicy } from './record-checkout-policy.js';
 import { diffLines } from 'diff';
 
 // ---------------------------------------------------------------------------
@@ -159,28 +169,46 @@ export function getPreferredDocWriteGroupRef(item = null, options = {}) {
     .filter((groupId) => !hasAllowedFilter || isAllowed(groupId));
   const writeableGroupIds = getWriteableShareGroupIds(shares);
   const candidateWriteableGroupIds = writeableGroupIds.filter((groupId) => candidateGroupIds.includes(groupId));
+  const hasWritableCandidates = candidateWriteableGroupIds.length > 0;
+  const prioritizedScopePolicyGroupIds = hasAllowedFilter
+    ? allowedGroupIds.filter((groupId) => scopePolicyGroupIds.includes(groupId))
+    : scopePolicyGroupIds;
+  const prioritizedCandidateGroupIds = hasAllowedFilter
+    ? allowedGroupIds.filter((groupId) => candidateGroupIds.includes(groupId))
+    : candidateGroupIds;
+  const prioritizedWriteableGroupIds = hasAllowedFilter
+    ? allowedGroupIds.filter((groupId) => candidateWriteableGroupIds.includes(groupId))
+    : candidateWriteableGroupIds;
 
   if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && hasKey(explicitWriteGroupId)) {
-    return explicitWriteGroupId;
+    if (hasAllowedFilter && prioritizedCandidateGroupIds.length > 1) {
+      // In actor-scoped contexts, avoid pinning writes to a stale explicit group
+      // when multiple allowed groups are available for this actor.
+    } else if (hasWritableCandidates && candidateWriteableGroupIds.includes(explicitWriteGroupId)) {
+      return explicitWriteGroupId;
+    } else if (!hasWritableCandidates) {
+      return explicitWriteGroupId;
+    }
   }
-  for (const groupId of scopePolicyGroupIds) {
+  for (const groupId of prioritizedScopePolicyGroupIds) {
+    if (hasWritableCandidates && !candidateWriteableGroupIds.includes(groupId)) continue;
     if (candidateGroupIds.includes(groupId) && hasKey(groupId)) return groupId;
   }
 
-  const loadedWritableGroupIds = candidateWriteableGroupIds.filter((groupId) => hasKey(groupId));
+  const loadedWritableGroupIds = prioritizedWriteableGroupIds.filter((groupId) => hasKey(groupId));
   if (loadedWritableGroupIds.length > 0) return loadedWritableGroupIds[0];
-  for (const groupId of candidateGroupIds) {
-    if (!hasAllowedFilter && hasKey(groupId)) return groupId;
+  for (const groupId of prioritizedCandidateGroupIds) {
+    if (hasKey(groupId)) return groupId;
   }
-  if (scopePolicyGroupIds.length > 0) return scopePolicyGroupIds[0];
+  if (prioritizedScopePolicyGroupIds.length > 0) return prioritizedScopePolicyGroupIds[0];
   if (explicitWriteGroupId && isAllowed(explicitWriteGroupId) && candidateGroupIds.includes(explicitWriteGroupId)) {
     return explicitWriteGroupId;
   }
-  for (const groupId of candidateWriteableGroupIds) {
+  for (const groupId of prioritizedWriteableGroupIds) {
     if (candidateGroupIds.includes(groupId)) return groupId;
   }
 
-  if (!hasAllowedFilter && candidateGroupIds.length > 0) return candidateGroupIds[0];
+  if (prioritizedCandidateGroupIds.length > 0) return prioritizedCandidateGroupIds[0];
   if (hasAllowedFilter) return null;
   return groupIds[0] || explicitWriteGroupId || null;
 }
@@ -188,19 +216,41 @@ export function getPreferredDocWriteGroupRef(item = null, options = {}) {
 export function normalizeDocAccessRow(item, resolverFn = (value) => String(value || '').trim() || null, options = {}) {
   if (!item || typeof item !== 'object') return item;
 
+  const allowedGroupIds = normalizeGroupIds((options.allowedGroupIds || [])
+    .map((value) => resolverFn(value))
+    .filter(Boolean));
+  const hasAllowedFilter = allowedGroupIds.length > 0;
+  const allowedSet = new Set(allowedGroupIds);
+  const isAllowedGroupRef = (groupRef) => {
+    if (!hasAllowedFilter) return true;
+    const resolved = resolverFn(groupRef);
+    return Boolean(resolved && allowedSet.has(resolved));
+  };
+
   const nextShares = getStoredDocShares(item)
     .map((share) => normalizeDocShare({
       ...share,
       group_id: resolverFn(share.group_id || share.group_npub),
       via_group_id: resolverFn(share.via_group_id || share.via_group_npub),
     }))
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((share) => {
+      const groupRef = share.type === 'person'
+        ? (share.via_group_id || share.group_id || share.via_group_npub || share.group_npub || null)
+        : (share.group_id || share.group_npub || null);
+      if (!groupRef) return true;
+      return isAllowedGroupRef(groupRef);
+    });
   const nextScopePolicyGroupIds = item.scope_policy_group_ids == null
     ? null
-    : normalizeGroupIds((item.scope_policy_group_ids || []).map((value) => resolverFn(value)).filter(Boolean));
+    : normalizeGroupIds((item.scope_policy_group_ids || [])
+      .map((value) => resolverFn(value))
+      .filter((value) => Boolean(value) && isAllowedGroupRef(value)));
   const shareGroupIds = getShareGroupIds(nextShares).map((value) => resolverFn(value)).filter(Boolean);
   const providedGroupIds = Array.isArray(item.group_ids) && item.group_ids.length > 0
-    ? item.group_ids.map((value) => resolverFn(value)).filter(Boolean)
+    ? item.group_ids
+      .map((value) => resolverFn(value))
+      .filter((value) => Boolean(value) && isAllowedGroupRef(value))
     : [];
   const nextGroupIds = normalizeGroupIds([
     ...(nextScopePolicyGroupIds || []),
@@ -295,7 +345,264 @@ export function buildDocPrintHtml(title, bodyHtml) {
 // ---------------------------------------------------------------------------
 
 export const docsManagerMixin = {
+  getRecordCheckoutPolicyConfig() {
+    return this.recordCheckoutPolicyConfig || null;
+  },
+
+  resolveRecordCheckoutPolicy(recordFamilyHash, record = null) {
+    return resolveFlightDeckRecordCheckoutPolicy(
+      recordFamilyHash,
+      this.getRecordCheckoutPolicyConfig(),
+      { recordId: record?.record_id },
+    );
+  },
+
+  isCheckoutRequiredRecordFamily(recordFamilyHash, record = null) {
+    return this.resolveRecordCheckoutPolicy(recordFamilyHash, record) === 'checkout_required';
+  },
+
+  getLockManagedCheckoutSession(recordId, recordFamilyHash) {
+    const key = lockManagedRecordKey(recordId, recordFamilyHash);
+    if (!key) return null;
+    return this.lockManagedCheckoutSessions?.[key] || null;
+  },
+
+  setLockManagedCheckoutSession(recordId, recordFamilyHash, patch = {}) {
+    const key = lockManagedRecordKey(recordId, recordFamilyHash);
+    if (!key) return null;
+    const current = this.lockManagedCheckoutSessions?.[key] || {};
+    const next = {
+      ...current,
+      ...patch,
+      recordId: String(recordId || '').trim(),
+      recordFamilyHash: String(recordFamilyHash || '').trim(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.lockManagedCheckoutSessions = {
+      ...(this.lockManagedCheckoutSessions || {}),
+      [key]: next,
+    };
+    return next;
+  },
+
+  clearLockManagedCheckoutSession(recordId, recordFamilyHash) {
+    const key = lockManagedRecordKey(recordId, recordFamilyHash);
+    if (!key || !this.lockManagedCheckoutSessions?.[key]) return;
+    const next = { ...(this.lockManagedCheckoutSessions || {}) };
+    delete next[key];
+    this.lockManagedCheckoutSessions = next;
+  },
+
+  buildLockManagedCheckoutIdentityContext() {
+    try {
+      return requireFlightDeckIdentityContext(this);
+    } catch (error) {
+      const classification = Array.isArray(error?.missing) && error.missing.includes('workspaceUserKeyNpub')
+        ? 'workspace_key_missing'
+        : 'identity_alias_mismatch';
+      const wrapped = new Error(checkoutErrorMessage(classification));
+      wrapped.classification = classification;
+      wrapped.cause = error;
+      throw wrapped;
+    }
+  },
+
+  canCurrentActorEditOwnerOnlyLockManagedRecord() {
+    return canActorEditOwnerOnlyLockManagedRecord({
+      actorNpub: this.session?.npub,
+      creatorNpub: this.currentWorkspace?.creatorNpub,
+    });
+  },
+
+  normalizeLockManagedCheckoutFailure(error) {
+    const classification = String(error?.classification || error?.towerCode || error?.code || '').trim() || 'unknown';
+    const checkout = error?.response?.checkout || error?.checkout || null;
+    return {
+      classification,
+      checkout,
+      message: error?.userMessage || checkoutErrorMessage(classification, checkout),
+    };
+  },
+
+  assertCanMutateLockManagedRecord(record, recordFamilyHash, options = {}) {
+    const familyHash = String(recordFamilyHash || '').trim();
+    if (!record?.record_id || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return true;
+    if (this.canCurrentActorEditOwnerOnlyLockManagedRecord()) return true;
+    const message = checkoutErrorMessage('edit_policy_forbidden');
+    const error = new Error(message);
+    error.classification = 'edit_policy_forbidden';
+    if (options.autosave === true) this.docAutosaveState = 'error';
+    if (options.reportError !== false) this.error = message;
+    throw error;
+  },
+
+  async ensureLockManagedCheckout(record, recordFamilyHash, options = {}) {
+    const recordId = String(record?.record_id || '').trim();
+    const familyHash = String(recordFamilyHash || '').trim();
+    if (!recordId || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return null;
+
+    let existingSession = this.getLockManagedCheckoutSession(recordId, familyHash);
+    const submittedVersion = Number(existingSession?.submittedVersion ?? 0) || 0;
+    const localVersion = Number(record?.version ?? 0) || 0;
+    if (
+      isCheckoutHeld(existingSession?.checkout)
+      && submittedVersion > 0
+      && String(record?.sync_status || '').trim() === 'synced'
+      && localVersion >= submittedVersion
+    ) {
+      this.clearLockManagedCheckoutSession(recordId, familyHash);
+      existingSession = null;
+    }
+    if (isCheckoutHeld(existingSession?.checkout)) {
+      return existingSession.checkout;
+    }
+
+    if (!this.canCurrentActorEditOwnerOnlyLockManagedRecord()) {
+      const classification = 'edit_policy_forbidden';
+      const message = checkoutErrorMessage(classification);
+      if (options.autosave === true) this.docAutosaveState = 'error';
+      if (options.reportError !== false) this.error = message;
+      this.setLockManagedCheckoutSession(recordId, familyHash, {
+        acquireState: 'blocked',
+        checkout: existingSession?.checkout || null,
+        classification,
+        message,
+      });
+      const error = new Error(message);
+      error.classification = classification;
+      error.checkout = existingSession?.checkout || null;
+      throw error;
+    }
+
+    const idempotencyKey = existingSession?.idempotencyKey || crypto.randomUUID();
+    this.setLockManagedCheckoutSession(recordId, familyHash, {
+      acquireState: 'acquiring',
+      idempotencyKey,
+      intent: String(options.intent || 'edit').trim() || 'edit',
+      classification: '',
+      message: '',
+    });
+
+    try {
+      const checkout = await acquireRecordCheckout({
+        recordId,
+        recordFamilyHash: familyHash,
+        identityContext: this.buildLockManagedCheckoutIdentityContext(),
+        leaseSeconds: Number.isInteger(options.leaseSeconds) ? options.leaseSeconds : undefined,
+        idempotencyKey,
+      });
+      this.setLockManagedCheckoutSession(recordId, familyHash, {
+        acquireState: 'held',
+        checkout: checkout?.checkout || null,
+        classification: '',
+        message: '',
+      });
+      return checkout?.checkout || null;
+    } catch (error) {
+      const normalized = this.normalizeLockManagedCheckoutFailure(error);
+      this.setLockManagedCheckoutSession(recordId, familyHash, {
+        acquireState: normalized.classification === 'unknown' ? 'error' : 'blocked',
+        checkout: normalized.checkout,
+        classification: normalized.classification,
+        message: normalized.message,
+      });
+      if (options.reportError !== false) this.error = normalized.message;
+      error.userMessage = normalized.message;
+      throw error;
+    }
+  },
+
+  async releaseLockManagedCheckout(record, recordFamilyHash, options = {}) {
+    const recordId = String(record?.record_id || '').trim();
+    const familyHash = String(recordFamilyHash || '').trim();
+    if (!recordId || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return false;
+    const session = this.getLockManagedCheckoutSession(recordId, familyHash);
+    if (!isCheckoutHeld(session?.checkout)) return false;
+    if (options.force !== true && String(record?.sync_status || '').trim() === 'pending') {
+      return false;
+    }
+
+    try {
+      await releaseRecordCheckout({
+        recordId,
+        recordFamilyHash: familyHash,
+        checkoutId: session.checkout.checkout_id,
+        identityContext: this.buildLockManagedCheckoutIdentityContext(),
+      });
+      this.clearLockManagedCheckoutSession(recordId, familyHash);
+      return true;
+    } catch (error) {
+      const normalized = this.normalizeLockManagedCheckoutFailure(error);
+      this.setLockManagedCheckoutSession(recordId, familyHash, {
+        acquireState: normalized.classification === 'unknown' ? 'error' : 'blocked',
+        checkout: normalized.checkout || session.checkout,
+        classification: normalized.classification,
+        message: normalized.message,
+      });
+      if (options.reportError === true) this.error = normalized.message;
+      return false;
+    }
+  },
+
+  async attachCheckoutRequiredCheckoutToEnvelope(record, envelope, options = {}) {
+    const familyHash = String(envelope?.record_family_hash || '').trim();
+    if (!record?.record_id || !familyHash || !this.isCheckoutRequiredRecordFamily(familyHash, record)) return envelope;
+    const checkout = await this.ensureLockManagedCheckout(record, familyHash, options);
+    if (!checkout?.checkout_id) return envelope;
+    this.setLockManagedCheckoutSession(record.record_id, familyHash, {
+      acquireState: 'held',
+      checkout,
+      submittedVersion: Number(envelope?.version ?? 0) || 0,
+    });
+    return {
+      ...envelope,
+      checkout: {
+        checkout_id: checkout.checkout_id,
+        consume_on_success: true,
+      },
+    };
+  },
+
+  async attachLockManagedCheckoutToEnvelope(record, envelope, options = {}) {
+    return this.attachCheckoutRequiredCheckoutToEnvelope(record, envelope, options);
+  },
+
+  async buildManagedDocumentEnvelope(payload, record = null, options = {}) {
+    const requestedGroupIds = normalizeGroupIds((payload?.group_ids || [])
+      .map((value) => this._resolveDocGroupRef(value))
+      .filter(Boolean));
+    const encryptableGroupIds = requestedGroupIds.filter((groupId) => hasGroupKey(groupId));
+    if (requestedGroupIds.length > 0 && encryptableGroupIds.length === 0) {
+      throw new Error(`Document write is missing group keys: ${requestedGroupIds.join(', ')}`);
+    }
+    const envelope = await outboundDocument({
+      ...payload,
+      group_ids: encryptableGroupIds,
+    });
+    return this.attachLockManagedCheckoutToEnvelope(record, envelope, options);
+  },
+
+  async buildManagedDirectoryEnvelope(payload, record = null, options = {}) {
+    const requestedGroupIds = normalizeGroupIds((payload?.group_ids || [])
+      .map((value) => this._resolveDocGroupRef(value))
+      .filter(Boolean));
+    const encryptableGroupIds = requestedGroupIds.filter((groupId) => hasGroupKey(groupId));
+    if (requestedGroupIds.length > 0 && encryptableGroupIds.length === 0) {
+      throw new Error(`Folder write is missing group keys: ${requestedGroupIds.join(', ')}`);
+    }
+    const envelope = await outboundDirectory({
+      ...payload,
+      group_ids: encryptableGroupIds,
+    });
+    return this.attachLockManagedCheckoutToEnvelope(record, envelope, options);
+  },
+
   openDoc(recordId, options = {}) {
+    const nextRecordId = String(recordId || '').trim();
+    const previousRecord = this.selectedDocType === 'document' ? this.selectedDocument : null;
+    if (previousRecord?.record_id && previousRecord.record_id !== nextRecordId) {
+      void this.releaseLockManagedCheckout(previousRecord, recordFamilyHash('document'), { reportError: false });
+    }
     this.selectedDocType = 'document';
     this.selectedDocId = recordId;
     if (Object.prototype.hasOwnProperty.call(options, 'commentId')) {
@@ -318,6 +625,10 @@ export const docsManagerMixin = {
   },
 
   closeDocEditor(options = {}) {
+    const selectedRecord = this.selectedDocument;
+    if (selectedRecord?.record_id) {
+      void this.releaseLockManagedCheckout(selectedRecord, recordFamilyHash('document'), { reportError: false });
+    }
     this.stopDocCommentsLiveQuery();
     this.selectedDocType = null;
     this.selectedDocId = null;
@@ -449,7 +760,11 @@ export const docsManagerMixin = {
         ...this.docCommentBackfillAttemptsByDocId,
         [this.selectedDocId]: true,
       };
-      await this.backfillDocCommentsFromBackend(this.selectedDocId, recordFamilyHash('document'));
+      const backfilled = await this.backfillDocCommentsFromBackend(this.selectedDocId, recordFamilyHash('document'));
+      if (backfilled.length > 0) {
+        await this.applyDocComments(backfilled);
+        return;
+      }
     }
 
     if (this.selectedDocCommentId) {
@@ -583,13 +898,16 @@ export const docsManagerMixin = {
     }
     if ((!body && drafts.length === 0) || !doc || !this.session?.npub) return;
 
+    const targetGroupIds = await this.getEncryptableDocCommentGroupIdsForWrite(doc);
+    if (targetGroupIds == null) return;
+
     const now = new Date().toISOString();
     const recordId = crypto.randomUUID();
     const { attachments } = await this.materializeAudioDrafts({
       drafts,
       target_record_id: recordId,
       target_record_family_hash: recordFamilyHash('comment'),
-      target_group_ids: toRaw(doc?.group_ids ?? []),
+      target_group_ids: toRaw(targetGroupIds),
       write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
     const localRow = {
@@ -620,7 +938,7 @@ export const docsManagerMixin = {
 
     const envelope = await outboundComment({
       ...localRow,
-      target_group_ids: toRaw(doc?.group_ids ?? []),
+      target_group_ids: toRaw(targetGroupIds),
       signature_npub: this.signingNpub,
       write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
@@ -644,13 +962,16 @@ export const docsManagerMixin = {
     }
     if ((!body && drafts.length === 0) || !doc || !root || !this.session?.npub) return;
 
+    const targetGroupIds = await this.getEncryptableDocCommentGroupIdsForWrite(doc);
+    if (targetGroupIds == null) return;
+
     const now = new Date().toISOString();
     const recordId = crypto.randomUUID();
     const { attachments } = await this.materializeAudioDrafts({
       drafts,
       target_record_id: recordId,
       target_record_family_hash: recordFamilyHash('comment'),
-      target_group_ids: toRaw(doc?.group_ids ?? []),
+      target_group_ids: toRaw(targetGroupIds),
       write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
     const localRow = {
@@ -680,7 +1001,7 @@ export const docsManagerMixin = {
 
     const envelope = await outboundComment({
       ...localRow,
-      target_group_ids: toRaw(doc?.group_ids ?? []),
+      target_group_ids: toRaw(targetGroupIds),
       signature_npub: this.signingNpub,
       write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
@@ -699,6 +1020,8 @@ export const docsManagerMixin = {
     if (!comment || !doc || !this.session?.npub) return;
     const status = nextStatus === 'resolved' ? 'resolved' : 'open';
     if ((comment.comment_status || 'open') === status) return;
+    const targetGroupIds = await this.getEncryptableDocCommentGroupIdsForWrite(doc);
+    if (targetGroupIds == null) return;
 
     const updated = {
       ...comment,
@@ -722,7 +1045,7 @@ export const docsManagerMixin = {
     const envelope = await outboundComment({
       ...updated,
       previous_version: comment.version ?? 1,
-      target_group_ids: toRaw(doc?.group_ids ?? []),
+      target_group_ids: toRaw(targetGroupIds),
       signature_npub: this.signingNpub,
       write_group_ref: this.getPreferredDocWriteGroupRef(doc),
     });
@@ -742,8 +1065,71 @@ export const docsManagerMixin = {
 
   getDocCommentSummary,
 
+  getSelectedDocCheckoutSession() {
+    if (!this.selectedDocId || this.selectedDocType !== 'document') return null;
+    return this.getLockManagedCheckoutSession(this.selectedDocId, recordFamilyHash('document'));
+  },
+
+  async acquireSelectedDocCheckout(options = {}) {
+    const item = this.selectedDocument;
+    if (!item) return false;
+    try {
+      await this.ensureLockManagedCheckout(item, recordFamilyHash('document'), {
+        intent: 'edit',
+        reportError: true,
+        ...options,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  async enterSelectedDocEditMode(mode = 'block') {
+    const item = this.selectedDocument;
+    if (!item) return false;
+    const session = this.getSelectedDocCheckoutSession();
+    if (!isCheckoutHeld(session?.checkout)) {
+      const acquired = await this.acquireSelectedDocCheckout();
+      if (!acquired) return false;
+    }
+    this.setDocEditorMode(mode === 'source' ? 'source' : 'block');
+    return true;
+  },
+
+  setDocReadMode() {
+    this.setDocEditorMode('preview');
+  },
+
+  async saveAndExitSelectedDocEditMode() {
+    const item = this.selectedDocument;
+    if (!item) return false;
+
+    if (this.docEditorMode !== 'preview') {
+      if (this.docEditingBlockIndex >= 0) {
+        this.commitDocBlockEdit();
+      }
+      try {
+        await this.saveSelectedDocItem({ autosave: false });
+      } catch {
+        return false;
+      }
+    }
+
+    this.setDocEditorMode('preview');
+    await this.releaseLockManagedCheckout(this.selectedDocument || item, recordFamilyHash('document'), {
+      reportError: false,
+      force: true,
+    });
+    return true;
+  },
+
   setDocEditorMode(mode) {
     const nextMode = mode === 'source' ? 'source' : mode === 'block' ? 'block' : 'preview';
+    if (nextMode !== 'preview') {
+      const session = this.getSelectedDocCheckoutSession();
+      if (!isCheckoutHeld(session?.checkout)) return;
+    }
     if (nextMode === 'source' && this.docEditingBlockIndex >= 0) {
       this.commitDocBlockEdit();
     }
@@ -755,7 +1141,7 @@ export const docsManagerMixin = {
 
   toggleDocEditorMode() {
     if (this.docEditorMode === 'preview') {
-      this.setDocEditorMode('block');
+      void this.enterSelectedDocEditMode('block');
       return;
     }
     if (this.docEditorMode === 'block') {
@@ -910,11 +1296,9 @@ export const docsManagerMixin = {
   getPreferredDocWriteGroupRef(record) {
     const resolveGroupRef = (value) => this._resolveDocGroupRef(value);
     const allowedGroupIds = getStoreActorWritableGroupRefs(this);
+    const normalizedRecord = normalizeDocAccessRow(record, resolveGroupRef);
     return getPreferredDocWriteGroupRef(
-      normalizeDocAccessRow(record, resolveGroupRef, {
-        hasKey: (value) => hasGroupKey(resolveGroupRef(value)),
-        allowedGroupIds,
-      }),
+      normalizedRecord,
       {
         hasKey: (value) => hasGroupKey(resolveGroupRef(value)),
         allowedGroupIds,
@@ -924,37 +1308,60 @@ export const docsManagerMixin = {
 
   normalizeDocumentRowGroupRefs(record) {
     const resolveGroupRef = (value) => this._resolveDocGroupRef(value);
-    const allowedGroupIds = getStoreActorWritableGroupRefs(this);
-    return normalizeDocAccessRow(record, resolveGroupRef, {
-      hasKey: (value) => hasGroupKey(resolveGroupRef(value)),
-      allowedGroupIds,
-    });
+    return normalizeDocAccessRow(record, resolveGroupRef);
   },
 
   normalizeDirectoryRowGroupRefs(record) {
     const resolveGroupRef = (value) => this._resolveDocGroupRef(value);
-    const allowedGroupIds = getStoreActorWritableGroupRefs(this);
-    return normalizeDocAccessRow(record, resolveGroupRef, {
-      hasKey: (value) => hasGroupKey(resolveGroupRef(value)),
-      allowedGroupIds,
-    });
+    return normalizeDocAccessRow(record, resolveGroupRef);
   },
 
   getMissingDocGroupRefs(record) {
     const normalized = this.normalizeDocumentRowGroupRefs(record);
     const groupIds = normalizeGroupIds(normalized?.group_ids || []);
-    if (groupIds.some((groupId) => hasGroupKey(groupId))) return [];
-    return groupIds;
+    return groupIds.filter((groupId) => !hasGroupKey(groupId));
   },
 
   async ensureDocGroupKeysLoaded(record) {
-    let missingGroupRefs = this.getMissingDocGroupRefs(record);
+    const normalized = this.normalizeDocumentRowGroupRefs(record);
+    const groupIds = normalizeGroupIds(normalized?.group_ids || []);
+    if (groupIds.length === 0) return [];
+    let missingGroupRefs = groupIds.filter((groupId) => !hasGroupKey(groupId));
     if (missingGroupRefs.length === 0) return [];
     if (typeof this.refreshGroups === 'function') {
       await this.refreshGroups({ force: true });
     }
-    missingGroupRefs = this.getMissingDocGroupRefs(record);
+    missingGroupRefs = groupIds.filter((groupId) => !hasGroupKey(groupId));
+    if (missingGroupRefs.length === 0) return [];
+    const loadedGroupCount = groupIds.length - missingGroupRefs.length;
+    if (loadedGroupCount > 0) return [];
     return missingGroupRefs;
+  },
+
+  getEncryptableDocCommentGroupIds(record) {
+    const normalized = this.normalizeDocumentRowGroupRefs(record);
+    const groupIds = normalizeGroupIds(normalized?.group_ids || []);
+    if (groupIds.length === 0) return [];
+    const encryptableGroupIds = groupIds.filter((groupId) => hasGroupKey(groupId));
+    if (encryptableGroupIds.length > 0) return encryptableGroupIds;
+    this.error = `Document comment write is missing group keys: ${groupIds.join(', ')}`;
+    return null;
+  },
+
+  async getEncryptableDocCommentGroupIdsForWrite(record) {
+    const normalized = this.normalizeDocumentRowGroupRefs(record);
+    const groupIds = normalizeGroupIds(normalized?.group_ids || []);
+    if (groupIds.length === 0) return [];
+
+    let encryptableGroupIds = groupIds.filter((groupId) => hasGroupKey(groupId));
+    if (encryptableGroupIds.length < groupIds.length && typeof this.refreshGroups === 'function') {
+      await this.refreshGroups({ force: true });
+      encryptableGroupIds = groupIds.filter((groupId) => hasGroupKey(groupId));
+    }
+    if (encryptableGroupIds.length > 0) return encryptableGroupIds;
+
+    this.error = `Document comment write is missing group keys: ${groupIds.join(', ')}`;
+    return null;
   },
 
   async markDocRecordWriteFailed(table, record, error, options = {}) {
@@ -1331,7 +1738,7 @@ export const docsManagerMixin = {
       await addPendingWrite({
         record_id: recordId,
         record_family_hash: recordFamilyHash('directory'),
-        envelope: await outboundDirectory({
+        envelope: await this.buildManagedDirectoryEnvelope({
           record_id: recordId,
           owner_npub: ownerNpub,
           title: row.title,
@@ -1346,8 +1753,8 @@ export const docsManagerMixin = {
           shares: row.shares,
           group_ids: row.group_ids,
           signature_npub: this.signingNpub,
-          write_group_ref: getPreferredRecordWriteGroupForStore(this, row),
-        }),
+          write_group_ref: this.getPreferredDocWriteGroupRef(row),
+        }, row, { intent: 'create' }),
       });
     } catch (error) {
       await this.markDocRecordWriteFailed('directory', row, error);
@@ -1401,7 +1808,7 @@ export const docsManagerMixin = {
       await addPendingWrite({
         record_id: recordId,
         record_family_hash: recordFamilyHash('document'),
-        envelope: await outboundDocument({
+        envelope: await this.buildManagedDocumentEnvelope({
           record_id: recordId,
           owner_npub: ownerNpub,
           title: row.title,
@@ -1417,8 +1824,8 @@ export const docsManagerMixin = {
           shares: row.shares,
           group_ids: row.group_ids,
           signature_npub: this.signingNpub,
-          write_group_ref: getPreferredRecordWriteGroupForStore(this, row),
-        }),
+          write_group_ref: this.getPreferredDocWriteGroupRef(row),
+        }, row, { intent: 'create' }),
       });
     } catch (error) {
       await this.markDocRecordWriteFailed('document', row, error);
@@ -1444,6 +1851,8 @@ export const docsManagerMixin = {
       this.error = 'Select a scope before saving folder sharing.';
       return;
     }
+    this.assertCanMutateLockManagedRecord(item, recordFamilyHash('directory'));
+    await this.ensureLockManagedCheckout(item, recordFamilyHash('directory'), { intent: 'edit' });
 
     const currentSharesSerialized = this.serializeDocShares(this.getEffectiveDocShares(item));
     const editorSharesSerialized = this.serializeDocShares(this.docEditorShares || []);
@@ -1486,7 +1895,7 @@ export const docsManagerMixin = {
       await addPendingWrite({
         record_id: item.record_id,
         record_family_hash: recordFamilyHash('directory'),
-        envelope: await outboundDirectory({
+        envelope: await this.buildManagedDirectoryEnvelope({
           record_id: item.record_id,
           owner_npub: ownerNpub,
           title: updated.title,
@@ -1503,8 +1912,8 @@ export const docsManagerMixin = {
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
-        }),
+          write_group_ref: this.getPreferredDocWriteGroupRef(updated),
+        }, item, { intent: 'edit' }),
       });
     } catch (error) {
       await this.markDocRecordWriteFailed('directory', updated, error);
@@ -1532,6 +1941,12 @@ export const docsManagerMixin = {
       if (!autosave) this.error = 'Select a scope before saving this document.';
       return;
     }
+    this.assertCanMutateLockManagedRecord(item, recordFamilyHash('document'), { autosave });
+    await this.ensureLockManagedCheckout(item, recordFamilyHash('document'), {
+      autosave,
+      intent: 'edit',
+      reportError: autosave !== true,
+    });
 
     const nextTitle = this.docEditorTitle.trim() || 'Untitled document';
     const currentSharesSerialized = this.serializeDocShares(this.getEffectiveDocShares(item));
@@ -1580,7 +1995,7 @@ export const docsManagerMixin = {
       await addPendingWrite({
         record_id: item.record_id,
         record_family_hash: recordFamilyHash('document'),
-        envelope: await outboundDocument({
+        envelope: await this.buildManagedDocumentEnvelope({
           record_id: item.record_id,
           owner_npub: ownerNpub,
           title: updated.title,
@@ -1598,8 +2013,8 @@ export const docsManagerMixin = {
           version: nextVersion,
           previous_version: item.version ?? 1,
           signature_npub: this.signingNpub,
-          write_group_ref: getPreferredRecordWriteGroupForStore(this, updated),
-        }),
+          write_group_ref: this.getPreferredDocWriteGroupRef(updated),
+        }, item, { intent: 'edit' }),
       });
 
       // Fire triggers for newly added @mentions in doc body

@@ -82,12 +82,12 @@ export function buildGroupPayloads(groupRefs, payload, canWriteByGroup = null) {
   const senderNpub = getActiveSessionNpub();
   if (!senderNpub) throw new Error('No active session available for group payload encryption.');
 
-  const loadedGroups = uniqueGroups.filter((groupRef) => hasGroupKey(groupRef));
-  if (uniqueGroups.length > 0 && loadedGroups.length === 0) {
-    throw new Error(`No group keys loaded for ${uniqueGroups.join(', ')}`);
+  const missingGroups = uniqueGroups.filter((groupRef) => !hasGroupKey(groupRef));
+  if (missingGroups.length > 0) {
+    throw new Error(`Missing group keys for ${missingGroups.join(', ')}`);
   }
 
-  return loadedGroups.map((groupRef) => {
+  return uniqueGroups.map((groupRef) => {
     const groupKey = getGroupKey(groupRef);
     if (!groupKey?.group_npub) {
       throw new Error(`No group key loaded for ${groupRef}`);

@@ -284,7 +284,7 @@ export function shutdownSyncWorker() {
  * The worker will flush pending writes every 5s on its own,
  * decoupling UI responsiveness from sync latency.
  */
-export function startWorkerFlushTimer(ownerNpub, backendUrl, workspaceDbKey) {
+export function startWorkerFlushTimer(ownerNpub, backendUrl, workspaceDbKey, options = {}) {
   const worker = ensureWorkerInstance();
   if (!worker) return;
   try {
@@ -293,6 +293,7 @@ export function startWorkerFlushTimer(ownerNpub, backendUrl, workspaceDbKey) {
       ownerNpub,
       backendUrl,
       workspaceDbKey,
+      options,
     });
   } catch { /* ignore */ }
 }
