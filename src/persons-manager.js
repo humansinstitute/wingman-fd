@@ -12,7 +12,19 @@ import {
 import { outboundPerson } from './translators/persons.js';
 import { outboundOrganisation } from './translators/organisations.js';
 import { toRaw } from './utils/state-helpers.js';
-import { getRecordWriteFieldsForStore } from './preferred-write-group.js';
+import {
+  getPreferredRecordWriteGroupForStore,
+  getRecordWriteFieldsForStore,
+} from './preferred-write-group.js';
+
+function hasScopePatch(patch = {}) {
+  return Object.prototype.hasOwnProperty.call(patch, 'scope_id')
+    || Object.prototype.hasOwnProperty.call(patch, 'scope_l1_id')
+    || Object.prototype.hasOwnProperty.call(patch, 'scope_l2_id')
+    || Object.prototype.hasOwnProperty.call(patch, 'scope_l3_id')
+    || Object.prototype.hasOwnProperty.call(patch, 'scope_l4_id')
+    || Object.prototype.hasOwnProperty.call(patch, 'scope_l5_id');
+}
 
 export const personsManagerMixin = {
   applyPersons(persons) {
@@ -35,19 +47,87 @@ export const personsManagerMixin = {
     this.organisations = next;
   },
 
+  buildCrmScopeAccessFields(scopeId = null, existing = null) {
+    const cleanScopeId = String(scopeId || '').trim() || null;
+    const assignment = typeof this.buildScopeAssignment === 'function'
+      ? this.buildScopeAssignment(cleanScopeId)
+      : {
+        scope_id: cleanScopeId,
+        scope_l1_id: null,
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+      };
+    let groupIds = [];
+    let shares = [];
+
+    if (cleanScopeId && typeof this.getScopeShareGroupIds === 'function') {
+      const scope = this.scopesMap?.get(cleanScopeId) || null;
+      groupIds = scope ? this.getScopeShareGroupIds(scope).filter(Boolean) : [];
+      shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
+        ? this.buildScopeDefaultShares(groupIds)
+        : [];
+    }
+
+    if (groupIds.length === 0) {
+      const fallbackWriteGroupRef = this.getWorkspaceSettingsGroupRef?.()
+        || (existing ? getPreferredRecordWriteGroupForStore(this, existing) : null)
+        || null;
+      groupIds = fallbackWriteGroupRef ? [fallbackWriteGroupRef] : (existing?.group_ids || []);
+      shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
+        ? this.buildScopeDefaultShares(groupIds)
+        : (existing?.shares || []);
+    }
+
+    return {
+      ...assignment,
+      shares,
+      group_ids: groupIds,
+    };
+  },
+
+  get personFormScopeLabel() {
+    return this.personFormScopeId ? (this.getScopeBreadcrumb?.(this.personFormScopeId) || '') : '';
+  },
+
+  get personFormScopeLevel() {
+    return this.personFormScopeId ? (this.scopesMap?.get(this.personFormScopeId)?.level || '') : '';
+  },
+
+  get orgFormScopeLabel() {
+    return this.orgFormScopeId ? (this.getScopeBreadcrumb?.(this.orgFormScopeId) || '') : '';
+  },
+
+  get orgFormScopeLevel() {
+    return this.orgFormScopeId ? (this.scopesMap?.get(this.orgFormScopeId)?.level || '') : '';
+  },
+
+  assignScopeToPersonForm(scopeId) {
+    this.personFormScopeId = String(scopeId || '').trim() || null;
+  },
+
+  clearPersonFormScope() {
+    this.personFormScopeId = null;
+  },
+
+  assignScopeToOrgForm(scopeId) {
+    this.orgFormScopeId = String(scopeId || '').trim() || null;
+  },
+
+  clearOrgFormScope() {
+    this.orgFormScopeId = null;
+  },
+
   // --- Person CRUD ---
 
-  async createPerson({ title, description = '', contacts = [], tags = '', organisation_links = [] }) {
+  async createPerson({ title, description = '', contacts = [], tags = '', organisation_links = [], scope_id = null }) {
     if (!title || !this.session?.npub) return null;
 
     const now = new Date().toISOString();
     const recordId = crypto.randomUUID();
     const ownerNpub = this.workspaceOwnerNpub;
-    const writeGroupRef = typeof this.getWorkspaceSettingsGroupRef === 'function'
-      ? this.getWorkspaceSettingsGroupRef() : null;
-    const groupIds = writeGroupRef ? [writeGroupRef] : [];
-    const shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
-      ? this.buildScopeDefaultShares(groupIds) : [];
+    const accessFields = this.buildCrmScopeAccessFields(scope_id, null);
 
     const localRow = {
       record_id: recordId,
@@ -57,14 +137,7 @@ export const personsManagerMixin = {
       contacts,
       organisation_links,
       tags,
-      scope_id: null,
-      scope_l1_id: null,
-      scope_l2_id: null,
-      scope_l3_id: null,
-      scope_l4_id: null,
-      scope_l5_id: null,
-      shares,
-      group_ids: groupIds,
+      ...accessFields,
       sync_status: 'pending',
       record_state: 'active',
       version: 1,
@@ -77,7 +150,6 @@ export const personsManagerMixin = {
 
     const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
       label: 'Person write',
-      writeGroupRef,
     });
     const envelope = await outboundPerson({
       ...localRow,
@@ -101,9 +173,13 @@ export const personsManagerMixin = {
     if (!person || !this.session?.npub) return null;
 
     const nextVersion = (person.version ?? 1) + 1;
+    const scopePatch = hasScopePatch(patch)
+      ? this.buildCrmScopeAccessFields(patch.scope_id ?? null, person)
+      : {};
     const updated = toRaw({
       ...person,
       ...patch,
+      ...scopePatch,
       version: nextVersion,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),
@@ -171,17 +247,13 @@ export const personsManagerMixin = {
 
   // --- Organisation CRUD ---
 
-  async createOrganisation({ title, description = '', positioning = '', contacts = [], tags = '', person_links = [] }) {
+  async createOrganisation({ title, description = '', positioning = '', contacts = [], tags = '', person_links = [], scope_id = null }) {
     if (!title || !this.session?.npub) return null;
 
     const now = new Date().toISOString();
     const recordId = crypto.randomUUID();
     const ownerNpub = this.workspaceOwnerNpub;
-    const writeGroupRef = typeof this.getWorkspaceSettingsGroupRef === 'function'
-      ? this.getWorkspaceSettingsGroupRef() : null;
-    const groupIds = writeGroupRef ? [writeGroupRef] : [];
-    const shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
-      ? this.buildScopeDefaultShares(groupIds) : [];
+    const accessFields = this.buildCrmScopeAccessFields(scope_id, null);
 
     const localRow = {
       record_id: recordId,
@@ -192,14 +264,7 @@ export const personsManagerMixin = {
       contacts,
       person_links,
       tags,
-      scope_id: null,
-      scope_l1_id: null,
-      scope_l2_id: null,
-      scope_l3_id: null,
-      scope_l4_id: null,
-      scope_l5_id: null,
-      shares,
-      group_ids: groupIds,
+      ...accessFields,
       sync_status: 'pending',
       record_state: 'active',
       version: 1,
@@ -212,7 +277,6 @@ export const personsManagerMixin = {
 
     const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
       label: 'Organisation write',
-      writeGroupRef,
     });
     const envelope = await outboundOrganisation({
       ...localRow,
@@ -236,9 +300,13 @@ export const personsManagerMixin = {
     if (!org || !this.session?.npub) return null;
 
     const nextVersion = (org.version ?? 1) + 1;
+    const scopePatch = hasScopePatch(patch)
+      ? this.buildCrmScopeAccessFields(patch.scope_id ?? null, org)
+      : {};
     const updated = toRaw({
       ...org,
       ...patch,
+      ...scopePatch,
       version: nextVersion,
       sync_status: 'pending',
       updated_at: new Date().toISOString(),

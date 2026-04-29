@@ -1,6 +1,6 @@
 export const KNOWN_PAGES = new Set([
-  'flight-deck', 'notifications', 'status', 'tasks', 'calendar', 'schedules',
-  'chat', 'docs', 'reports', 'opportunities', 'people', 'scopes', 'settings', 'live',
+  'flight-deck', 'notifications', 'status', 'tasks',
+  'chat', 'docs', 'reports', 'opportunities', 'people', 'settings',
 ]);
 
 export function pageToSection(page) {

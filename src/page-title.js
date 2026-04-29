@@ -20,10 +20,6 @@ export function buildFlightDeckDocumentTitle({
       return buildSectionTitle('Flight Deck');
     case 'tasks':
       return buildSectionTitle('Tasks');
-    case 'calendar':
-      return buildSectionTitle('Calendar');
-    case 'schedules':
-      return buildSectionTitle('Schedules');
     case 'docs':
       if (nextDocTitle) return buildSectionTitle(`Docs | ${nextDocTitle}`);
       if (nextFolderLabel) return buildSectionTitle(`Docs | ${nextFolderLabel}`);
@@ -32,12 +28,8 @@ export function buildFlightDeckDocumentTitle({
       return buildSectionTitle('Opportunities');
     case 'people':
       return buildSectionTitle('People');
-    case 'scopes':
-      return buildSectionTitle('Scopes');
     case 'settings':
-      return buildSectionTitle('Settings');
-    case 'live':
-      return buildSectionTitle('Live');
+      return buildSectionTitle('Setup');
     case 'chat':
     default:
       if (nextChannelLabel) return buildSectionTitle(`Chat | ${nextChannelLabel}`);

@@ -69,6 +69,17 @@ describe('section live query plan', () => {
     expect(detailPlan.detail).toEqual(['docs:selected-doc:doc-1', 'docs:comments:doc-1']);
   });
 
+  it('loads settings schedules, scopes, and approvals in the settings section', () => {
+    const plan = getSectionLiveQueryPlan({
+      workspaceOwnerNpub: 'npub-owner',
+      navSection: 'settings',
+      applyAddressBookPeople() {},
+    });
+
+    expect(plan.workspace).toEqual(['ws:flows', 'ws:opportunities', 'settings:schedules', 'settings:scopes', 'settings:approvals']);
+    expect(plan.detail).toEqual([]);
+  });
+
   it('loads supporting CRM records on the opportunities route', () => {
     const plan = getSectionLiveQueryPlan({
       workspaceOwnerNpub: 'npub-owner',

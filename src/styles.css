@@ -1743,6 +1743,19 @@ button:disabled {
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.06);
 }
 
+.flightdeck-report-card-link {
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.flightdeck-report-card-link:hover,
+.flightdeck-report-card-link:focus-visible {
+  border-color: rgba(59, 130, 246, 0.38);
+  box-shadow: 0 22px 42px rgba(15, 23, 42, 0.1);
+  transform: translateY(-1px);
+  outline: none;
+}
+
 .flightdeck-report-card-wide {
   grid-column: span 6;
 }
@@ -2416,6 +2429,88 @@ button:disabled {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.chat-channel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 48px;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+}
+
+.chat-channel-tab-scroll {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chat-channel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+  max-width: 16rem;
+  min-height: 34px;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-channel-tab:hover,
+.chat-channel-tab.active {
+  border-color: rgba(59, 130, 246, 0.25);
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.chat-channel-tab.active {
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.12);
+}
+
+.chat-channel-tab-unread .chat-channel-tab-label {
+  color: var(--text);
+}
+
+.chat-channel-tab .unread-dot {
+  margin-left: 0;
+}
+
+.chat-channel-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-channel-tab-add {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chat-channel-tab-add:hover {
+  background: #f8fafc;
 }
 
 .chat-channel-header {

@@ -4,6 +4,8 @@ import {
   getTaskById,
   getOpportunityById,
   getOpportunitiesByOwner,
+  getPendingWrites,
+  removePendingWrite,
   upsertComment,
   upsertOpportunity,
   upsertTask,
@@ -226,7 +228,9 @@ export const opportunitiesManagerMixin = {
 
     if (this.activeOpportunityId) {
       const active = hydrated.find((row) => row.record_id === this.activeOpportunityId) || null;
-      this.editingOpportunity = active ? toRaw(active) : null;
+      if (!this.isOpportunityDetailEditing?.()) {
+        this.editingOpportunity = active ? toRaw(active) : null;
+      }
       this.showOpportunityEditor = Boolean(active);
     }
   },
@@ -249,6 +253,8 @@ export const opportunitiesManagerMixin = {
     const selected = this.opportunities.find((item) => item.record_id === recordId) || null;
     this.editingOpportunity = selected ? toRaw(selected) : null;
     this.showOpportunityEditor = Boolean(selected);
+    this.opportunityDetailMode = 'view';
+    this.opportunityEditOriginal = null;
     this.opportunityPersonQuery = '';
     this.opportunityOrganisationQuery = '';
     this.opportunityTaskQuery = '';
@@ -305,6 +311,8 @@ export const opportunitiesManagerMixin = {
     this.activeOpportunityId = null;
     this.editingOpportunity = this.createOpportunityDraft(seed);
     this.showOpportunityEditor = true;
+    this.opportunityDetailMode = 'edit';
+    this.opportunityEditOriginal = null;
     this.newOpportunityCommentBody = '';
     this.opportunityComments = [];
     this.opportunityPersonQuery = '';
@@ -319,6 +327,8 @@ export const opportunitiesManagerMixin = {
     this.activeOpportunityId = opportunityId;
     this.editingOpportunity = opportunity ? this.createOpportunityDraft(opportunity) : null;
     this.showOpportunityEditor = Boolean(opportunity);
+    this.opportunityDetailMode = 'view';
+    this.opportunityEditOriginal = null;
     this.newOpportunityCommentBody = '';
     this.opportunityPersonQuery = '';
     this.opportunityOrganisationQuery = '';
@@ -331,9 +341,18 @@ export const opportunitiesManagerMixin = {
 
   closeOpportunityDetail(options = {}) {
     this.stopOpportunityCommentsLiveQuery?.();
+    if (this.isOpportunityDetailEditing?.() && this.opportunityEditOriginal?.record_id) {
+      void this.releaseLockManagedCheckout?.(this.opportunityEditOriginal, opportunityFamilyHash('opportunity'), {
+        reportError: false,
+        force: true,
+        checkoutPolicyConfig: this.getOpportunityCheckoutPolicyConfig?.(),
+      });
+    }
     this.activeOpportunityId = null;
     this.editingOpportunity = null;
     this.showOpportunityEditor = false;
+    this.opportunityDetailMode = 'view';
+    this.opportunityEditOriginal = null;
     this.newOpportunityCommentBody = '';
     this.opportunityComments = [];
     this.opportunityPersonQuery = '';
@@ -468,6 +487,78 @@ export const opportunitiesManagerMixin = {
     return (this.tasks || []).some((task) =>
       task?.record_state !== 'deleted'
       && String(task.title || '').trim().toLowerCase() === needle);
+  },
+
+  isOpportunityDetailEditing() {
+    return this.opportunityDetailMode === 'edit';
+  },
+
+  getOpportunityCheckoutPolicyConfig() {
+    if (typeof this.getCheckoutEditPolicyConfig === 'function') {
+      return this.getCheckoutEditPolicyConfig('opportunity');
+    }
+    const baseConfig = this.recordCheckoutPolicyConfig || {};
+    return {
+      recordFamilyHashes: {
+        ...(baseConfig.recordFamilyHashes || {}),
+      },
+      familySuffixes: {
+        ...(baseConfig.familySuffixes || {}),
+        opportunity: 'checkout_required',
+      },
+    };
+  },
+
+  async enterOpportunityEditMode() {
+    if (!this.editingOpportunity || !this.session?.npub || this.opportunityCheckoutPending) return false;
+    if (!this.editingOpportunity.record_id) {
+      this.opportunityDetailMode = 'edit';
+      return true;
+    }
+    const opportunity = this.opportunities.find((item) => item.record_id === this.editingOpportunity.record_id)
+      || await getOpportunityById(this.editingOpportunity.record_id);
+    if (!opportunity) return false;
+    const checkoutPolicyConfig = this.getOpportunityCheckoutPolicyConfig();
+    this.opportunityCheckoutPending = true;
+    try {
+      await this.ensureLockManagedCheckout?.(opportunity, opportunityFamilyHash('opportunity'), {
+        intent: 'edit',
+        checkoutPolicyConfig,
+      });
+      this.opportunityEditOriginal = toRaw(opportunity);
+      this.editingOpportunity = this.createOpportunityDraft(opportunity);
+      this.opportunityDetailMode = 'edit';
+      this.error = '';
+      return true;
+    } catch (error) {
+      this.opportunityDetailMode = 'view';
+      if (error?.userMessage) this.error = error.userMessage;
+      return false;
+    } finally {
+      this.opportunityCheckoutPending = false;
+    }
+  },
+
+  async cancelOpportunityEdit(options = {}) {
+    if (!this.editingOpportunity) return;
+    const recordId = this.editingOpportunity.record_id;
+    const original = recordId
+      ? (this.opportunities.find((item) => item.record_id === recordId) || this.opportunityEditOriginal)
+      : null;
+    if (original?.record_id) {
+      await this.releaseLockManagedCheckout?.(original, opportunityFamilyHash('opportunity'), {
+        reportError: options.reportError === true,
+        force: true,
+        checkoutPolicyConfig: this.getOpportunityCheckoutPolicyConfig(),
+      });
+    }
+    this.editingOpportunity = original ? this.createOpportunityDraft(original) : null;
+    this.opportunityDetailMode = 'view';
+    this.opportunityEditOriginal = null;
+    this.opportunityPersonQuery = '';
+    this.opportunityOrganisationQuery = '';
+    this.opportunityTaskQuery = '';
+    this.opportunityResponsibleQuery = '';
   },
 
   get canCreateOpportunityTask() {
@@ -653,7 +744,8 @@ export const opportunitiesManagerMixin = {
     this.forkOpportunity(this.editingOpportunity?.record_id);
   },
 
-  async queueOpportunityWrite(updatedOpportunity, previousOpportunity = null) {
+  async queueOpportunityWrite(updatedOpportunity, previousOpportunity = null, options = {}) {
+    const familyHash = opportunityFamilyHash('opportunity');
     const fallbackWriteGroupRef = getPreferredRecordWriteGroupForStore(this, updatedOpportunity)
       || this.getWorkspaceSettingsGroupRef?.()
       || null;
@@ -668,11 +760,41 @@ export const opportunitiesManagerMixin = {
       signature_npub: this.signingNpub,
       write_group_ref: writeFields.write_group_ref,
     });
-    await addPendingWrite({
+    const checkoutPolicyConfig = options.checkoutPolicyConfig || null;
+    const managedEnvelope = checkoutPolicyConfig && previousOpportunity?.record_id && typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
+      ? await this.attachCheckoutRequiredCheckoutToEnvelope(updatedOpportunity, envelope, {
+        intent: options.intent || 'edit',
+        checkoutPolicyConfig,
+      })
+      : envelope;
+    const pendingWrite = {
       record_id: updatedOpportunity.record_id,
-      record_family_hash: envelope.record_family_hash,
-      envelope,
-    });
+      record_family_hash: familyHash,
+      envelope: managedEnvelope,
+    };
+    if (checkoutPolicyConfig) pendingWrite.checkout_policy_config = checkoutPolicyConfig;
+    await addPendingWrite(pendingWrite);
+  },
+
+  async hasPendingOpportunityCreate(recordId) {
+    const familyHash = opportunityFamilyHash('opportunity');
+    const pending = await getPendingWrites();
+    return pending.some((row) =>
+      String(row?.record_id || row?.envelope?.record_id || '') === recordId
+      && String(row?.record_family_hash || row?.envelope?.record_family_hash || '') === familyHash
+      && Number(row?.envelope?.previous_version ?? -1) === 0
+    );
+  },
+
+  async replacePendingOpportunityWrites(recordId) {
+    const familyHash = opportunityFamilyHash('opportunity');
+    const pending = await getPendingWrites();
+    await Promise.all(pending
+      .filter((row) =>
+        String(row?.record_id || row?.envelope?.record_id || '') === recordId
+        && String(row?.record_family_hash || row?.envelope?.record_family_hash || '') === familyHash
+      )
+      .map((row) => removePendingWrite(row.row_id)));
   },
 
   async queueTaskBacklinkWrite(updatedTask, previousTask) {
@@ -730,85 +852,121 @@ export const opportunitiesManagerMixin = {
 
   async saveEditingOpportunity() {
     if (!this.editingOpportunity || !this.session?.npub) return null;
-    const title = String(this.editingOpportunity.title || '').trim();
-    if (!title) {
-      this.error = 'Opportunity title is required.';
-      return null;
-    }
-
-    const existing = this.editingOpportunity.record_id
-      ? await getOpportunityById(this.editingOpportunity.record_id)
-      : null;
-    const now = new Date().toISOString();
-    const effectiveScopeId = this.editingOpportunity.scope_id ?? null;
-    let groupIds = [];
-    let shares = [];
-    if (effectiveScopeId && typeof this.getScopeShareGroupIds === 'function') {
-      const scope = this.scopesMap?.get(effectiveScopeId) || null;
-      const scopeGroupIds = scope ? this.getScopeShareGroupIds(scope).filter(Boolean) : [];
-      if (scopeGroupIds.length > 0) {
-        groupIds = scopeGroupIds;
-        shares = typeof this.buildScopeDefaultShares === 'function'
-          ? this.buildScopeDefaultShares(scopeGroupIds)
-          : [];
+    if (this.opportunitySaving) return null;
+    this.opportunitySaving = true;
+    try {
+      const title = String(this.editingOpportunity.title || '').trim();
+      if (!title) {
+        this.error = 'Opportunity title is required.';
+        return null;
       }
-    }
-    if (groupIds.length === 0) {
-      const writeGroupRef = (existing ? getPreferredRecordWriteGroupForStore(this, existing) : null)
-        || this.getWorkspaceSettingsGroupRef?.()
-        || null;
-      groupIds = writeGroupRef ? [writeGroupRef] : (existing?.group_ids || []);
-      shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
-        ? this.buildScopeDefaultShares(groupIds)
-        : (existing?.shares || []);
-    }
-    const base = existing || {};
 
-    const updated = {
-      ...base,
-      ...toRaw(this.editingOpportunity),
-      record_id: this.editingOpportunity.record_id || crypto.randomUUID(),
-      owner_npub: base.owner_npub || this.workspaceOwnerNpub,
-      title,
-      description: String(this.editingOpportunity.description || ''),
-      stage: OPPORTUNITY_STAGE_OPTIONS.includes(this.editingOpportunity.stage) ? this.editingOpportunity.stage : 'speculation',
-      opportunity_type: String(this.editingOpportunity.opportunity_type || '').trim(),
-      responsible_npub: this.editingOpportunity.responsible_npub || null,
-      person_links: sortLinksPrimaryFirst(normalizeLinkedRows(this.editingOpportunity.person_links, 'person_id'), 'person_id'),
-      organisation_links: sortLinksPrimaryFirst(normalizeLinkedRows(this.editingOpportunity.organisation_links, 'organisation_id'), 'organisation_id'),
-      task_links: sortLinksPrimaryFirst(normalizeLinkedRows(this.editingOpportunity.task_links, 'task_id'), 'task_id'),
-      expected_value: Number.isFinite(Number(this.editingOpportunity.expected_value)) ? Number(this.editingOpportunity.expected_value) : null,
-      currency: String(this.editingOpportunity.currency || '').trim(),
-      expected_close_at: this.editingOpportunity.expected_close_at || null,
-      source: String(this.editingOpportunity.source || '').trim(),
-      origin_opportunity_id: this.editingOpportunity.origin_opportunity_id || null,
-      scope_id: this.editingOpportunity.scope_id ?? null,
-      scope_l1_id: this.editingOpportunity.scope_l1_id ?? null,
-      scope_l2_id: this.editingOpportunity.scope_l2_id ?? null,
-      scope_l3_id: this.editingOpportunity.scope_l3_id ?? null,
-      scope_l4_id: this.editingOpportunity.scope_l4_id ?? null,
-      scope_l5_id: this.editingOpportunity.scope_l5_id ?? null,
-      shares,
-      group_ids: groupIds,
-      sync_status: 'pending',
-      record_state: this.editingOpportunity.record_state || 'active',
-      version: existing ? (existing.version ?? 1) + 1 : 1,
-      created_at: existing?.created_at || now,
-      updated_at: now,
-    };
+      const existing = this.editingOpportunity.record_id
+        ? await getOpportunityById(this.editingOpportunity.record_id)
+        : null;
+      const pendingCreate = existing?.record_id
+        ? await this.hasPendingOpportunityCreate(existing.record_id)
+        : false;
+      if (existing?.record_id && !pendingCreate && !this.isOpportunityDetailEditing()) {
+        this.error = 'Click Edit before changing this opportunity.';
+        return null;
+      }
+      const now = new Date().toISOString();
+      const effectiveScopeId = this.editingOpportunity.scope_id ?? null;
+      let groupIds = [];
+      let shares = [];
+      if (effectiveScopeId && typeof this.getScopeShareGroupIds === 'function') {
+        const scope = this.scopesMap?.get(effectiveScopeId) || null;
+        const scopeGroupIds = scope ? this.getScopeShareGroupIds(scope).filter(Boolean) : [];
+        if (scopeGroupIds.length > 0) {
+          groupIds = scopeGroupIds;
+          shares = typeof this.buildScopeDefaultShares === 'function'
+            ? this.buildScopeDefaultShares(scopeGroupIds)
+            : [];
+        }
+      }
+      if (groupIds.length === 0) {
+        const writeGroupRef = this.getWorkspaceSettingsGroupRef?.()
+          || (existing ? getPreferredRecordWriteGroupForStore(this, existing) : null)
+          || null;
+        groupIds = writeGroupRef ? [writeGroupRef] : (existing?.group_ids || []);
+        shares = groupIds.length > 0 && typeof this.buildScopeDefaultShares === 'function'
+          ? this.buildScopeDefaultShares(groupIds)
+          : (existing?.shares || []);
+      }
+      const base = existing || {};
 
-    await upsertOpportunity(updated);
-    await this.queueOpportunityWrite(updated, existing);
-    await this.syncOpportunityTaskBacklinks(updated, existing);
-    this.applyOpportunities([
-      ...this.opportunities.filter((row) => row.record_id !== updated.record_id),
-      updated,
-    ]);
-    this.activeOpportunityId = updated.record_id;
-    this.editingOpportunity = this.createOpportunityDraft(updated);
-    this.showOpportunityEditor = true;
-    await this.flushAndBackgroundSync();
-    return updated;
+      const updated = {
+        ...base,
+        ...toRaw(this.editingOpportunity),
+        record_id: this.editingOpportunity.record_id || crypto.randomUUID(),
+        owner_npub: base.owner_npub || this.workspaceOwnerNpub,
+        title,
+        description: String(this.editingOpportunity.description || ''),
+        stage: OPPORTUNITY_STAGE_OPTIONS.includes(this.editingOpportunity.stage) ? this.editingOpportunity.stage : 'speculation',
+        opportunity_type: String(this.editingOpportunity.opportunity_type || '').trim(),
+        responsible_npub: this.editingOpportunity.responsible_npub || null,
+        person_links: sortLinksPrimaryFirst(normalizeLinkedRows(this.editingOpportunity.person_links, 'person_id'), 'person_id'),
+        organisation_links: sortLinksPrimaryFirst(normalizeLinkedRows(this.editingOpportunity.organisation_links, 'organisation_id'), 'organisation_id'),
+        task_links: sortLinksPrimaryFirst(normalizeLinkedRows(this.editingOpportunity.task_links, 'task_id'), 'task_id'),
+        expected_value: Number.isFinite(Number(this.editingOpportunity.expected_value)) ? Number(this.editingOpportunity.expected_value) : null,
+        currency: String(this.editingOpportunity.currency || '').trim(),
+        expected_close_at: this.editingOpportunity.expected_close_at || null,
+        source: String(this.editingOpportunity.source || '').trim(),
+        origin_opportunity_id: this.editingOpportunity.origin_opportunity_id || null,
+        scope_id: this.editingOpportunity.scope_id ?? null,
+        scope_l1_id: this.editingOpportunity.scope_l1_id ?? null,
+        scope_l2_id: this.editingOpportunity.scope_l2_id ?? null,
+        scope_l3_id: this.editingOpportunity.scope_l3_id ?? null,
+        scope_l4_id: this.editingOpportunity.scope_l4_id ?? null,
+        scope_l5_id: this.editingOpportunity.scope_l5_id ?? null,
+        shares,
+        group_ids: groupIds,
+        sync_status: 'pending',
+        record_state: this.editingOpportunity.record_state || 'active',
+        version: pendingCreate || !existing ? 1 : (existing.version ?? 1) + 1,
+        created_at: existing?.created_at || now,
+        updated_at: now,
+      };
+
+      if (pendingCreate) {
+        await this.replacePendingOpportunityWrites(existing.record_id);
+      }
+      await upsertOpportunity(updated);
+      const checkoutPolicyConfig = existing && !pendingCreate
+        ? this.getOpportunityCheckoutPolicyConfig()
+        : null;
+      await this.queueOpportunityWrite(updated, pendingCreate ? null : existing, {
+        checkoutPolicyConfig,
+        intent: 'edit',
+      });
+      await this.syncOpportunityTaskBacklinks(updated, pendingCreate ? null : existing);
+      this.applyOpportunities([
+        ...this.opportunities.filter((row) => row.record_id !== updated.record_id),
+        updated,
+      ]);
+      this.activeOpportunityId = updated.record_id;
+      this.editingOpportunity = this.createOpportunityDraft(updated);
+      this.showOpportunityEditor = true;
+      const flushResult = await this.flushAndBackgroundSync();
+      if (!existing || pendingCreate) {
+        this.opportunityDetailMode = 'view';
+        this.opportunityEditOriginal = null;
+      } else if ((flushResult?.pushed ?? 0) > 0) {
+        this.clearLockManagedCheckoutSession?.(updated.record_id, opportunityFamilyHash('opportunity'));
+        this.opportunityDetailMode = 'view';
+        this.opportunityEditOriginal = null;
+      }
+      return updated;
+    } finally {
+      this.opportunitySaving = false;
+    }
+  },
+
+  async saveEditingOpportunityAndClose() {
+    const saved = await this.saveEditingOpportunity();
+    if (saved && !this.isOpportunityDetailEditing()) this.closeOpportunityDetail({ syncRoute: true });
+    return saved;
   },
 
   async deleteOpportunity(opportunityId) {

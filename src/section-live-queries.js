@@ -167,25 +167,6 @@ function buildWorkspaceSpecs(store) {
         },
       ];
       break;
-    case 'calendar':
-      sectionSpecs = [
-        {
-          key: 'calendar:tasks',
-          query: () => getTasksByOwner(ownerNpub),
-          onNext: (tasks) => store.applyTasks(tasks),
-        },
-        {
-          key: 'calendar:schedules',
-          query: () => getSchedulesByOwner(ownerNpub),
-          onNext: (schedules) => store.applySchedules(schedules),
-        },
-        {
-          key: 'calendar:scopes',
-          query: () => getScopesByOwner(ownerNpub),
-          onNext: (scopes) => store.applyScopes(scopes),
-        },
-      ];
-      break;
     case 'reports':
       sectionSpecs = [
         {
@@ -200,35 +181,22 @@ function buildWorkspaceSpecs(store) {
         },
       ];
       break;
-    case 'schedules':
+    case 'settings':
       sectionSpecs = [
         {
-          key: 'schedules:schedules',
+          key: 'settings:schedules',
           query: () => getSchedulesByOwner(ownerNpub),
           onNext: (schedules) => store.applySchedules(schedules),
         },
-      ];
-      break;
-    case 'scopes':
-      sectionSpecs = [
         {
-          key: 'scopes:scopes',
+          key: 'settings:scopes',
           query: () => getScopesByOwner(ownerNpub),
           onNext: (scopes) => store.applyScopes(scopes),
         },
-      ];
-      break;
-    case 'flows':
-      sectionSpecs = [
         {
-          key: 'flows:approvals',
+          key: 'settings:approvals',
           query: () => getApprovalsByStatus('pending'),
           onNext: (approvals) => { store.approvals = approvals; },
-        },
-        {
-          key: 'flows:scopes',
-          query: () => getScopesByOwner(ownerNpub),
-          onNext: (scopes) => store.applyScopes(scopes),
         },
       ];
       break;
@@ -264,9 +232,6 @@ function buildWorkspaceSpecs(store) {
           onNext: (tasks) => store.applyTasks(tasks),
         },
       ];
-      break;
-    case 'live':
-      sectionSpecs = [];
       break;
     default:
       sectionSpecs = [];

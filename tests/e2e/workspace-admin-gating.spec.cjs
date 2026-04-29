@@ -268,18 +268,17 @@ test.describe('workspace admin gating', () => {
       await expect(memberPage.getByRole('heading', { name: 'SuperBased' })).toBeVisible();
 
       const visibleTabs = await memberPage.locator('.settings-tabs .settings-tab:visible').allTextContents();
-      expect(visibleTabs).toEqual(['Connection', 'Data']);
+      expect(visibleTabs).toEqual(['Connection', 'Flows', 'Data']);
 
       await expect(memberPage.getByRole('button', { name: 'Workspace', exact: true })).toHaveCount(0);
       await expect(memberPage.getByRole('button', { name: 'Automation', exact: true })).toHaveCount(0);
+      await expect(memberPage.getByRole('button', { name: 'Flows', exact: true })).toBeVisible();
+      await expect(memberPage.getByRole('button', { name: 'Scopes', exact: true })).toHaveCount(0);
       await expect(memberPage.getByRole('button', { name: 'Sharing', exact: true })).toHaveCount(0);
       await expect(memberPage.locator('#workspace-name-input')).toBeHidden();
       await expect(memberPage.getByRole('button', { name: 'Save workspace' })).toBeHidden();
-
-      await memberPage.goto(`/${workspaceSlug}/scopes`);
-      await expect(memberPage.getByRole('heading', { name: 'Scopes' })).toBeVisible();
+      await expect(memberPage.getByRole('heading', { name: 'Scopes' })).toHaveCount(0);
       await expect(memberPage.locator('.scope-create-bar')).toBeHidden();
-      await expect(memberPage.getByRole('button', { name: '+ Scope', exact: true })).toHaveCount(0);
     } finally {
       await memberContext.close();
     }

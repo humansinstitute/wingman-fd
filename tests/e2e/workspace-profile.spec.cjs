@@ -84,7 +84,7 @@ async function createWorkspace(page, workspaceName) {
 }
 
 async function openWorkspaceSettings(page) {
-  await page.locator('.sidebar-nav li').filter({ hasText: 'Settings' }).click();
+  await page.locator('.sidebar-nav li').filter({ hasText: 'Setup' }).click();
   await page.locator('.settings-tabs').getByRole('button', { name: 'Workspace', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
 }

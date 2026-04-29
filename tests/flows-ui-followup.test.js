@@ -152,34 +152,40 @@ describe('searchMentions includes flow type', () => {
 // --- 5. handleMentionNavigate supports 'flow' type ---
 
 describe('handleMentionNavigate supports flow type', () => {
-  it('navigates to flows section when type is flow', () => {
+  it('navigates to the flows settings tab when type is flow', () => {
     const store = {
       navSection: 'tasks',
+      settingsTab: 'connection',
       mobileNavOpen: true,
       showFlowEditor: false,
       editingFlowId: null,
       startWorkspaceLiveQueries: vi.fn(),
       refreshFlows: vi.fn(),
       refreshApprovals: vi.fn(),
+      syncRoute: vi.fn(),
       $nextTick: (fn) => fn(),
     };
 
     // Simulate handleMentionNavigate for flow type
     function handleMentionNavigate(type, id) {
       if (type === 'flow') {
-        store.navSection = 'flows';
+        store.navSection = 'settings';
+        store.settingsTab = 'flows';
         store.mobileNavOpen = false;
         store.startWorkspaceLiveQueries();
         store.refreshFlows();
         store.refreshApprovals();
+        store.syncRoute();
         store.editingFlowId = id;
         store.showFlowEditor = true;
       }
     }
 
     handleMentionNavigate('flow', 'flow-abc');
-    expect(store.navSection).toBe('flows');
+    expect(store.navSection).toBe('settings');
+    expect(store.settingsTab).toBe('flows');
     expect(store.mobileNavOpen).toBe(false);
+    expect(store.syncRoute).toHaveBeenCalled();
     expect(store.editingFlowId).toBe('flow-abc');
     expect(store.showFlowEditor).toBe(true);
   });
@@ -210,18 +216,17 @@ describe('resolveReferenceLabel supports flow type', () => {
 });
 
 
-// --- 1 & 2. HTML structure assertions for sidebar icon and add-step button ---
+// --- 1 & 2. HTML structure assertions for settings placement and add-step button ---
 // These test the expected HTML patterns that our code changes will produce.
 
-describe('flows sidebar icon HTML structure', () => {
-  it('should have sidebar-icon wrapper like other nav items', () => {
-    // This is a structural assertion — the Flows nav item must use the same
-    // <span class="sidebar-icon"> wrapper with explicit width/height SVG
-    // as all other sidebar nav items (Docs, Reports, People, etc.)
-    const expectedPattern = /<span class="sidebar-icon"[^>]*>[\s\S]*?<svg[^>]*width="18"[^>]*height="18"/;
-    // The actual assertion will be verified by reading the source file
-    // For the unit test, we verify the pattern exists as a contract
-    expect(expectedPattern.test('<span class="sidebar-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24">')).toBe(true);
+describe('flows settings tab HTML structure', () => {
+  it('keeps flows in settings instead of the sidebar', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
+
+    expect(html).toContain("settingsTab === 'flows'");
+    expect(html).not.toContain('<span class="sidebar-label">Flows</span>');
   });
 });
 

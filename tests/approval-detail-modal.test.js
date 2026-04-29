@@ -72,7 +72,7 @@ describe('approval detail modal is globally accessible', () => {
   });
 
   it('modal is NOT inside any other navSection template', () => {
-    const sections = ['chat', 'tasks', 'docs', 'reports', 'calendar', 'schedules', 'opportunities', 'scopes', 'people', 'settings'];
+    const sections = ['chat', 'tasks', 'docs', 'reports', 'opportunities', 'people', 'settings'];
     for (const sec of sections) {
       expect(isInsideSection('approval-detail-overlay', sec)).toBe(false);
     }
@@ -95,10 +95,12 @@ describe('approval card click handlers wire to modal state', () => {
     expect(statusHtml).toContain('showApprovalDetail');
   });
 
-  it('flows page approval cards set activeApprovalId and showApprovalDetail', () => {
-    const flowsRanges = findSectionBoundaries('flows');
-    expect(flowsRanges.length).toBeGreaterThan(0);
-    const flowsHtml = flowsRanges.map((r) => indexContent.slice(r.start, r.end)).join('');
+  it('flows settings tab approval cards set activeApprovalId and showApprovalDetail', () => {
+    const start = indexContent.indexOf('<div class="settings-tab-content" x-show="$store.chat.settingsTab === \'flows\'">');
+    expect(start).toBeGreaterThan(-1);
+    const end = indexContent.indexOf('<div class="settings-tab-content" x-show="$store.chat.canAdminWorkspace && $store.chat.settingsTab === \'schedules\'">', start);
+    expect(end).toBeGreaterThan(start);
+    const flowsHtml = indexContent.slice(start, end);
 
     expect(flowsHtml).toContain('flows-approval-card');
     expect(flowsHtml).toContain('activeApprovalId');

@@ -332,8 +332,28 @@ export const audioRecordingManagerMixin = {
   },
 
   async playAudioAttachment(attachment) {
-    const note = this.getAudioAttachmentNote(attachment);
-    if (!note?.storage_object_id || !note?.media_encryption) return;
+    const recordId = String(attachment?.audio_note_record_id || '').trim();
+    if (!recordId) return;
+
+    let note = this.getAudioNote(recordId);
+    if (!note && typeof this.refreshAudioNotes === 'function') {
+      await this.refreshAudioNotes();
+      note = this.getAudioNote(recordId);
+    }
+    if (!note && typeof this.pullFamiliesFromBackend === 'function') {
+      try {
+        await this.pullFamiliesFromBackend(['audio_note'], { forceFull: true });
+        if (typeof this.refreshAudioNotes === 'function') await this.refreshAudioNotes();
+        note = this.getAudioNote(recordId);
+      } catch (error) {
+        this.error = error?.message || 'Could not fetch voice note.';
+        return;
+      }
+    }
+    if (!note?.storage_object_id || !note?.media_encryption) {
+      this.error = 'Voice note is not available yet. Sync audio notes and try again.';
+      return;
+    }
     try {
       const encryptedBytes = await downloadStorageObject(note.storage_object_id);
       const blob = await decryptAudioBytes(encryptedBytes, note.media_encryption, note.mime_type);
@@ -382,7 +402,16 @@ export const audioRecordingManagerMixin = {
       return normalizeStorageAccessGroupIds(encryptableGroupIds(this.selectedChannel));
     }
     if (context === 'task-comment') {
-      return normalizeStorageAccessGroupIds(encryptableGroupIds(this.editingTask));
+      const activeTaskId = String(this.activeTaskId || '').trim();
+      const activeTask = activeTaskId
+        ? (this.tasks || []).find((task) => String(task?.record_id || '') === activeTaskId)
+        : null;
+      const editingTaskMatchesActive = !activeTaskId
+        || String(this.editingTask?.record_id || '') === activeTaskId;
+      const task = editingTaskMatchesActive
+        ? (this.editingTask || this.activeTaskDetail || activeTask)
+        : (this.activeTaskDetail || activeTask || this.editingTask);
+      return normalizeStorageAccessGroupIds(encryptableGroupIds(task));
     }
     if (context === 'doc-comment' || context === 'doc-reply') {
       if (typeof this.getEncryptableDocCommentGroupIds === 'function') {

@@ -332,7 +332,7 @@ describe('section-live-queries: flows always loaded', () => {
   });
 
   it('includes flows live query even for default/unknown section', () => {
-    const store = makeStore('calendar');
+    const store = makeStore('unknown');
     const plan = getSectionLiveQueryPlan(store);
     expect(plan.workspace).toContain('ws:flows');
   });

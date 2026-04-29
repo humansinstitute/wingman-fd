@@ -22,8 +22,14 @@ import {
   upsertComment,
   addPendingWrite,
 } from './db.js';
-import { outboundFlow } from './translators/flows.js';
-import { outboundApproval } from './translators/approvals.js';
+import {
+  outboundFlow,
+  recordFamilyHash as flowFamilyHash,
+} from './translators/flows.js';
+import {
+  outboundApproval,
+  recordFamilyHash as approvalFamilyHash,
+} from './translators/approvals.js';
 import { outboundTask } from './translators/tasks.js';
 import { outboundComment } from './translators/comments.js';
 import { recordFamilyHash } from './translators/chat.js';
@@ -336,6 +342,108 @@ export const flowsManagerMixin = {
     const ownerNpub = this.workspaceOwnerNpub;
     if (!ownerNpub) return;
     this.approvals = await getAllApprovals();
+  },
+
+  isFlowDetailEditing() {
+    return this.flowDetailMode === 'edit';
+  },
+
+  getFlowCheckoutPolicyConfig() {
+    if (typeof this.getCheckoutEditPolicyConfig === 'function') {
+      return this.getCheckoutEditPolicyConfig('flow');
+    }
+    const baseConfig = this.recordCheckoutPolicyConfig || {};
+    return {
+      recordFamilyHashes: {
+        ...(baseConfig.recordFamilyHashes || {}),
+      },
+      familySuffixes: {
+        ...(baseConfig.familySuffixes || {}),
+        flow: 'checkout_required',
+      },
+    };
+  },
+
+  getApprovalCheckoutPolicyConfig() {
+    if (typeof this.getCheckoutEditPolicyConfig === 'function') {
+      return this.getCheckoutEditPolicyConfig('approval');
+    }
+    const baseConfig = this.recordCheckoutPolicyConfig || {};
+    return {
+      recordFamilyHashes: {
+        ...(baseConfig.recordFamilyHashes || {}),
+      },
+      familySuffixes: {
+        ...(baseConfig.familySuffixes || {}),
+        approval: 'checkout_required',
+      },
+    };
+  },
+
+  openFlowEditor(flowId = null) {
+    this.editingFlowId = flowId || null;
+    this.showFlowEditor = true;
+    this.flowDetailMode = flowId ? 'view' : 'edit';
+    this.flowEditOriginal = null;
+    this.flowCheckoutPending = false;
+  },
+
+  closeFlowEditor(options = {}) {
+    const original = this.flowEditOriginal;
+    if (this.isFlowDetailEditing?.() && original?.record_id) {
+      void this.releaseLockManagedCheckout?.(original, flowFamilyHash('flow'), {
+        reportError: false,
+        force: true,
+        checkoutPolicyConfig: this.getFlowCheckoutPolicyConfig(),
+      });
+    }
+    this.showFlowEditor = false;
+    this.editingFlowId = null;
+    this.flowDetailMode = 'view';
+    this.flowEditOriginal = null;
+    this.flowCheckoutPending = false;
+    if (options.syncRoute === true) this.syncRoute?.();
+  },
+
+  async enterFlowEditMode() {
+    if (!this.editingFlowId || !this.session?.npub || this.flowCheckoutPending) return false;
+    const flow = this.flows.find((entry) => entry.record_id === this.editingFlowId)
+      || await getFlowById(this.editingFlowId);
+    if (!flow) return false;
+    const checkoutPolicyConfig = this.getFlowCheckoutPolicyConfig();
+    this.flowCheckoutPending = true;
+    try {
+      await this.ensureLockManagedCheckout?.(flow, flowFamilyHash('flow'), {
+        intent: 'edit',
+        checkoutPolicyConfig,
+      });
+      this.flowEditOriginal = toRaw(flow);
+      this.flowDetailMode = 'edit';
+      this.error = '';
+      return true;
+    } catch (error) {
+      this.flowDetailMode = 'view';
+      if (error?.userMessage) this.error = error.userMessage;
+      return false;
+    } finally {
+      this.flowCheckoutPending = false;
+    }
+  },
+
+  async cancelFlowEdit() {
+    if (!this.editingFlowId) return;
+    const original = this.flows.find((entry) => entry.record_id === this.editingFlowId)
+      || this.flowEditOriginal
+      || null;
+    if (original?.record_id) {
+      await this.releaseLockManagedCheckout?.(original, flowFamilyHash('flow'), {
+        reportError: false,
+        force: true,
+        checkoutPolicyConfig: this.getFlowCheckoutPolicyConfig(),
+      });
+    }
+    this.flowDetailMode = 'view';
+    this.flowEditOriginal = null;
   },
 
   // --- computed helpers ---
@@ -733,9 +841,13 @@ export const flowsManagerMixin = {
     return recordId;
   },
 
-  async updateFlow(flowId, patch = {}) {
+  async updateFlow(flowId, patch = {}, options = {}) {
     const flow = this.flows.find((f) => f.record_id === flowId);
     if (!flow || !this.session?.npub) return null;
+    if (!options.allowWithoutCheckout && !this.isFlowDetailEditing?.()) {
+      this.error = 'Click Edit before changing this flow.';
+      return null;
+    }
 
     const nextVersion = (flow.version ?? 1) + 1;
 
@@ -794,20 +906,43 @@ export const flowsManagerMixin = {
       signature_npub: this.signingNpub,
       write_group_ref: writeFields.write_group_ref,
     });
+    const checkoutPolicyConfig = options.checkoutPolicyConfig || this.getFlowCheckoutPolicyConfig();
+    const managedEnvelope = typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
+      ? await this.attachCheckoutRequiredCheckoutToEnvelope(updated, envelope, {
+        intent: options.intent || 'edit',
+        checkoutPolicyConfig,
+      })
+      : envelope;
 
     await addPendingWrite({
       record_id: flowId,
-      record_family_hash: envelope.record_family_hash,
-      envelope,
+      record_family_hash: managedEnvelope.record_family_hash,
+      envelope: managedEnvelope,
+      checkout_policy_config: checkoutPolicyConfig,
     });
 
-    await this.flushAndBackgroundSync();
+    const flushResult = await this.flushAndBackgroundSync();
+    if ((flushResult?.pushed ?? 0) > 0) {
+      this.clearLockManagedCheckoutSession?.(updated.record_id, flowFamilyHash('flow'));
+      this.flowDetailMode = 'view';
+      this.flowEditOriginal = null;
+    }
     return updated;
   },
 
   async deleteFlow(flowId) {
     const flow = this.flows.find((f) => f.record_id === flowId);
     if (!flow || !this.session?.npub) return;
+    const checkoutPolicyConfig = this.getFlowCheckoutPolicyConfig();
+    try {
+      await this.ensureLockManagedCheckout?.(flow, flowFamilyHash('flow'), {
+        intent: 'delete',
+        checkoutPolicyConfig,
+      });
+    } catch (error) {
+      if (error?.userMessage) this.error = error.userMessage;
+      return;
+    }
 
     const nextVersion = (flow.version ?? 1) + 1;
     const updated = toRaw({
@@ -831,14 +966,24 @@ export const flowsManagerMixin = {
       signature_npub: this.signingNpub,
       write_group_ref: writeFields.write_group_ref,
     });
+    const managedEnvelope = typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
+      ? await this.attachCheckoutRequiredCheckoutToEnvelope(updated, envelope, {
+        intent: 'delete',
+        checkoutPolicyConfig,
+      })
+      : envelope;
 
     await addPendingWrite({
       record_id: flowId,
-      record_family_hash: envelope.record_family_hash,
-      envelope,
+      record_family_hash: managedEnvelope.record_family_hash,
+      envelope: managedEnvelope,
+      checkout_policy_config: checkoutPolicyConfig,
     });
 
-    await this.flushAndBackgroundSync();
+    const flushResult = await this.flushAndBackgroundSync();
+    if ((flushResult?.pushed ?? 0) > 0) {
+      this.clearLockManagedCheckoutSession?.(updated.record_id, flowFamilyHash('flow'));
+    }
   },
 
   // --- manual flow start ---
@@ -956,6 +1101,7 @@ export const flowsManagerMixin = {
     };
 
     const updated = await this._patchApproval(approval, patch);
+    if (!updated) return null;
 
     // Move linked tasks to done
     if (Array.isArray(approval.task_ids)) {
@@ -989,6 +1135,15 @@ export const flowsManagerMixin = {
   async improveApproval(approvalId, decisionNote = '') {
     const approval = this.approvals.find((a) => a.record_id === approvalId);
     if (!approval || !this.session?.npub) return null;
+    try {
+      await this.ensureLockManagedCheckout?.(approval, approvalFamilyHash('approval'), {
+        intent: 'edit',
+        checkoutPolicyConfig: this.getApprovalCheckoutPolicyConfig(),
+      });
+    } catch (error) {
+      if (error?.userMessage) this.error = error.userMessage;
+      return null;
+    }
 
     // Create a revision task
     const revisionTaskId = crypto.randomUUID();
@@ -1052,6 +1207,7 @@ export const flowsManagerMixin = {
     };
 
     const updated = await this._patchApproval(approval, patch);
+    if (!updated) return null;
     await this.flushAndBackgroundSync();
     return updated;
   },
@@ -1068,6 +1224,7 @@ export const flowsManagerMixin = {
       approved_at: now,
       decision_note: decisionNote || approval.decision_note || null,
     });
+    if (!updated) return null;
 
     if (Array.isArray(approval.task_ids)) {
       for (const taskId of approval.task_ids) {
@@ -1084,6 +1241,18 @@ export const flowsManagerMixin = {
   },
 
   async _patchApproval(approval, patch) {
+    const checkoutPolicyConfig = this.getApprovalCheckoutPolicyConfig();
+    if (approval?.record_id) {
+      try {
+        await this.ensureLockManagedCheckout?.(approval, approvalFamilyHash('approval'), {
+          intent: 'edit',
+          checkoutPolicyConfig,
+        });
+      } catch (error) {
+        if (error?.userMessage) this.error = error.userMessage;
+        return null;
+      }
+    }
     const nextVersion = (approval.version ?? 1) + 1;
     const effectiveScopeId = patch.scope_id !== undefined ? patch.scope_id : approval.scope_id;
     let resolvedGroupIds = toRaw(patch.group_ids ?? approval.group_ids ?? []);
@@ -1135,14 +1304,24 @@ export const flowsManagerMixin = {
       signature_npub: this.signingNpub,
       write_group_ref: writeFields.write_group_ref,
     });
+    const managedEnvelope = typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
+      ? await this.attachCheckoutRequiredCheckoutToEnvelope(updated, envelope, {
+        intent: 'edit',
+        checkoutPolicyConfig,
+      })
+      : envelope;
 
     await addPendingWrite({
       record_id: approval.record_id,
-      record_family_hash: envelope.record_family_hash,
-      envelope,
+      record_family_hash: managedEnvelope.record_family_hash,
+      envelope: managedEnvelope,
+      checkout_policy_config: checkoutPolicyConfig,
     });
 
-    await this.flushAndBackgroundSync();
+    const flushResult = await this.flushAndBackgroundSync();
+    if ((flushResult?.pushed ?? 0) > 0) {
+      this.clearLockManagedCheckoutSession?.(updated.record_id, approvalFamilyHash('approval'));
+    }
     return updated;
   },
 

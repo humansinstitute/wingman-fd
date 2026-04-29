@@ -235,11 +235,13 @@ export const syncManagerMixin = {
       || localRecord?.content
       || ''
     ).trim();
-    const policy = resolveFlightDeckRecordCheckoutPolicy(familyHash, this.recordCheckoutPolicyConfig, { recordId });
+    const policyConfig = row?.checkout_policy_config || this.recordCheckoutPolicyConfig;
+    const policy = resolveFlightDeckRecordCheckoutPolicy(familyHash, policyConfig, { recordId });
     const checkoutId = String(envelope.checkout?.checkout_id || '').trim();
     const version = Number(envelope.version ?? 0) || 0;
     const previousVersion = Number(envelope.previous_version ?? 0) || 0;
-    const checkoutMissing = policy === 'checkout_required' && !checkoutId;
+    const isCreateWrite = previousVersion <= 0;
+    const checkoutMissing = policy === 'checkout_required' && !checkoutId && !isCreateWrite;
     return {
       rowId: row?.row_id ?? null,
       recordId,
@@ -1321,9 +1323,9 @@ export const syncManagerMixin = {
     if (this.navSection === 'chat' && this.selectedChannelId) return this.FAST_SYNC_MS;
     if (this.navSection === 'docs') return this.FAST_SYNC_MS;
     if (this.navSection === 'tasks') return this.FAST_SYNC_MS;
-    if (this.navSection === 'calendar') return this.FAST_SYNC_MS;
-    if (this.navSection === 'schedules') return this.FAST_SYNC_MS;
-    if (this.navSection === 'scopes') return this.FAST_SYNC_MS;
+    if (this.navSection === 'settings' && this.settingsTab === 'schedules') return this.FAST_SYNC_MS;
+    if (this.navSection === 'settings' && this.settingsTab === 'scopes') return this.FAST_SYNC_MS;
+    if (this.navSection === 'settings' && this.settingsTab === 'flows') return this.FAST_SYNC_MS;
     return this.IDLE_SYNC_MS;
   },
 
@@ -1525,7 +1527,7 @@ export const syncManagerMixin = {
 
   async performSync({ silent = false, showBusy = !silent, forceFull = false, manual = false } = {}) {
     if (!this.session?.npub || !this.backendUrl) {
-      if (!silent) this.error = 'Configure settings first';
+      if (!silent) this.error = 'Configure setup first';
       return { pushed: 0, pulled: 0 };
     }
 
@@ -1601,6 +1603,7 @@ export const syncManagerMixin = {
       this.handleSyncProgressUpdate({ phase: 'applying' });
       if (!silent || hasRemoteDataChanges) {
         await this.refreshWorkspaceSettings({ overwriteInput: !this.wingmanHarnessDirty });
+        await this.refreshAudioNotes();
         await this.ensureTaskFamilyBackfill();
         await this.ensureTaskBoardScopeSetup();
         if (this.docsEditorOpen && this.selectedDocId) {
@@ -1777,7 +1780,7 @@ export const syncManagerMixin = {
 
   async pullFamiliesFromBackend(familyIds, options = {}) {
     if (!this.session?.npub || !this.backendUrl || !this.workspaceOwnerNpub) {
-      throw new Error('Configure settings first');
+      throw new Error('Configure setup first');
     }
     const hashes = getSyncFamilyHashes(familyIds);
     if (hashes.length === 0) return { pulled: 0 };

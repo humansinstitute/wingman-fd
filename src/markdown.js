@@ -45,7 +45,7 @@ function normalizeFlightDeckRoute(url) {
 
   if (params.docid && section !== 'docs') section = 'docs';
   else if (params.reportid && section !== 'reports') section = 'reports';
-  else if ((params.taskid || params.view) && section !== 'tasks' && section !== 'calendar') section = 'tasks';
+  else if ((params.taskid || params.view) && section !== 'tasks') section = 'tasks';
   else if ((params.channelid || params.threadid) && section !== 'chat') section = 'chat';
   else if (!needsWorkspaceSlug && (!workspacekey || params.workspacekey === workspacekey)) return url.href;
 

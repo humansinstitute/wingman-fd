@@ -378,6 +378,41 @@ describe('pending write diagnostics', () => {
     });
   });
 
+  it('does not flag checkout-required create writes as missing checkout metadata', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    getPendingWrites.mockResolvedValueOnce([
+      {
+        row_id: 9,
+        record_id: 'task-create',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: { familySuffixes: { task: 'checkout_required' } },
+        envelope: {
+          record_id: 'task-create',
+          record_family_hash: taskFamilyHash,
+          version: 1,
+          previous_version: 0,
+        },
+      },
+    ]);
+    const store = createStore({
+      tasks: [{
+        record_id: 'task-create',
+        title: 'New scoped task',
+      }],
+    });
+
+    await store.refreshPendingWriteDiagnostics();
+
+    expect(store.pendingWriteDiagnostics[0]).toMatchObject({
+      rowId: 9,
+      recordId: 'task-create',
+      familyId: 'task',
+      policy: 'checkout_required',
+      checkoutMissing: false,
+      syncBlocker: '',
+    });
+  });
+
   it('can discard a queued write without deleting the local record row', async () => {
     getPendingWrites.mockResolvedValueOnce([]);
     const refreshSyncStatus = vi.fn().mockResolvedValue(undefined);
@@ -453,6 +488,26 @@ describe('getSyncCadenceMs', () => {
       session: { npub: 'npub1me' },
       backendUrl: 'https://backend.example.com',
       navSection: 'docs',
+    });
+    expect(fn()).toBe(1000);
+  });
+
+  it('returns FAST_SYNC_MS for scopes settings tab', () => {
+    const { fn } = bindMethod('getSyncCadenceMs', {
+      session: { npub: 'npub1me' },
+      backendUrl: 'https://backend.example.com',
+      navSection: 'settings',
+      settingsTab: 'scopes',
+    });
+    expect(fn()).toBe(1000);
+  });
+
+  it('returns FAST_SYNC_MS for flows settings tab', () => {
+    const { fn } = bindMethod('getSyncCadenceMs', {
+      session: { npub: 'npub1me' },
+      backendUrl: 'https://backend.example.com',
+      navSection: 'settings',
+      settingsTab: 'flows',
     });
     expect(fn()).toBe(1000);
   });
@@ -710,6 +765,7 @@ describe('performSync', () => {
     runSync.mockResolvedValueOnce({ pushed: 0, pulled: 3, pruned: 0 });
     const refreshSyncStatus = vi.fn().mockResolvedValue(undefined);
     const refreshWorkspaceSettings = vi.fn().mockResolvedValue(undefined);
+    const refreshAudioNotes = vi.fn().mockResolvedValue(undefined);
     const ensureTaskFamilyBackfill = vi.fn().mockResolvedValue(undefined);
     const ensureTaskBoardScopeSetup = vi.fn().mockResolvedValue(undefined);
     const { fn } = bindMethod('performSync', {
@@ -717,6 +773,7 @@ describe('performSync', () => {
       backendUrl: 'https://backend.example.com',
       refreshSyncStatus,
       refreshWorkspaceSettings,
+      refreshAudioNotes,
       ensureTaskFamilyBackfill,
       ensureTaskBoardScopeSetup,
       hasForcedInitialBackfill: true,
@@ -726,6 +783,7 @@ describe('performSync', () => {
     await fn({ silent: true });
 
     expect(refreshWorkspaceSettings).toHaveBeenCalledTimes(1);
+    expect(refreshAudioNotes).toHaveBeenCalledTimes(1);
     expect(ensureTaskFamilyBackfill).toHaveBeenCalledTimes(1);
     expect(ensureTaskBoardScopeSetup).toHaveBeenCalledTimes(1);
     expect(refreshSyncStatus).toHaveBeenCalledWith({ refreshUnread: true });
@@ -743,7 +801,7 @@ describe('performSync', () => {
       backendUrl: '',
     });
     await fn({ silent: false });
-    expect(store.error).toBe('Configure settings first');
+    expect(store.error).toBe('Configure setup first');
   });
 
   it('opens sync progress modal and forces full sync for manual runs', async () => {

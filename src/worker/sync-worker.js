@@ -29,10 +29,13 @@ import {
   upsertAudioNote,
   upsertScope,
   upsertFlow,
+  getFlowById,
   upsertApproval,
+  getApprovalById,
   upsertPerson,
   upsertOrganisation,
   upsertOpportunity,
+  getOpportunityById,
   getSyncState,
   setSyncState,
   upsertSyncQuarantineEntry,
@@ -97,10 +100,105 @@ function pendingWriteCheckoutPolicyConfig(pendingWrite, options = {}) {
   return pendingWrite?.checkout_policy_config || options.checkoutPolicyConfig || null;
 }
 
+function isCreateEnvelope(envelope = {}) {
+  return Number(envelope?.previous_version ?? 0) <= 0;
+}
+
+function stripPendingWriteCheckoutPolicyConfig(pendingWrite) {
+  const { checkout_policy_config: _checkoutPolicyConfig, ...optimisticPendingWrite } = pendingWrite;
+  return optimisticPendingWrite;
+}
+
+function normalizeEnvelopeForTowerBootstrap(envelope = {}) {
+  const {
+    checkout: _checkout,
+    ...bootstrapEnvelope
+  } = envelope || {};
+  return {
+    ...bootstrapEnvelope,
+    version: 1,
+    previous_version: 0,
+  };
+}
+
+function isMissingTowerBaseRejection(rejection = {}) {
+  const code = String(rejection?.code || '').trim();
+  const requiredPreviousVersion = Number(rejection?.required_previous_version ?? rejection?.tower_latest_version ?? -1);
+  const receivedPreviousVersion = Number(rejection?.received_previous_version ?? -1);
+  return code === 'prior_version_mismatch'
+    && requiredPreviousVersion === 0
+    && receivedPreviousVersion > 0;
+}
+
+async function retryMissingTowerBaseWrites({
+  ownerNpub,
+  batch = [],
+  result = {},
+  checkoutPolicyConfig = null,
+}) {
+  const rejected = Array.isArray(result?.rejected) ? result.rejected : [];
+  const bootstrapRecordIds = new Set(rejected
+    .filter(isMissingTowerBaseRejection)
+    .map((entry) => String(entry?.record_id || '').trim())
+    .filter(Boolean));
+  if (bootstrapRecordIds.size === 0) return result;
+
+  const retryRows = batch.filter((row) => bootstrapRecordIds.has(String(row?.record_id || row?.envelope?.record_id || '').trim()));
+  if (retryRows.length === 0) return result;
+
+  const retryRecords = retryRows.map((row) => normalizeEnvelopeForTowerBootstrap(row.envelope));
+  flightDeckLog('warn', 'sync', 'retrying local pending writes as Tower bootstrap versions', {
+    ownerNpub,
+    recordIds: retryRecords.map((record) => record.record_id),
+  });
+
+  const retryResult = await syncRecords({
+    owner_npub: ownerNpub,
+    records: retryRecords,
+    checkout_policy_config: checkoutPolicyConfig,
+  });
+
+  const retryRejected = Array.isArray(retryResult?.rejected) ? retryResult.rejected : [];
+  const retryRejectedIds = new Set(retryRejected
+    .map((entry) => String(entry?.record_id || '').trim())
+    .filter(Boolean));
+  const retryDeferredIds = new Set((Array.isArray(retryResult?.deferred) ? retryResult.deferred : [])
+    .map((recordId) => String(recordId || '').trim())
+    .filter(Boolean));
+  const acceptedRetryIds = new Set(retryRows
+    .map((row) => String(row?.record_id || row?.envelope?.record_id || '').trim())
+    .filter((recordId) => recordId && !retryRejectedIds.has(recordId) && !retryDeferredIds.has(recordId)));
+
+  const originalRejectedStillActive = rejected.filter((entry) => {
+    const recordId = String(entry?.record_id || '').trim();
+    return !recordId || !acceptedRetryIds.has(recordId);
+  });
+
+  return {
+    ...result,
+    synced: (Number(result?.synced ?? 0) || 0) + (Number(retryResult?.synced ?? 0) || acceptedRetryIds.size),
+    created: (Number(result?.created ?? 0) || 0) + (Number(retryResult?.created ?? 0) || acceptedRetryIds.size),
+    updated: Number(result?.updated ?? 0) || 0,
+    rejected: [...originalRejectedStillActive.filter((entry) => !bootstrapRecordIds.has(String(entry?.record_id || '').trim())), ...retryRejected],
+    deferred: [...new Set([
+      ...(Array.isArray(result?.deferred) ? result.deferred : []),
+      ...(Array.isArray(retryResult?.deferred) ? retryResult.deferred : []),
+    ])],
+  };
+}
+
 async function normalizePendingWritesForFlush(pendingWrites = []) {
   const normalized = [];
   for (const pendingWrite of pendingWrites) {
     const familyHash = String(pendingWrite?.record_family_hash || pendingWrite?.envelope?.record_family_hash || '').trim();
+    if (
+      pendingWrite?.checkout_policy_config
+      && !pendingWrite?.envelope?.checkout?.checkout_id
+      && isCreateEnvelope(pendingWrite?.envelope)
+    ) {
+      normalized.push(stripPendingWriteCheckoutPolicyConfig(pendingWrite));
+      continue;
+    }
     if (
       familyHash === TASK_FAMILY
       && pendingWrite?.checkout_policy_config
@@ -108,8 +206,7 @@ async function normalizePendingWritesForFlush(pendingWrites = []) {
     ) {
       const task = await getTaskById(String(pendingWrite?.record_id || pendingWrite?.envelope?.record_id || '').trim());
       if (task?.state === 'archive' || task?.state === 'done') {
-        const { checkout_policy_config: _checkoutPolicyConfig, ...optimisticPendingWrite } = pendingWrite;
-        normalized.push(optimisticPendingWrite);
+        normalized.push(stripPendingWriteCheckoutPolicyConfig(pendingWrite));
         continue;
       }
     }
@@ -225,6 +322,24 @@ async function markLockManagedWriteState(recordId, familyHash, patch = {}, optio
     const current = await getTaskById(recordId);
     if (!current) return;
     await upsertTask({ ...current, ...patch });
+    return;
+  }
+  if (familyHash === OPPORTUNITY_FAMILY) {
+    const current = await getOpportunityById(recordId);
+    if (!current) return;
+    await upsertOpportunity({ ...current, ...patch });
+    return;
+  }
+  if (familyHash === FLOW_FAMILY) {
+    const current = await getFlowById(recordId);
+    if (!current) return;
+    await upsertFlow({ ...current, ...patch });
+    return;
+  }
+  if (familyHash === APPROVAL_FAMILY) {
+    const current = await getApprovalById(recordId);
+    if (!current) return;
+    await upsertApproval({ ...current, ...patch });
   }
 }
 
@@ -271,6 +386,12 @@ export async function flushPendingWrites(ownerNpub, onProgress, options = {}) {
         owner_npub: ownerNpub,
         records: envelopes,
         checkout_policy_config: checkoutPolicyConfig,
+      });
+      result = await retryMissingTowerBaseWrites({
+        ownerNpub,
+        batch,
+        result,
+        checkoutPolicyConfig,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

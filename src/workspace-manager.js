@@ -205,8 +205,8 @@ export const workspaceManagerMixin = {
 
   normalizeSettingsTab() {
     const visibleTabs = this.canAdminWorkspace
-      ? ['workspace', 'connection', 'automation', 'data', 'sharing']
-      : ['connection', 'data'];
+      ? ['workspace', 'connection', 'flows', 'automation', 'schedules', 'scopes', 'data', 'sharing']
+      : ['connection', 'flows', 'data'];
     if (!visibleTabs.includes(this.settingsTab)) {
       this.settingsTab = 'connection';
     }

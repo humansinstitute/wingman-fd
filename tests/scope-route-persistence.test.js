@@ -6,7 +6,7 @@ describe('scopeid preservation across section navigation', () => {
   const base = 'http://localhost:5173';
 
   describe('parseRouteLocation reads scopeid from all sections', () => {
-    const sections = ['tasks', 'calendar', 'chat', 'docs', 'reports', 'opportunities', 'people', 'scopes', 'settings'];
+    const sections = ['tasks', 'chat', 'docs', 'reports', 'opportunities', 'people', 'settings'];
 
     for (const section of sections) {
       it(`reads scopeid from ${section} URL`, () => {
@@ -57,16 +57,6 @@ describe('scopeid preservation across section navigation', () => {
       expect(url).toContain('scopeid=scope-abc');
       expect(url).toContain('taskid=task-1');
       expect(url).toContain('view=list');
-    });
-
-    it('includes scopeid when navigating to calendar', () => {
-      const url = buildSectionUrl({
-        workspaceSlug: 'be-free',
-        section: 'calendar',
-        scopeid: 'scope-abc',
-      });
-      expect(url).toContain('scopeid=scope-abc');
-      expect(url).toMatch(/^\/be-free\/calendar/);
     });
 
     it('includes scopeid when navigating to reports', () => {
@@ -122,7 +112,7 @@ describe('scopeid preservation across section navigation', () => {
   });
 
   describe('round-trip: buildSectionUrl → parseRouteLocation preserves scopeid', () => {
-    const sections = ['tasks', 'calendar', 'chat', 'docs', 'reports'];
+    const sections = ['tasks', 'chat', 'docs', 'reports'];
 
     for (const section of sections) {
       it(`round-trips scopeid through ${section}`, () => {

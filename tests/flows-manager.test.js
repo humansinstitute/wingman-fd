@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   pendingApprovals,
   approvalsByFlowRun,
@@ -40,6 +40,7 @@ vi.mock('../src/translators/flows.js', () => ({
     owner_payload: { ciphertext: '{}' },
     group_payloads: [],
   })),
+  recordFamilyHash: (collectionSpace) => `mock:${collectionSpace}`,
 }));
 
 vi.mock('../src/translators/approvals.js', () => ({
@@ -49,6 +50,7 @@ vi.mock('../src/translators/approvals.js', () => ({
     owner_payload: { ciphertext: '{}' },
     group_payloads: [],
   })),
+  recordFamilyHash: (collectionSpace) => `mock:${collectionSpace}`,
 }));
 
 vi.mock('../src/translators/tasks.js', () => ({
@@ -59,6 +61,12 @@ vi.mock('../src/translators/tasks.js', () => ({
     group_payloads: [],
   })),
 }));
+
+import { addPendingWrite } from '../src/db.js';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 // ---------------------------------------------------------------------------
 // Pure function tests
@@ -156,8 +164,22 @@ function createStore(overrides = {}) {
     flows: [],
     approvals: [],
     tasks: [],
-    flushAndBackgroundSync: vi.fn(async () => {}),
+    flowDetailMode: 'view',
+    flowEditOriginal: null,
+    flowCheckoutPending: false,
+    recordCheckoutPolicyConfig: { familySuffixes: {} },
+    flushAndBackgroundSync: vi.fn(async () => ({ pushed: 1 })),
     applyTaskPatch: vi.fn(async () => null),
+    ensureLockManagedCheckout: vi.fn(async () => ({ checkout_id: 'checkout-1' })),
+    releaseLockManagedCheckout: vi.fn(async () => true),
+    clearLockManagedCheckoutSession: vi.fn(),
+    attachCheckoutRequiredCheckoutToEnvelope: vi.fn(async (_record, envelope) => ({
+      ...envelope,
+      checkout: { checkout_id: 'checkout-1', consume_on_success: true },
+    })),
+    getCheckoutEditPolicyConfig: vi.fn((familySuffix) => ({
+      familySuffixes: { [familySuffix]: 'checkout_required' },
+    })),
     ...overrides,
   };
 
@@ -168,6 +190,52 @@ function createStore(overrides = {}) {
   }
   return store;
 }
+
+describe('flowsManagerMixin — checkout edit flow', () => {
+  it('checks out existing flows before saving edits', async () => {
+    const flow = {
+      record_id: 'flow-1',
+      title: 'Original flow',
+      description: '',
+      steps: [],
+      group_ids: ['g1'],
+      version: 2,
+      record_state: 'active',
+    };
+    const store = createStore({
+      editingFlowId: 'flow-1',
+      flows: [flow],
+    });
+
+    await expect(store.enterFlowEditMode()).resolves.toBe(true);
+    const updated = await store.updateFlow('flow-1', { title: 'Updated flow' });
+
+    expect(store.ensureLockManagedCheckout).toHaveBeenCalledWith(
+      flow,
+      'mock:flow',
+      expect.objectContaining({
+        intent: 'edit',
+        checkoutPolicyConfig: { familySuffixes: { flow: 'checkout_required' } },
+      }),
+    );
+    expect(updated).toMatchObject({
+      record_id: 'flow-1',
+      title: 'Updated flow',
+      version: 3,
+    });
+    expect(addPendingWrite).toHaveBeenCalledWith(expect.objectContaining({
+      record_id: 'flow-1',
+      record_family_hash: 'mock:flow',
+      checkout_policy_config: { familySuffixes: { flow: 'checkout_required' } },
+      envelope: expect.objectContaining({
+        checkout: { checkout_id: 'checkout-1', consume_on_success: true },
+        previous_version: 2,
+      }),
+    }));
+    expect(store.clearLockManagedCheckoutSession).toHaveBeenCalledWith('flow-1', 'mock:flow');
+    expect(store.flowDetailMode).toBe('view');
+  });
+});
 
 describe('flowsManagerMixin — approval actions', () => {
   it('approveApproval sets status to approved and moves linked tasks to done', async () => {
@@ -203,6 +271,46 @@ describe('flowsManagerMixin — approval actions', () => {
       checkoutPolicyConfig: null,
       intent: 'approval_approve',
     });
+  });
+
+  it('approval decisions acquire checkout and attach checkout metadata', async () => {
+    const approval = {
+      record_id: 'approval-1',
+      status: 'pending',
+      task_ids: [],
+      group_ids: ['g1'],
+      version: 4,
+      record_state: 'active',
+    };
+    const store = createStore({
+      approvals: [approval],
+    });
+
+    const result = await store.rejectApproval('approval-1', 'Not ready');
+
+    expect(store.ensureLockManagedCheckout).toHaveBeenCalledWith(
+      approval,
+      'mock:approval',
+      expect.objectContaining({
+        intent: 'edit',
+        checkoutPolicyConfig: { familySuffixes: { approval: 'checkout_required' } },
+      }),
+    );
+    expect(result).toMatchObject({
+      record_id: 'approval-1',
+      status: 'rejected',
+      version: 5,
+    });
+    expect(addPendingWrite).toHaveBeenCalledWith(expect.objectContaining({
+      record_id: 'approval-1',
+      record_family_hash: 'mock:approval',
+      checkout_policy_config: { familySuffixes: { approval: 'checkout_required' } },
+      envelope: expect.objectContaining({
+        checkout: { checkout_id: 'checkout-1', consume_on_success: true },
+        previous_version: 4,
+      }),
+    }));
+    expect(store.clearLockManagedCheckoutSession).toHaveBeenCalledWith('approval-1', 'mock:approval');
   });
 
   it('rejectApproval sets status to rejected', async () => {

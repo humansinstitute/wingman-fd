@@ -753,6 +753,13 @@ export async function getScopesByOwner(ownerNpub) {
   return rows.filter((row) => row.record_state !== 'deleted');
 }
 
+export async function getRecentScopeChangesSince(sinceIso, options = {}) {
+  const rows = await wsDb().scopes.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('scopes', options));
+}
+
 export async function upsertScope(scope) {
   return wsDb().scopes.put(scope);
 }
@@ -781,6 +788,13 @@ export async function getFlowsByScope(scopeId) {
 export async function getFlowsByOwner(ownerNpub) {
   const rows = await wsDb().flows.where('owner_npub').equals(ownerNpub).toArray();
   return rows.filter((row) => row.record_state !== 'deleted');
+}
+
+export async function getRecentFlowChangesSince(sinceIso, options = {}) {
+  const rows = await wsDb().flows.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('flows', options));
 }
 
 // ---------------------------------------------------------------------------

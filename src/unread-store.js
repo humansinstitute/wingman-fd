@@ -216,7 +216,7 @@ export const unreadStoreMixin = {
         }
 
         // Compute per-task map only if tasks section is active (needed for borders)
-        if (this.navSection === 'tasks' || this.navSection === 'calendar') {
+        if (this.navSection === 'tasks') {
           const db = getWorkspaceDb();
           const cursorMap = await loadUnreadCursorMap(viewerNpub);
           const allTasks = Array.isArray(this.tasks) && this.tasks.length > 0

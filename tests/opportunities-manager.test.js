@@ -10,9 +10,32 @@ vi.mock('../src/db.js', () => ({
   getTaskById: vi.fn(async () => null),
   getOpportunityById: vi.fn(async () => null),
   getOpportunitiesByOwner: vi.fn(async () => []),
+  getPendingWrites: vi.fn(async () => []),
+  removePendingWrite: vi.fn(async () => {}),
   upsertComment: vi.fn(async () => {}),
   upsertOpportunity: vi.fn(async () => {}),
   upsertTask: vi.fn(async () => {}),
+}));
+
+vi.mock('../src/translators/opportunities.js', () => ({
+  OPPORTUNITY_STAGE_OPTIONS: Object.freeze([
+    'speculation',
+    'outreach',
+    'lead',
+    'qualified',
+    'proposal',
+    'won',
+    'lost',
+    'abandoned',
+  ]),
+  outboundOpportunity: vi.fn(async (opportunity) => ({
+    record_id: opportunity.record_id,
+    record_family_hash: 'family:opportunity',
+    version: opportunity.version,
+    previous_version: opportunity.previous_version,
+    group_payloads: (opportunity.group_ids || []).map((group_id) => ({ group_id })),
+  })),
+  recordFamilyHash: (collectionSpace) => `family:${collectionSpace}`,
 }));
 
 vi.mock('../src/translators/tasks.js', () => ({
@@ -35,7 +58,13 @@ vi.mock('../src/translators/comments.js', () => ({
   outboundComment: vi.fn(async () => ({ record_family_hash: 'family:comment' })),
 }));
 
-import { addPendingWrite, upsertTask } from '../src/db.js';
+import {
+  addPendingWrite,
+  getOpportunityById,
+  getPendingWrites,
+  removePendingWrite,
+  upsertTask,
+} from '../src/db.js';
 import { opportunitiesManagerMixin } from '../src/opportunities-manager.js';
 
 function createStore(overrides = {}) {
@@ -56,9 +85,23 @@ function createStore(overrides = {}) {
     groups: [],
     scopesMap: new Map(),
     error: '',
+    opportunitySaving: false,
+    opportunityCheckoutPending: false,
+    opportunityDetailMode: 'view',
+    opportunityEditOriginal: null,
     findPeopleSuggestions: vi.fn(() => []),
     resolveChatProfile: vi.fn(),
     flushAndBackgroundSync: vi.fn(async () => {}),
+    ensureLockManagedCheckout: vi.fn(async () => ({ checkout_id: 'checkout-1' })),
+    releaseLockManagedCheckout: vi.fn(async () => true),
+    clearLockManagedCheckoutSession: vi.fn(),
+    attachCheckoutRequiredCheckoutToEnvelope: vi.fn(async (_record, envelope) => ({
+      ...envelope,
+      checkout: { checkout_id: 'checkout-1', consume_on_success: true },
+    })),
+    getCheckoutEditPolicyConfig: vi.fn((familySuffix) => ({
+      familySuffixes: { [familySuffix]: 'checkout_required' },
+    })),
     buildScopeAssignment: vi.fn((scopeId) => ({
       scope_id: scopeId ?? null,
       scope_l1_id: scopeId ?? null,
@@ -109,6 +152,8 @@ function createStore(overrides = {}) {
 describe('opportunitiesManagerMixin', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getOpportunityById.mockResolvedValue(null);
+    getPendingWrites.mockResolvedValue([]);
   });
 
   it('does not return person, organisation, or task suggestions for empty link queries', () => {
@@ -243,6 +288,121 @@ describe('opportunitiesManagerMixin', () => {
     }));
 
     uuidSpy.mockRestore();
+  });
+
+  it('collapses edits to an unsynced opportunity create into a replacement v1 create write', async () => {
+    const existing = {
+      record_id: 'opp-1',
+      owner_npub: 'npub-owner',
+      title: 'Draft opportunity',
+      description: '',
+      stage: 'speculation',
+      version: 1,
+      sync_status: 'pending',
+      group_ids: ['group-1'],
+      shares: [{ type: 'group', group_npub: 'group-1', access: 'write' }],
+      created_at: '2026-04-28T01:00:00.000Z',
+      updated_at: '2026-04-28T01:00:00.000Z',
+    };
+    getOpportunityById.mockResolvedValueOnce(existing);
+    getPendingWrites
+      .mockResolvedValueOnce([{
+        row_id: 7,
+        record_id: 'opp-1',
+        record_family_hash: 'family:opportunity',
+        envelope: {
+          record_id: 'opp-1',
+          record_family_hash: 'family:opportunity',
+          version: 1,
+          previous_version: 0,
+        },
+      }])
+      .mockResolvedValueOnce([{
+        row_id: 7,
+        record_id: 'opp-1',
+        record_family_hash: 'family:opportunity',
+        envelope: {
+          record_id: 'opp-1',
+          record_family_hash: 'family:opportunity',
+          version: 1,
+          previous_version: 0,
+        },
+      }]);
+    const store = createStore({
+      editingOpportunity: {
+        ...existing,
+        title: 'Updated before first sync',
+      },
+    });
+
+    const saved = await store.saveEditingOpportunity();
+
+    expect(saved).toMatchObject({
+      record_id: 'opp-1',
+      title: 'Updated before first sync',
+      version: 1,
+      sync_status: 'pending',
+    });
+    expect(removePendingWrite).toHaveBeenCalledWith(7);
+    expect(addPendingWrite).toHaveBeenCalledWith(expect.objectContaining({
+      record_id: 'opp-1',
+      record_family_hash: 'family:opportunity',
+      envelope: expect.objectContaining({
+        version: 1,
+        previous_version: 0,
+      }),
+    }));
+  });
+
+  it('checks out existing opportunities before edit and checks in on save', async () => {
+    const existing = {
+      record_id: 'opp-1',
+      owner_npub: 'npub-owner',
+      title: 'Draft opportunity',
+      description: '',
+      stage: 'speculation',
+      version: 2,
+      sync_status: 'synced',
+      group_ids: ['group-1'],
+      shares: [{ type: 'group', group_npub: 'group-1', access: 'write' }],
+      created_at: '2026-04-28T01:00:00.000Z',
+      updated_at: '2026-04-28T01:00:00.000Z',
+    };
+    getOpportunityById.mockResolvedValue(existing);
+    const store = createStore({
+      opportunities: [existing],
+      editingOpportunity: { ...existing },
+      activeOpportunityId: 'opp-1',
+      flushAndBackgroundSync: vi.fn(async () => ({ pushed: 1 })),
+    });
+
+    await expect(store.enterOpportunityEditMode()).resolves.toBe(true);
+    store.editingOpportunity.title = 'Checked out update';
+    const saved = await store.saveEditingOpportunity();
+
+    expect(store.ensureLockManagedCheckout).toHaveBeenCalledWith(
+      existing,
+      'family:opportunity',
+      expect.objectContaining({
+        intent: 'edit',
+        checkoutPolicyConfig: { familySuffixes: { opportunity: 'checkout_required' } },
+      }),
+    );
+    expect(saved).toMatchObject({
+      record_id: 'opp-1',
+      title: 'Checked out update',
+      version: 3,
+    });
+    expect(addPendingWrite).toHaveBeenCalledWith(expect.objectContaining({
+      record_id: 'opp-1',
+      checkout_policy_config: { familySuffixes: { opportunity: 'checkout_required' } },
+      envelope: expect.objectContaining({
+        previous_version: 2,
+        checkout: { checkout_id: 'checkout-1', consume_on_success: true },
+      }),
+    }));
+    expect(store.clearLockManagedCheckoutSession).toHaveBeenCalledWith('opp-1', 'family:opportunity');
+    expect(store.opportunityDetailMode).toBe('view');
   });
 
   it('derives high-level opportunity metrics from filtered opportunities and linked tasks', () => {

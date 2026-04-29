@@ -524,15 +524,11 @@ export function createShellState(options = {}) {
         switch (section) {
           case 'status': return 'flight-deck';
           case 'tasks': return 'tasks';
-          case 'calendar': return 'calendar';
-          case 'schedules': return 'schedules';
           case 'chat': return 'chat';
           case 'docs': return 'docs';
           case 'reports': return 'reports';
           case 'opportunities': return 'opportunities';
           case 'people': return 'people';
-          case 'scopes': return 'scopes';
-          case 'live': return 'live';
           case 'settings': return 'settings';
           default: return 'flight-deck';
         }
@@ -562,7 +558,7 @@ export function createShellState(options = {}) {
         if (this.selectedReport?.record_id) url.searchParams.set('reportid', this.selectedReport.record_id);
       } else if (this.navSection === 'opportunities') {
         if (this.activeOpportunityId) url.searchParams.set('opportunityid', this.activeOpportunityId);
-      } else if (this.navSection === 'tasks' || this.navSection === 'calendar') {
+      } else if (this.navSection === 'tasks') {
         if (this.showBoardDescendantTasks) url.searchParams.set('descendants', '1');
         if (this.navSection === 'tasks' && this.activeTaskId) url.searchParams.set('taskid', this.activeTaskId);
         if (this.navSection === 'tasks' && this.taskViewMode === 'list') url.searchParams.set('view', 'list');
@@ -646,7 +642,7 @@ export function createShellState(options = {}) {
           } else {
             this.closeOpportunityDetail({ syncRoute: false });
           }
-        } else if (route.section === 'tasks' || route.section === 'calendar') {
+        } else if (route.section === 'tasks') {
           if (!route.params.scopeid && !route.params.groupid) {
             this.selectedBoardId = this.readStoredTaskBoardId() || this.preferredTaskBoardId;
             this.validateSelectedBoardId();
@@ -656,13 +652,11 @@ export function createShellState(options = {}) {
           if (route.params.view === 'list') this.taskViewMode = 'list';
           else this.taskViewMode = 'kanban';
           this.normalizeTaskFilterTags();
-          if (route.section === 'tasks' && route.params.taskid) {
+          if (route.params.taskid) {
             this.openTaskDetail(route.params.taskid);
           } else {
             this.closeTaskDetail({ syncRoute: false });
           }
-        } else if (route.section === 'schedules') {
-          this.cancelEditSchedule();
         }
       } finally {
         this.routeSyncPaused = false;
@@ -681,11 +675,11 @@ export function createShellState(options = {}) {
       if (section === 'chat' || section === 'docs') {
         this.markSectionRead(section);
       }
-      if (section === 'tasks' || section === 'calendar' || section === 'reports') {
+      if (section === 'tasks' || section === 'reports') {
         this.validateSelectedBoardId();
         this.normalizeTaskFilterTags();
       }
-      if (section !== 'schedules') {
+      if (section !== 'settings') {
         this.showNewScheduleModal = false;
         this.cancelEditSchedule();
       }
@@ -705,6 +699,15 @@ export function createShellState(options = {}) {
       if (section === 'reports' && !this.selectedReportId) {
         this.selectedReportId = this.selectedReport?.record_id || null;
       }
+      if (section === 'settings') {
+        this.normalizeSettingsTab?.();
+        if (this.settingsTab === 'schedules') this.refreshSchedules();
+        if (this.settingsTab === 'scopes') this.refreshScopes();
+        if (this.settingsTab === 'flows') {
+          this.refreshFlows();
+          this.refreshApprovals();
+        }
+      }
       if (options.syncRoute !== false) this.syncRoute();
       this.startWorkspaceLiveQueries();
       this.ensureBackgroundSync(true);
@@ -723,7 +726,7 @@ export function createShellState(options = {}) {
         this.messages = [];
         this.audioNotes = [];
       }
-      if (activeSection !== 'tasks' && activeSection !== 'calendar') {
+      if (activeSection !== 'tasks') {
         this.tasks = [];
         this.taskComments = [];
         this.showTaskDetail = false;
@@ -737,7 +740,7 @@ export function createShellState(options = {}) {
       if (activeSection !== 'reports' && activeSection !== 'status') {
         this.reports = [];
       }
-      if (activeSection !== 'schedules' && activeSection !== 'calendar') {
+      if (activeSection !== 'settings') {
         this.schedules = [];
       }
       if (activeSection !== 'status') {

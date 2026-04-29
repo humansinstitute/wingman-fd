@@ -11,6 +11,9 @@ const state = {
   documentsById: new Map(),
   directoriesById: new Map(),
   tasksById: new Map(),
+  opportunitiesById: new Map(),
+  flowsById: new Map(),
+  approvalsById: new Map(),
 };
 
 vi.mock('../src/db.js', () => ({
@@ -35,10 +38,22 @@ vi.mock('../src/db.js', () => ({
     state.tasksById.set(record.record_id, record);
   }),
   getTaskById: vi.fn(async (recordId) => state.tasksById.get(recordId) || null),
+  upsertOpportunity: vi.fn(async (record) => {
+    state.opportunitiesById.set(record.record_id, record);
+  }),
+  getOpportunityById: vi.fn(async (recordId) => state.opportunitiesById.get(recordId) || null),
   upsertSchedule: vi.fn(),
   upsertComment: vi.fn(),
   upsertAudioNote: vi.fn(),
   upsertScope: vi.fn(),
+  upsertFlow: vi.fn(async (record) => {
+    state.flowsById.set(record.record_id, record);
+  }),
+  getFlowById: vi.fn(async (recordId) => state.flowsById.get(recordId) || null),
+  upsertApproval: vi.fn(async (record) => {
+    state.approvalsById.set(record.record_id, record);
+  }),
+  getApprovalById: vi.fn(async (recordId) => state.approvalsById.get(recordId) || null),
   getSyncState: vi.fn(async (key) => state.syncStates[key] ?? null),
   setSyncState: vi.fn(),
   upsertSyncQuarantineEntry: vi.fn(),
@@ -67,6 +82,9 @@ describe('sync worker pending write batching', () => {
     state.documentsById = new Map();
     state.directoriesById = new Map();
     state.tasksById = new Map();
+    state.opportunitiesById = new Map();
+    state.flowsById = new Map();
+    state.approvalsById = new Map();
     vi.resetModules();
   });
 
@@ -160,6 +178,95 @@ describe('sync worker pending write batching', () => {
     expect(state.syncArgs[0].checkout_policy_config).toBeNull();
     expect(state.syncArgs[1].checkout_policy_config).toEqual(checkoutPolicyConfig);
     expect(state.removed).toEqual([1, 2]);
+  });
+
+  it('flushes create writes optimistically when stale checkout config is attached', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'task-create',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: { familySuffixes: { task: 'checkout_required' } },
+        envelope: {
+          record_id: 'task-create',
+          record_family_hash: taskFamilyHash,
+          version: 1,
+          previous_version: 0,
+        },
+      },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords.mockImplementationOnce(async (args) => {
+      state.syncCalls.push(args.records.map((record) => record.record_id));
+      state.syncArgs.push(args);
+      return { synced: 1, rejected: [] };
+    });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+    await flushPendingWrites('npub-owner');
+
+    expect(state.syncArgs[0].checkout_policy_config).toBeNull();
+    expect(state.removed).toEqual([1]);
+  });
+
+  it('retries local updates as version 1 when Tower has no base record', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'task-local-only',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: { familySuffixes: { task: 'checkout_required' } },
+        envelope: {
+          record_id: 'task-local-only',
+          record_family_hash: taskFamilyHash,
+          version: 3,
+          previous_version: 2,
+          checkout: { checkout_id: 'checkout-stale-local', consume_on_success: true },
+        },
+      },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords
+      .mockImplementationOnce(async (args) => {
+        state.syncCalls.push(args.records.map((record) => record.record_id));
+        state.syncArgs.push(args);
+        return {
+          synced: 0,
+          rejected: [{
+            record_id: 'task-local-only',
+            record_family_hash: taskFamilyHash,
+            code: 'prior_version_mismatch',
+            required_previous_version: 0,
+            received_previous_version: 2,
+          }],
+        };
+      })
+      .mockImplementationOnce(async (args) => {
+        state.syncCalls.push(args.records.map((record) => record.record_id));
+        state.syncArgs.push(args);
+        return { synced: 1, created: 1, rejected: [] };
+      });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+    const result = await flushPendingWrites('npub-owner');
+
+    expect(result).toEqual({ pushed: 1 });
+    expect(state.syncCalls).toEqual([
+      ['task-local-only'],
+      ['task-local-only'],
+    ]);
+    expect(state.syncArgs[1].records[0]).toMatchObject({
+      record_id: 'task-local-only',
+      record_family_hash: taskFamilyHash,
+      version: 1,
+      previous_version: 0,
+    });
+    expect(state.syncArgs[1].records[0].checkout).toBeUndefined();
+    expect(state.removed).toEqual([1]);
   });
 
   it('flushes terminal task pending writes optimistically when stale checkout config is attached', async () => {

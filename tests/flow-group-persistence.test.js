@@ -42,6 +42,7 @@ vi.mock('../src/db.js', () => ({
 
 vi.mock('../src/translators/flows.js', () => ({
   outboundFlow: (...args) => mockOutboundFlow(...args),
+  recordFamilyHash: (collectionSpace) => `mock:${collectionSpace}`,
 }));
 
 vi.mock('../src/translators/approvals.js', () => ({
@@ -51,6 +52,7 @@ vi.mock('../src/translators/approvals.js', () => ({
     owner_payload: { ciphertext: '{}' },
     group_payloads: [],
   })),
+  recordFamilyHash: (collectionSpace) => `mock:${collectionSpace}`,
 }));
 
 vi.mock('../src/translators/tasks.js', () => ({
@@ -228,6 +230,7 @@ describe('createFlow — group inheritance from scope', () => {
 describe('updateFlow — group_ids preserved', () => {
   it('retains group_ids from existing flow on update', async () => {
     const store = createStore({
+      flowDetailMode: 'edit',
       flows: [
         {
           record_id: 'flow-1',

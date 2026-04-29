@@ -163,7 +163,7 @@ describe('parseRouteLocation', () => {
   });
 
   it('parses all known page sections', () => {
-    const pages = ['chat', 'tasks', 'calendar', 'schedules', 'docs', 'reports', 'opportunities', 'people', 'scopes', 'settings', 'live'];
+    const pages = ['chat', 'tasks', 'docs', 'reports', 'opportunities', 'people', 'settings'];
     for (const page of pages) {
       const route = parseRouteLocation(`${base}/my-ws/${page}`);
       expect(route.workspaceSlug).toBe('my-ws');
@@ -180,6 +180,36 @@ describe('parseRouteLocation', () => {
   it('treats unknown single segment as workspace slug', () => {
     const route = parseRouteLocation(`${base}/my-company`);
     expect(route.workspaceSlug).toBe('my-company');
+    expect(route.section).toBe('status');
+  });
+
+  it('does not parse the removed Live page as a known section', () => {
+    const route = parseRouteLocation(`${base}/my-ws/live`);
+    expect(route.workspaceSlug).toBe('my-ws');
+    expect(route.section).toBe('status');
+  });
+
+  it('does not parse the removed Calendar page as a known section', () => {
+    const route = parseRouteLocation(`${base}/my-ws/calendar`);
+    expect(route.workspaceSlug).toBe('my-ws');
+    expect(route.section).toBe('status');
+  });
+
+  it('does not parse the moved Schedules page as a known section', () => {
+    const route = parseRouteLocation(`${base}/my-ws/schedules`);
+    expect(route.workspaceSlug).toBe('my-ws');
+    expect(route.section).toBe('status');
+  });
+
+  it('does not parse the moved Scopes page as a known section', () => {
+    const route = parseRouteLocation(`${base}/my-ws/scopes`);
+    expect(route.workspaceSlug).toBe('my-ws');
+    expect(route.section).toBe('status');
+  });
+
+  it('does not parse the moved Flows page as a known section', () => {
+    const route = parseRouteLocation(`${base}/my-ws/flows`);
+    expect(route.workspaceSlug).toBe('my-ws');
     expect(route.section).toBe('status');
   });
 

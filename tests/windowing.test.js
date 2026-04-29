@@ -16,6 +16,8 @@ describe('windowing helpers', () => {
     expect(resolveWindowLimit('threadReplies')).toBe(6);
     expect(resolveWindowLimit('tasks')).toBe(50);
     expect(resolveWindowLimit('schedules')).toBe(50);
+    expect(resolveWindowLimit('scopes')).toBe(50);
+    expect(resolveWindowLimit('flows')).toBe(50);
   });
 
   it('coerces invalid limits back to the fallback', () => {

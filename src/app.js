@@ -13,7 +13,6 @@ import { audioRecordingManagerMixin } from './audio-recording-manager.js';
 import { storageImageManagerMixin } from './storage-image-manager.js';
 import { triggersManagerMixin } from './triggers-manager.js';
 import { jobsManagerMixin } from './jobs-manager.js';
-import { liveManagerMixin } from './live-manager.js';
 import { workspaceManagerMixin, guessDefaultBackendUrl } from './workspace-manager.js';
 import { chatMessageManagerMixin } from './chat-message-manager.js';
 import { syncManagerMixin } from './sync-manager.js';
@@ -58,13 +57,6 @@ import { sectionLiveQueryMixin } from './section-live-queries.js';
 import { applySelectedDocumentUpdate } from './document-selection.js';
 import { createChatThreadFlowDispatchState } from './chat-thread-flow-dispatch.js';
 import {
-  CALENDAR_VIEWS,
-  buildTaskCalendar,
-  getTodayDateKey,
-  shiftCalendarDate,
-} from './task-calendar.js';
-
-import {
   toRaw,
   normalizeBackendUrl,
   workspaceSettingsRecordId,
@@ -95,6 +87,8 @@ import {
   getRecentTaskChangesSince,
   getRecentScheduleChangesSince,
   getRecentCommentsSince,
+  getRecentScopeChangesSince,
+  getRecentFlowChangesSince,
   upsertChannel,
   getAudioNotesByOwner,
   getDocumentsByOwner,
@@ -204,6 +198,28 @@ function applyMixins(target, ...mixins) {
 
 const NUMBER_FORMATTER = new Intl.NumberFormat();
 const MAX_STATUS_RECENT_CHANGES = 50;
+const STATUS_RECORD_TYPE_LABELS = Object.freeze({
+  chat: 'Chat',
+  task: 'Task',
+  comment: 'Comment',
+  doc: 'Doc',
+  folder: 'Folder',
+  report: 'Report',
+  schedule: 'Schedule',
+  scope: 'Scope',
+  flow: 'Flow',
+});
+const STATUS_RECORD_TYPE_ORDER = Object.freeze([
+  'task',
+  'chat',
+  'comment',
+  'doc',
+  'scope',
+  'flow',
+  'folder',
+  'report',
+  'schedule',
+]);
 const scopedReportsCache = new WeakMap();
 const reportTimeseriesCache = new WeakMap();
 const reportTableColumnsCache = new WeakMap();
@@ -266,17 +282,6 @@ export function initApp() {
     },
     settingsTab: 'connection',
     navSection: initialRoute.section,
-    liveSessions: [],
-    liveSelectedSessionId: '',
-    liveDrawerOpen: false,
-    liveNightWatchReports: [],
-    liveNightWatchReportModalOpen: false,
-    liveSelectedNightWatchReportId: '',
-    liveSessionGoalDraft: '',
-    liveSessionNextActionDraft: '',
-    calendarViews: CALENDAR_VIEWS,
-    calendarView: 'month',
-    calendarAnchorDate: getTodayDateKey(),
     navCollapsed: false,
     mobileNavOpen: false,
     routeSyncPaused: false,
@@ -368,6 +373,7 @@ export function initApp() {
     messageActionsMenuId: null,
     chatProfiles: {},
     statusTimeRange: '1h',
+    statusRecordTypeFilter: 'all',
     statusRecentChanges: [],
     reportModalReport: null,
     selectedReportId: null,
@@ -384,6 +390,9 @@ export function initApp() {
     approvals: [],
     editingFlowId: null,
     showFlowEditor: false,
+    flowDetailMode: 'view',
+    flowEditOriginal: null,
+    flowCheckoutPending: false,
     showFlowStartConfirm: false,
     flowStartTarget: null,
     flowStartContext: '',
@@ -425,15 +434,21 @@ export function initApp() {
     personFormDescription: '',
     personFormTags: '',
     personFormContacts: [],
+    personFormScopeId: null,
     orgFormTitle: '',
     orgFormDescription: '',
     orgFormPositioning: '',
     orgFormTags: '',
     orgFormContacts: [],
+    orgFormScopeId: null,
     activeOpportunityId: null,
     opportunityComments: [],
     opportunityFilter: '',
     showOpportunityEditor: false,
+    opportunitySaving: false,
+    opportunityCheckoutPending: false,
+    opportunityDetailMode: 'view',
+    opportunityEditOriginal: null,
     editingOpportunity: null,
     newOpportunityCommentBody: '',
     opportunityPersonQuery: '',
@@ -813,6 +828,20 @@ export function initApp() {
 
     get flightDeckReports() {
       return this.scopedReports;
+    },
+
+    get statusRecordTypeOptions() {
+      const presentTypes = new Set(this.statusRecentChanges.map((item) => item.recordTypeKey).filter(Boolean));
+      return STATUS_RECORD_TYPE_ORDER
+        .filter((value) => presentTypes.has(value))
+        .map((value) => ({ value, label: STATUS_RECORD_TYPE_LABELS[value] || value }));
+    },
+
+    get filteredStatusRecentChanges() {
+      if (!this.statusRecordTypeFilter || this.statusRecordTypeFilter === 'all') {
+        return this.statusRecentChanges;
+      }
+      return this.statusRecentChanges.filter((item) => item.recordTypeKey === this.statusRecordTypeFilter);
     },
 
     get selectedReport() {
@@ -1529,14 +1558,11 @@ export function initApp() {
         switch (section) {
           case 'status': return 'flight-deck';
           case 'tasks': return 'tasks';
-          case 'calendar': return 'calendar';
-          case 'schedules': return 'schedules';
           case 'chat': return 'chat';
           case 'docs': return 'docs';
           case 'reports': return 'reports';
           case 'opportunities': return 'opportunities';
           case 'people': return 'people';
-          case 'scopes': return 'scopes';
           case 'settings': return 'settings';
           default: return 'flight-deck';
         }
@@ -1569,7 +1595,7 @@ export function initApp() {
         if (this.selectedReport?.record_id) url.searchParams.set('reportid', this.selectedReport.record_id);
       } else if (this.navSection === 'opportunities') {
         if (this.activeOpportunityId) url.searchParams.set('opportunityid', this.activeOpportunityId);
-      } else if (this.navSection === 'tasks' || this.navSection === 'calendar') {
+      } else if (this.navSection === 'tasks') {
         if (this.showBoardDescendantTasks) url.searchParams.set('descendants', '1');
         if (this.navSection === 'tasks' && this.activeTaskId) url.searchParams.set('taskid', this.activeTaskId);
         if (this.navSection === 'tasks' && this.taskViewMode === 'list') url.searchParams.set('view', 'list');
@@ -1620,7 +1646,7 @@ export function initApp() {
         this.mobileNavOpen = false;
 
         // Restore scopeid from URL for all sections so browser history
-        // preserves the active scope across tasks/chat/docs/calendar/reports.
+        // preserves the active scope across tasks/chat/docs/reports.
         if (route.params.scopeid || route.params.groupid) {
           this.selectedBoardId = route.params.scopeid
             || route.params.groupid
@@ -1661,8 +1687,8 @@ export function initApp() {
           } else {
             this.closeOpportunityDetail({ syncRoute: false });
           }
-        } else if (route.section === 'tasks' || route.section === 'calendar') {
-          // Scope already restored above; apply task/calendar-specific params
+        } else if (route.section === 'tasks') {
+          // Scope already restored above; apply task-specific params
           if (!route.params.scopeid && !route.params.groupid) {
             this.selectedBoardId = this.readStoredTaskBoardId() || this.preferredTaskBoardId;
             this.validateSelectedBoardId();
@@ -1672,13 +1698,11 @@ export function initApp() {
           if (route.params.view === 'list') this.taskViewMode = 'list';
           else this.taskViewMode = 'kanban';
           this.normalizeTaskFilterTags();
-          if (route.section === 'tasks' && route.params.taskid) {
+          if (route.params.taskid) {
             this.openTaskDetail(route.params.taskid);
           } else {
             this.closeTaskDetail({ syncRoute: false });
           }
-        } else if (route.section === 'schedules') {
-          this.cancelEditSchedule();
         }
       } finally {
         this.routeSyncPaused = false;
@@ -1932,7 +1956,7 @@ export function initApp() {
         this.messages = [];
         this.audioNotes = [];
       }
-      if (activeSection !== 'tasks' && activeSection !== 'calendar') {
+      if (activeSection !== 'tasks') {
         this.tasks = [];
         this.taskComments = [];
         this.showTaskDetail = false;
@@ -1946,7 +1970,7 @@ export function initApp() {
       if (activeSection !== 'reports' && activeSection !== 'status') {
         this.reports = [];
       }
-      if (activeSection !== 'schedules' && activeSection !== 'calendar') {
+      if (activeSection !== 'settings') {
         this.schedules = [];
       }
       if (activeSection !== 'status') {
@@ -1972,11 +1996,11 @@ export function initApp() {
       if (section === 'chat' || section === 'docs') {
         this.markSectionRead(section);
       }
-      if (section === 'tasks' || section === 'calendar' || section === 'reports') {
+      if (section === 'tasks' || section === 'reports') {
         this.validateSelectedBoardId();
         this.normalizeTaskFilterTags();
       }
-      if (section !== 'schedules') {
+      if (section !== 'settings') {
         this.showNewScheduleModal = false;
         this.cancelEditSchedule();
       }
@@ -1995,6 +2019,15 @@ export function initApp() {
       }
       if (section === 'reports' && !this.selectedReportId) {
         this.selectedReportId = this.selectedReport?.record_id || null;
+      }
+      if (section === 'settings') {
+        this.normalizeSettingsTab?.();
+        if (this.settingsTab === 'schedules') this.refreshSchedules();
+        if (this.settingsTab === 'scopes') this.refreshScopes();
+        if (this.settingsTab === 'flows') {
+          this.refreshFlows();
+          this.refreshApprovals();
+        }
       }
       if (options.syncRoute !== false) this.syncRoute();
       this.startWorkspaceLiveQueries();
@@ -2366,7 +2399,7 @@ export function initApp() {
       // Skip if we already have cached data and no new records were pulled
       if (this.statusRecentChanges.length > 0 && !options.force && !options.hasNewData) return;
       const sinceIso = new Date(Date.now() - this.getStatusRangeMs()).toISOString();
-      const [messages, documents, directories, reports, tasks, schedules, comments] = await Promise.all([
+      const [messages, documents, directories, reports, tasks, schedules, comments, scopes, flows] = await Promise.all([
         getRecentChatMessagesSince(sinceIso),
         getRecentDocumentChangesSince(sinceIso),
         getRecentDirectoryChangesSince(sinceIso),
@@ -2374,6 +2407,8 @@ export function initApp() {
         getRecentTaskChangesSince(sinceIso),
         getRecentScheduleChangesSince(sinceIso),
         getRecentCommentsSince(sinceIso),
+        getRecentScopeChangesSince(sinceIso),
+        getRecentFlowChangesSince(sinceIso),
       ]);
       const items = [];
 
@@ -2395,6 +2430,7 @@ export function initApp() {
           id: message.record_id,
           section: 'chat',
           recordType: message.parent_message_id ? 'Thread' : 'Chat',
+          recordTypeKey: 'chat',
           title: message.body?.trim() || '(empty message)',
           subtitle: `${this.getSenderName(message.sender_npub)} in ${this.getChannelLabel(channel)}`,
           updatedAt: message.updated_at,
@@ -2411,6 +2447,7 @@ export function initApp() {
           id: `directory:${directory.record_id}`,
           section: 'docs',
           recordType: 'Folder',
+          recordTypeKey: 'folder',
           title: directory.title?.trim() || 'Untitled folder',
           subtitle: directory.parent_directory_id
             ? `Updated in ${this.getDocItemLocationLabel(directory)}`
@@ -2427,6 +2464,7 @@ export function initApp() {
           id: `document:${document.record_id}`,
           section: 'docs',
           recordType: 'Doc',
+          recordTypeKey: 'doc',
           title: document.title?.trim() || 'Untitled document',
           subtitle: document.parent_directory_id
             ? `Updated in ${this.getDocItemLocationLabel(document)}`
@@ -2443,6 +2481,7 @@ export function initApp() {
           id: `report:${report.record_id}:${report.version ?? 1}`,
           section: 'status',
           recordType: this.getFlightDeckReportTypeLabel(report),
+          recordTypeKey: 'report',
           title: report.title?.trim() || this.getReportMetricLabel(report) || 'Untitled report',
           subtitle: this.getReportRecentChangeSubtitle(report),
           updatedAt: report.updated_at,
@@ -2457,6 +2496,7 @@ export function initApp() {
           id: `task:${task.record_id}:${task.version ?? 1}`,
           section: 'tasks',
           recordType: 'Task',
+          recordTypeKey: 'task',
           title: task.title?.trim() || 'Untitled task',
           subtitle: task.scope_id
             ? `Updated on ${this.getTaskBoardLabel(task)}`
@@ -2473,6 +2513,7 @@ export function initApp() {
           id: `schedule:${schedule.record_id}:${schedule.version ?? 1}`,
           section: 'schedules',
           recordType: 'Schedule',
+          recordTypeKey: 'schedule',
           title: schedule.title?.trim() || 'Untitled schedule',
           subtitle: `${this.formatScheduleDays(schedule.days)} ${schedule.time_start || '??:??'}-${schedule.time_end || '??:??'}`,
           updatedAt: schedule.updated_at,
@@ -2481,13 +2522,52 @@ export function initApp() {
         });
       }
 
-      // Batch-load tasks for comments instead of one query per comment
+      for (const scope of scopes) {
+        items.push({
+          id: `scope:${scope.record_id}:${scope.version ?? 1}`,
+          section: 'scopes',
+          recordType: 'Scope',
+          recordTypeKey: 'scope',
+          title: scope.title?.trim() || 'Untitled scope',
+          subtitle: this.getScopeBreadcrumb(scope.record_id) || this.scopeLevelLabel(scope.level),
+          updatedAt: scope.updated_at,
+          updatedTs: Date.parse(scope.updated_at) || 0,
+          recordId: scope.record_id,
+          boardScopeId: scope.record_id,
+        });
+      }
+
+      for (const flow of flows) {
+        items.push({
+          id: `flow:${flow.record_id}:${flow.version ?? 1}`,
+          section: 'flows',
+          recordType: 'Flow',
+          recordTypeKey: 'flow',
+          title: flow.title?.trim() || 'Untitled flow',
+          subtitle: flow.scope_id
+            ? `Updated in ${this.getTaskBoardLabel(flow)}`
+            : 'Updated with no scope',
+          updatedAt: flow.updated_at,
+          updatedTs: Date.parse(flow.updated_at) || 0,
+          recordId: flow.record_id,
+          boardScopeId: flow.scope_id ?? flow.scope_l5_id ?? flow.scope_l4_id ?? flow.scope_l3_id ?? flow.scope_l2_id ?? flow.scope_l1_id ?? null,
+        });
+      }
+
+      // Batch-load targets for comments instead of one query per comment
       const taskComments = comments.filter((c) => String(c.target_record_family_hash || '').endsWith(':task'));
       const commentTaskIds = [...new Set(taskComments.map((c) => c.target_record_id).filter(Boolean))];
       const taskMap = new Map();
       await Promise.all(commentTaskIds.map(async (taskId) => {
         const t = await getTaskById(taskId);
         if (t) taskMap.set(taskId, t);
+      }));
+      const documentComments = comments.filter((c) => String(c.target_record_family_hash || '').endsWith(':document'));
+      const commentDocumentIds = [...new Set(documentComments.map((c) => c.target_record_id).filter(Boolean))];
+      const documentMap = new Map();
+      await Promise.all(commentDocumentIds.map(async (documentId) => {
+        const doc = await getDocumentById(documentId);
+        if (doc) documentMap.set(documentId, doc);
       }));
 
       for (const comment of taskComments) {
@@ -2499,7 +2579,8 @@ export function initApp() {
         items.push({
           id: `task-comment:${comment.record_id}`,
           section: 'tasks',
-          recordType: 'Task note',
+          recordType: 'Comment',
+          recordTypeKey: 'comment',
           title: comment.body?.trim() || '(empty note)',
           subtitle: `${this.getSenderName(comment.sender_npub)} on ${task.title?.trim() || 'Untitled task'}`,
           updatedAt: comment.updated_at,
@@ -2507,6 +2588,27 @@ export function initApp() {
           recordId: task.record_id,
           focusRecordId: comment.record_id,
           boardScopeId: task.scope_id ?? task.scope_l5_id ?? task.scope_l4_id ?? task.scope_l3_id ?? task.scope_l2_id ?? task.scope_l1_id ?? null,
+        });
+      }
+
+      for (const comment of documentComments) {
+        const document = documentMap.get(comment.target_record_id);
+        if (!document || document.record_state === 'deleted') continue;
+
+        this.resolveChatProfile(comment.sender_npub);
+
+        items.push({
+          id: `doc-comment:${comment.record_id}`,
+          section: 'docs',
+          recordType: 'Comment',
+          recordTypeKey: 'comment',
+          title: comment.body?.trim() || '(empty comment)',
+          subtitle: `${this.getSenderName(comment.sender_npub)} on ${document.title?.trim() || 'Untitled document'}`,
+          updatedAt: comment.updated_at,
+          updatedTs: Date.parse(comment.updated_at) || 0,
+          recordId: document.record_id,
+          focusRecordId: comment.record_id,
+          docType: 'document',
         });
       }
 
@@ -2547,6 +2649,7 @@ export function initApp() {
         if (item.docType === 'directory') {
           this.navigateToFolder(item.recordId);
         } else if (item.recordId) {
+          this.selectedDocCommentId = item.focusRecordId ?? null;
           this.openDoc(item.recordId);
         }
         return;
@@ -2566,10 +2669,39 @@ export function initApp() {
         return;
       }
       if (item.section === 'schedules') {
-        this.navSection = 'schedules';
+        this.navSection = 'settings';
+        this.settingsTab = 'schedules';
         this.mobileNavOpen = false;
         this.startWorkspaceLiveQueries();
         if (item.recordId) this.startEditSchedule(item.recordId);
+        else this.syncRoute();
+        return;
+      }
+      if (item.section === 'scopes') {
+        this.navSection = 'settings';
+        this.settingsTab = 'scopes';
+        this.mobileNavOpen = false;
+        this.startWorkspaceLiveQueries();
+        this.syncRoute();
+        this.$nextTick(() => {
+          this.scopeNavFocus = item.recordId;
+          document.getElementById('scope-' + item.recordId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        return;
+      }
+      if (item.section === 'flows') {
+        this.navSection = 'settings';
+        this.settingsTab = 'flows';
+        this.mobileNavOpen = false;
+        if (item.boardScopeId) {
+          this.selectedBoardId = item.boardScopeId;
+          this.persistSelectedBoardId(this.selectedBoardId);
+          this.validateSelectedBoardId();
+        }
+        this.startWorkspaceLiveQueries();
+        await this.refreshFlows();
+        await this.refreshApprovals();
+        if (item.recordId) this.openFlowEditor(item.recordId);
         else this.syncRoute();
         return;
       }
@@ -2808,19 +2940,6 @@ export function initApp() {
       const ownerNpub = this.workspaceOwnerNpub;
       if (!ownerNpub) return;
       await this.applySchedules(await getSchedulesByOwner(ownerNpub));
-    },
-
-    setCalendarView(view) {
-      if (!CALENDAR_VIEWS.includes(view)) return;
-      this.calendarView = view;
-    },
-
-    shiftCalendar(step = 1) {
-      this.calendarAnchorDate = shiftCalendarDate(this.calendarAnchorDate, this.calendarView, step);
-    },
-
-    jumpCalendarToToday() {
-      this.calendarAnchorDate = getTodayDateKey();
     },
 
     async addSchedule() {
@@ -3107,6 +3226,20 @@ export function initApp() {
         familySuffixes: {
           ...(baseConfig.familySuffixes || {}),
           task: 'checkout_required',
+        },
+      };
+    },
+
+    getCheckoutEditPolicyConfig(familySuffix) {
+      const suffix = String(familySuffix || '').trim();
+      const baseConfig = this.recordCheckoutPolicyConfig || {};
+      return {
+        recordFamilyHashes: {
+          ...(baseConfig.recordFamilyHashes || {}),
+        },
+        familySuffixes: {
+          ...(baseConfig.familySuffixes || {}),
+          ...(suffix ? { [suffix]: 'checkout_required' } : {}),
         },
       };
     },
@@ -3646,26 +3779,6 @@ export function initApp() {
       Object.assign(this.editingTask, patch);
     },
 
-    openCalendarTask(taskId) {
-      const task = this.tasks.find((item) => item.record_id === taskId) || null;
-      const scopeId = task?.scope_id
-        ?? task?.scope_l5_id
-        ?? task?.scope_l4_id
-        ?? task?.scope_l3_id
-        ?? task?.scope_l2_id
-        ?? task?.scope_l1_id
-        ?? (task && isTaskUnscoped(task, this.scopesMap) ? UNSCOPED_TASK_BOARD_ID : null);
-      if (scopeId) {
-        this.selectedBoardId = scopeId;
-        this.persistSelectedBoardId(scopeId);
-        this.validateSelectedBoardId();
-      }
-      this.navSection = 'tasks';
-      this.mobileNavOpen = false;
-      this.startWorkspaceLiveQueries();
-      this.openTaskDetail(taskId);
-    },
-
     handleTaskAssigneeInput(value) {
       this.taskAssigneeQuery = value;
       if (this.taskAssigneeQuery.startsWith('npub1') && this.taskAssigneeQuery.length >= 20) {
@@ -3989,7 +4102,7 @@ export function initApp() {
       };
 
       if (action === 'ready' && !this.defaultAgentNpub) {
-        this.error = 'Set a default agent in Settings first.';
+        this.error = 'Set a default agent in Setup first.';
         return;
       }
 
@@ -4786,19 +4899,23 @@ export function initApp() {
         this.startWorkspaceLiveQueries();
         this.$nextTick(() => this.openTaskDetail(id));
       } else if (type === 'scope') {
-        this.navSection = 'scopes';
+        this.navSection = 'settings';
+        this.settingsTab = 'scopes';
         this.mobileNavOpen = false;
         this.startWorkspaceLiveQueries();
+        this.syncRoute();
         this.$nextTick(() => {
           this.scopeNavFocus = id;
           document.getElementById('scope-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
       } else if (type === 'flow') {
-        this.navSection = 'flows';
+        this.navSection = 'settings';
+        this.settingsTab = 'flows';
         this.mobileNavOpen = false;
         this.startWorkspaceLiveQueries();
         this.refreshFlows();
         this.refreshApprovals();
+        this.syncRoute();
         this.$nextTick(() => {
           this.editingFlowId = id;
           this.showFlowEditor = true;
@@ -5188,7 +5305,6 @@ export function initApp() {
     docsManagerMixin,
     triggersManagerMixin,
     jobsManagerMixin,
-    liveManagerMixin,
     audioRecordingManagerMixin,
     storageImageManagerMixin,
     sectionLiveQueryMixin,

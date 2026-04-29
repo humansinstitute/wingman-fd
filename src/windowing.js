@@ -6,6 +6,8 @@ const DEFAULT_WINDOW_LIMITS = Object.freeze({
   directories: 50,
   reports: 50,
   schedules: 50,
+  scopes: 50,
+  flows: 50,
 });
 
 export function coercePositiveInteger(value, fallback) {
