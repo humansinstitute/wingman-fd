@@ -57,6 +57,17 @@ describe('flight deck recent changes template', () => {
     expect(html).not.toContain('<span class="sidebar-label">Settings</span>');
   });
 
+  it('orders opportunities below people and above setup in the sidebar', () => {
+    const html = readFileSync(INDEX_PATH, 'utf8');
+    const peopleIndex = html.indexOf('<span class="sidebar-label">People</span>');
+    const opportunitiesIndex = html.indexOf('<span class="sidebar-label">Opportunities</span>');
+    const setupIndex = html.indexOf('<span class="sidebar-label">Setup</span>');
+
+    expect(peopleIndex).toBeGreaterThan(-1);
+    expect(opportunitiesIndex).toBeGreaterThan(peopleIndex);
+    expect(setupIndex).toBeGreaterThan(opportunitiesIndex);
+  });
+
   it('removes reports from the sidebar and routes report cards into reports', () => {
     const html = readFileSync(INDEX_PATH, 'utf8');
 

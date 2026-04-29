@@ -433,16 +433,6 @@
             <span class="sidebar-label">Tasks</span>
             <span class="unread-dot" x-show="$store.chat.unreadTasks" x-cloak></span>
           </li>
-          <li :class="{ active: $store.chat.navSection === 'opportunities' }" @click="$store.chat.navigateTo('opportunities')">
-            <span class="sidebar-icon" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <circle cx="12" cy="12" r="8"></circle>
-                <circle cx="12" cy="12" r="4"></circle>
-                <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle>
-              </svg>
-            </span>
-            <span class="sidebar-label">Opportunities</span>
-          </li>
           <li :class="{ active: $store.chat.navSection === 'docs' }" @click="$store.chat.navigateTo('docs')">
             <span class="sidebar-icon" aria-hidden="true">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -463,6 +453,16 @@
               </svg>
             </span>
             <span class="sidebar-label">People</span>
+          </li>
+          <li :class="{ active: $store.chat.navSection === 'opportunities' }" @click="$store.chat.navigateTo('opportunities')">
+            <span class="sidebar-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="12" r="8"></circle>
+                <circle cx="12" cy="12" r="4"></circle>
+                <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle>
+              </svg>
+            </span>
+            <span class="sidebar-label">Opportunities</span>
           </li>
           <!-- Jobs nav: hidden — stub feature (as-built remediation 04) -->
           <li x-cloak x-show="false" :class="{ active: $store.chat.navSection === 'jobs' }" @click="$store.chat.navigateTo('jobs'); $store.chat.loadJobDefinitions();">
