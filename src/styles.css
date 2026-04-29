@@ -3167,6 +3167,7 @@ button:disabled {
 
 .chat-input {
   flex: 1;
+  min-width: 0;
   padding: 0.6rem 0.85rem;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -6454,45 +6455,55 @@ button:disabled {
   }
 
   .chat-input-bar {
-    flex-direction: column;
+    flex-direction: row;
     align-items: stretch;
     padding: 0.75rem 0.85rem calc(0.75rem + env(safe-area-inset-bottom));
-    gap: 0.65rem;
+    gap: 0.5rem;
   }
 
   .chat-input-actions {
-    width: 100%;
+    flex-direction: column;
+    align-self: stretch;
     justify-content: flex-end;
   }
 
   .chat-input-actions .audio-trigger-btn,
   .chat-input-actions .chat-send-btn-text {
     min-height: 40px;
+    min-width: 48px;
+    padding-left: 0.65rem;
+    padding-right: 0.65rem;
   }
 
   .chat-input-bar .chat-input {
-    width: 100%;
+    min-width: 0;
+    width: auto;
   }
 
   .thread-input-bar {
-    flex-direction: column;
+    flex-direction: row;
     align-items: stretch;
     padding: 0.75rem 0.85rem calc(0.75rem + env(safe-area-inset-bottom));
-    gap: 0.65rem;
+    gap: 0.5rem;
   }
 
   .thread-input-actions {
-    width: 100%;
+    flex-direction: column;
+    align-self: stretch;
     justify-content: flex-end;
   }
 
   .thread-input-actions .audio-trigger-btn,
   .thread-input-actions .thread-reply-btn {
     min-height: 40px;
+    min-width: 48px;
+    padding-left: 0.65rem;
+    padding-right: 0.65rem;
   }
 
   .thread-input-bar .chat-input {
-    width: 100%;
+    min-width: 0;
+    width: auto;
   }
 
   /* --- Mobile thread panel: full-width overlay when open --- */

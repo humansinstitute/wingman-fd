@@ -170,20 +170,32 @@ describe('Thread mobile responsive behavior', () => {
       ).toBe(true);
     });
 
-    it('stacks chat and thread composers on mobile so textareas keep full width', async () => {
+    it('mounts chat and thread composer actions beside the textarea on mobile', async () => {
       css = css || await loadStylesheet();
       mobileBlock = mobileBlock || findMediaBlock(css, 768);
 
       expect(blockContainsRule(mobileBlock, '.chat-input-bar')).toBe(true);
       const chatInputBarDecl = extractDeclarations(mobileBlock, '.chat-input-bar');
-      expect(chatInputBarDecl).toMatch(/flex-direction\s*:\s*column/);
+      expect(chatInputBarDecl).toMatch(/flex-direction\s*:\s*row/);
       expect(chatInputBarDecl).toMatch(/align-items\s*:\s*stretch/);
 
+      const chatInputActionsDecl = extractDeclarations(mobileBlock, '.chat-input-actions');
+      expect(chatInputActionsDecl).toMatch(/flex-direction\s*:\s*column/);
+      expect(chatInputActionsDecl).toMatch(/align-self\s*:\s*stretch/);
+
       const chatInputDecl = extractDeclarations(mobileBlock, '.chat-input-bar .chat-input');
-      expect(chatInputDecl).toMatch(/width\s*:\s*100%/);
+      expect(chatInputDecl).toMatch(/min-width\s*:\s*0/);
+
+      const threadInputBarDecl = extractDeclarations(mobileBlock, '.thread-input-bar');
+      expect(threadInputBarDecl).toMatch(/flex-direction\s*:\s*row/);
+      expect(threadInputBarDecl).toMatch(/align-items\s*:\s*stretch/);
+
+      const threadInputActionsDecl = extractDeclarations(mobileBlock, '.thread-input-actions');
+      expect(threadInputActionsDecl).toMatch(/flex-direction\s*:\s*column/);
+      expect(threadInputActionsDecl).toMatch(/align-self\s*:\s*stretch/);
 
       const threadInputDecl = extractDeclarations(mobileBlock, '.thread-input-bar .chat-input');
-      expect(threadInputDecl).toMatch(/width\s*:\s*100%/);
+      expect(threadInputDecl).toMatch(/min-width\s*:\s*0/);
     });
   });
 
