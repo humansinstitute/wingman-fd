@@ -146,6 +146,16 @@ describe('Flight Deck main content — horizontal padding restored', () => {
   });
 });
 
+describe('Setup layout width', () => {
+  it('.settings-section spans the available content width', () => {
+    const blocks = extractRuleBlocks('.settings-section');
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.some((block) => /width\s*:\s*100%/.test(block))).toBe(true);
+    expect(blocks.some((block) => /max-width\s*:\s*none/.test(block))).toBe(true);
+    expect(blocks.some((block) => /max-width\s*:\s*640px/.test(block))).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Mobile responsive padding
 // ---------------------------------------------------------------------------
