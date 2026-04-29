@@ -235,10 +235,11 @@ export const chatMessageManagerMixin = {
     const lineHeight = parseFloat(styles.lineHeight) || 20;
     const paddingY = (parseFloat(styles.paddingTop) || 0) + (parseFloat(styles.paddingBottom) || 0);
     const borderY = (parseFloat(styles.borderTopWidth) || 0) + (parseFloat(styles.borderBottomWidth) || 0);
+    const minHeight = parseFloat(styles.minHeight) || ((lineHeight * 3) + paddingY + borderY);
     const maxHeight = (lineHeight * this.COMPOSER_MAX_LINES) + paddingY + borderY;
 
     textarea.style.height = 'auto';
-    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
     textarea.style.height = `${Math.max(nextHeight, 0)}px`;
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
   },

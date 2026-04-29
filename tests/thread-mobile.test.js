@@ -169,6 +169,22 @@ describe('Thread mobile responsive behavior', () => {
         blockContainsRule(mobileBlock, '.chat-layout-thread-open'),
       ).toBe(true);
     });
+
+    it('stacks chat and thread composers on mobile so textareas keep full width', async () => {
+      css = css || await loadStylesheet();
+      mobileBlock = mobileBlock || findMediaBlock(css, 768);
+
+      expect(blockContainsRule(mobileBlock, '.chat-input-bar')).toBe(true);
+      const chatInputBarDecl = extractDeclarations(mobileBlock, '.chat-input-bar');
+      expect(chatInputBarDecl).toMatch(/flex-direction\s*:\s*column/);
+      expect(chatInputBarDecl).toMatch(/align-items\s*:\s*stretch/);
+
+      const chatInputDecl = extractDeclarations(mobileBlock, '.chat-input-bar .chat-input');
+      expect(chatInputDecl).toMatch(/width\s*:\s*100%/);
+
+      const threadInputDecl = extractDeclarations(mobileBlock, '.thread-input-bar .chat-input');
+      expect(threadInputDecl).toMatch(/width\s*:\s*100%/);
+    });
   });
 
   describe('JS: thread lifecycle state on mobile', () => {
@@ -199,6 +215,18 @@ describe('Thread mobile responsive behavior', () => {
   });
 
   describe('HTML: thread layout class binding', () => {
+    it('chat and thread composers start with three rows', async () => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const htmlPath = path.resolve(import.meta.dirname, '..', 'index.html');
+      const html = fs.readFileSync(htmlPath, 'utf-8');
+
+      expect(html).toContain('data-chat-composer="message"');
+      expect(html).toContain('data-chat-composer="thread"');
+      expect(html).toContain('rows="3"');
+      expect(html).toContain('class="chat-input-actions"');
+    });
+
     it('chat-layout-thread-full class is applied when threadSize is full and thread is active', async () => {
       // This tests the existing binding pattern
       // In index.html: :class="{ 'chat-layout-thread-full': $store.chat.activeThreadId && $store.chat.threadSize === 'full' }"

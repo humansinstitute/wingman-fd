@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-C-nJ_oU-.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-B9PYEd07.css">
+  <script type="module" crossorigin src="/assets/index-DR_EaA6k.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BOi4HIkv.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -1898,14 +1898,17 @@
                   class="chat-input"
                   data-chat-composer="message"
                   placeholder="Message channel"
+                  rows="3"
                   x-model="$store.chat.messageInput"
                   x-init="$store.chat.autosizeComposer($el)"
                   @input="$store.chat.autosizeComposer($event.target); $store.chat.handleMentionInput($event.target)"
                   @keydown="$store.chat.handleComposerKeydown($event, () => $store.chat.sendMessage())"
                   @paste="$store.chat.handleChatPaste($event, 'message')"
                 ></textarea>
-                <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('chat')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
-                <button class="chat-send-btn-text" @click="$store.chat.sendMessage()" :disabled="((!$store.chat.messageInput.trim() && $store.chat.messageAudioDrafts.length === 0) || $store.chat.messageImageUploadCount > 0)">Send</button>
+                <div class="chat-input-actions">
+                  <button class="audio-trigger-btn" type="button" @click="$store.chat.openAudioRecorder('chat')" title="Record voice note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></button>
+                  <button class="chat-send-btn-text" @click="$store.chat.sendMessage()" :disabled="((!$store.chat.messageInput.trim() && $store.chat.messageAudioDrafts.length === 0) || $store.chat.messageImageUploadCount > 0)">Send</button>
+                </div>
               </div>
               <div class="audio-draft-list" x-show="$store.chat.messageAudioDrafts.length > 0">
                 <template x-for="draft in $store.chat.messageAudioDrafts" :key="draft.draft_id">
@@ -2059,6 +2062,7 @@
                   class="chat-input"
                   data-chat-composer="thread"
                   placeholder="Reply to thread..."
+                  rows="3"
                   x-model="$store.chat.threadInput"
                   x-init="$store.chat.autosizeComposer($el)"
                   @input="$store.chat.autosizeComposer($event.target); $store.chat.handleMentionInput($event.target)"

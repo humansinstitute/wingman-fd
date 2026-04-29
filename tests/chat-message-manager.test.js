@@ -422,6 +422,33 @@ describe('scroll and composer methods', () => {
     expect(() => fn(null)).not.toThrow();
   });
 
+  it('autosizeComposer keeps empty composers at the three-line minimum', () => {
+    const { fn } = bindMethod('autosizeComposer');
+    const textarea = {
+      scrollHeight: 42,
+      style: {},
+    };
+
+    vi.stubGlobal('window', {
+      getComputedStyle: () => ({
+        lineHeight: '20px',
+        paddingTop: '8px',
+        paddingBottom: '8px',
+        borderTopWidth: '1px',
+        borderBottomWidth: '1px',
+        minHeight: '78px',
+      }),
+    });
+
+    try {
+      fn(textarea);
+      expect(textarea.style.height).toBe('78px');
+      expect(textarea.style.overflowY).toBe('hidden');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('scheduleComposerAutosize does not throw in test env', () => {
     const { fn } = bindMethod('scheduleComposerAutosize');
     expect(() => fn('message')).not.toThrow();
