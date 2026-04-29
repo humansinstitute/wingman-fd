@@ -68,9 +68,12 @@ describe('flight deck recent changes template', () => {
   it('renders chat channels as in-view tabs instead of sidebar rows', () => {
     const html = readFileSync(INDEX_PATH, 'utf8');
 
-    expect(html).toContain('class="chat-channel-tabs"');
+    expect(html).toContain('class="chat-channel-header" x-show="$store.chat.navSection === \'chat\'"');
+    expect(html).toContain('class="chat-channel-tab-item"');
     expect(html).toContain('class="chat-channel-tab-scroll" role="tablist" aria-label="Chat channels"');
     expect(html).toContain('class="chat-channel-tab"');
+    expect(html).toContain('class="chat-channel-menu chat-channel-tab-menu"');
+    expect(html).not.toContain('class="chat-channel-tabs"');
     expect(html).not.toContain('class="sidebar-channels"');
     expect(html).not.toContain('class="sidebar-channel-item"');
   });

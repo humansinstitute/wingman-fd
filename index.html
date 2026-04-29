@@ -1756,49 +1756,49 @@
 
         <template x-if="$store.chat.navSection === 'chat'">
           <div class="chat-section">
-          <div class="chat-channel-tabs" x-show="$store.chat.navSection === 'chat'" x-cloak>
-            <div class="chat-channel-tab-scroll" role="tablist" aria-label="Chat channels">
-              <template x-for="ch in $store.chat.channels" :key="ch.record_id">
-                <button
-                  type="button"
-                  class="chat-channel-tab"
-                  :class="{
-                    active: $store.chat.selectedChannelId === ch.record_id,
-                    'chat-channel-tab-unread': $store.chat.isChannelUnread(ch.record_id)
-                  }"
-                  role="tab"
-                  :aria-selected="$store.chat.selectedChannelId === ch.record_id"
-                  @click="$store.chat.selectChannel(ch.record_id)"
-                >
-                  <span class="channel-hash">#</span>
-                  <span class="chat-channel-tab-label" x-text="$store.chat.getChannelLabel(ch)"></span>
-                  <span class="unread-dot unread-dot-channel" x-show="$store.chat.isChannelUnread(ch.record_id)" x-cloak></span>
-                </button>
-              </template>
-            </div>
-            <button type="button" class="chat-channel-tab-add" @click="$store.chat.openNewChannelModal()" title="New channel" aria-label="New channel">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 5v14M5 12h14"/>
-              </svg>
-            </button>
-          </div>
-          <div class="chat-channel-header" x-show="$store.chat.selectedChannelId">
-            <span class="chat-channel-hash">#</span>
-            <span class="chat-channel-name" x-text="$store.chat.getChannelLabel($store.chat.channels.find(c => c.record_id === $store.chat.selectedChannelId))"></span>
-            <details class="chat-channel-menu" @click.outside="$el.open = false">
-              <summary title="Channel options">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="5" r="1"></circle>
-                  <circle cx="12" cy="12" r="1"></circle>
-                  <circle cx="12" cy="19" r="1"></circle>
-                </svg>
-              </summary>
-              <div class="chat-channel-menu-popover">
-                <button type="button" @click="$store.chat.openChannelSettings(); $event.target.closest('details').open = false">Channel settings</button>
-                <button type="button" @click="$store.chat.openRecordStatusModal({ familyId: 'channel', recordId: $store.chat.selectedChannelId, label: $store.chat.getChannelLabel($store.chat.selectedChannel) || 'Channel' }); $event.target.closest('details').open = false">Check sync status</button>
+            <div class="chat-channel-header" x-show="$store.chat.navSection === 'chat'" x-cloak>
+              <div class="chat-channel-tab-scroll" role="tablist" aria-label="Chat channels">
+                <template x-for="ch in $store.chat.channels" :key="ch.record_id">
+                  <div
+                    class="chat-channel-tab-item"
+                    :class="{
+                      active: $store.chat.selectedChannelId === ch.record_id,
+                      'chat-channel-tab-unread': $store.chat.isChannelUnread(ch.record_id)
+                    }"
+                  >
+                    <button
+                      type="button"
+                      class="chat-channel-tab"
+                      role="tab"
+                      :aria-selected="$store.chat.selectedChannelId === ch.record_id"
+                      @click="$store.chat.selectChannel(ch.record_id)"
+                    >
+                      <span class="channel-hash">#</span>
+                      <span class="chat-channel-tab-label" x-text="$store.chat.getChannelLabel(ch)"></span>
+                      <span class="unread-dot unread-dot-channel" x-show="$store.chat.isChannelUnread(ch.record_id)" x-cloak></span>
+                    </button>
+                    <details class="chat-channel-menu chat-channel-tab-menu" x-show="$store.chat.selectedChannelId === ch.record_id" x-cloak @click.outside="$el.open = false">
+                      <summary title="Channel options">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="5" r="1"></circle>
+                          <circle cx="12" cy="12" r="1"></circle>
+                          <circle cx="12" cy="19" r="1"></circle>
+                        </svg>
+                      </summary>
+                      <div class="chat-channel-menu-popover">
+                        <button type="button" @click="$store.chat.openChannelSettings(); $event.target.closest('details').open = false">Channel settings</button>
+                        <button type="button" @click="$store.chat.openRecordStatusModal({ familyId: 'channel', recordId: $store.chat.selectedChannelId, label: $store.chat.getChannelLabel($store.chat.selectedChannel) || 'Channel' }); $event.target.closest('details').open = false">Check sync status</button>
+                      </div>
+                    </details>
+                  </div>
+                </template>
               </div>
-            </details>
-          </div>
+              <button type="button" class="chat-channel-tab-add" @click="$store.chat.openNewChannelModal()" title="New channel" aria-label="New channel">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+              </button>
+            </div>
 
           <div class="chat-layout" :class="{ 'chat-layout-thread-full': $store.chat.activeThreadId && $store.chat.threadSize === 'full', 'chat-layout-thread-open': !!$store.chat.activeThreadId }">
             <div class="chat-main">
