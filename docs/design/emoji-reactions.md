@@ -10,8 +10,8 @@ Add lightweight emoji reactions to chat messages and comments.
 
 The first usable slice should support:
 
-- a default quick reaction, shown as `:smile:` in the design and rendered as the platform emoji in the UI
-- choosing another allowed emoji from a small picker
+- a default quick reaction, shown as `:thumbs_up:` in the design and rendered as the platform emoji in the UI
+- choosing another common emoji from a small fixed picker
 - reacting to a chat message in the main feed
 - reacting to the parent message or any reply in a chat thread
 - reacting to task comments
@@ -87,8 +87,8 @@ schema_version = 1
   "data": {
     "target_record_id": "chat or comment record id",
     "target_record_family_hash": "app:chat_message or app:comment",
-    "emoji": "smile",
-    "emoji_shortcode": ":smile:",
+    "emoji": "thumbs_up",
+    "emoji_shortcode": ":thumbs_up:",
     "reactor_npub": "logical user npub",
     "record_state": "active"
   }
@@ -99,8 +99,8 @@ schema_version = 1
 
 - `target_record_id`: required. The record receiving the reaction.
 - `target_record_family_hash`: required. Initially only `:chat_message` and `:comment` are supported.
-- `emoji`: required canonical token. Use a constrained ASCII token such as `smile`, `thumbs_up`, `heart`, `eyes`, `party`.
-- `emoji_shortcode`: required display shortcode derived from `emoji`, such as `:smile:`.
+- `emoji`: required canonical token. Use a constrained ASCII token from the first-release picker: `thumbs_up`, `smile`, `heart`, `eyes`, and `party`.
+- `emoji_shortcode`: required display shortcode derived from `emoji`, such as `:thumbs_up:`.
 - `reactor_npub`: required logical actor. This should be the real workspace user where available, not merely a workspace session key signer.
 - `record_state`: `active` or `deleted`.
 
@@ -125,6 +125,8 @@ When the current user clicks an emoji:
 3. If no matching reaction exists, create a new reaction record at version 1.
 
 This keeps a stable version chain per user's reaction while avoiding writes to the target message or comment.
+
+Reaction clicks should post immediately through the normal local-first pending-write flow. The UI should optimistically show the reaction, then let the existing flush/background sync path reconcile with Tower.
 
 ## Access And Encryption
 
@@ -193,8 +195,8 @@ Suggested helper output:
 ```js
 [
   {
-    emoji: 'smile',
-    emoji_shortcode: ':smile:',
+    emoji: 'thumbs_up',
+    emoji_shortcode: ':thumbs_up:',
     count: 3,
     reacted_by_me: true,
     reactor_npubs: ['npub1...', 'npub1...'],
@@ -211,7 +213,7 @@ Rules:
 - show a compact pill under the message/comment body
 - quick click on an existing pill toggles the current user's reaction for that emoji
 - a small add button opens the picker
-- the default quick action writes `smile`
+- the default quick action writes `thumbs_up`
 
 ## Flight Deck Impact
 
@@ -323,7 +325,7 @@ Initial policy:
 Rationale:
 
 - reactions are lightweight acknowledgements
-- changing read/unread behavior would make common smile clicks noisy
+- changing read/unread behavior would make common thumbs-up acknowledgements noisy
 - the reaction family can still sync live without disturbing message ordering
 
 If product wants reaction notifications later, add a separate notification policy keyed by `target_record_id` and `reactor_npub`.
@@ -335,7 +337,7 @@ If product wants reaction notifications later, add a separate notification polic
 3. Add Flight Deck Dexie table and DB helper tests.
 4. Register the sync family and worker materialization.
 5. Add reaction summary/toggle helpers for visible chat messages and comments.
-6. Render reaction pills and the default `smile` quick action in chat.
+6. Render reaction pills and the default `thumbs_up` quick action in chat.
 7. Render the same controls in task and document comments.
 8. Add Yoke SQLite, translator, sync, and schema-compat support.
 9. Run targeted tests in Flight Deck and Yoke.
@@ -356,7 +358,7 @@ Flight Deck:
   - excludes deleted rows from summary helpers
 - `tests/chat-message-manager.test.js`
   - reaction summaries render for main feed, thread parent, and thread replies
-  - clicking the default `smile` creates a pending reaction write
+  - clicking the default `thumbs_up` creates a pending reaction write
   - clicking an active own pill soft-deletes the reaction
 - `tests/doc-comments-anchors.test.js` or a new `tests/doc-comment-reactions.test.js`
   - document comment root and reply reaction summaries stay attached to the right comment
@@ -383,9 +385,6 @@ If Flight Deck ships before Yoke support, agents using Yoke will not see reactio
 
 ## Open Questions
 
-1. Should the first emoji set be fixed to a small allowlist, or should users be able to enter any emoji?
-2. Is the default quick reaction definitely `smile`, or should it be `thumbs_up`?
-3. Should one user be allowed to add multiple different emoji reactions to the same target?
-4. Should reactions be visible in Yoke/agent summaries in the first release, or is materialization enough?
-5. Should a reaction by someone else ever create a notification, unread marker, or activity entry?
-6. Should reactions be allowed on approval preview comments immediately, or only after the underlying task/document comment surface is opened?
+1. Should one user be allowed to add multiple different emoji reactions to the same target?
+2. Should reactions be visible in Yoke/agent summaries in the first release, or is materialization enough?
+3. Should reactions be allowed on approval preview comments immediately, or only after the underlying task/document comment surface is opened?
