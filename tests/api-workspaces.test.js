@@ -79,6 +79,33 @@ describe('workspace API host binding', () => {
     expect(result.requestUrl).toBe('https://sb.example/api/v4/workspaces?member_npub=npub1member');
   });
 
+  it('registers a workspace app namespace on the configured backend', async () => {
+    const fetchMock = vi.fn(async (requestUrl) => {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ ok: true, requestUrl }),
+        text: async () => JSON.stringify({ ok: true, requestUrl }),
+      };
+    });
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+    const result = await api.registerWorkspaceApp('npub1workspace', {
+      app_npub: 'npub1app',
+      app_name: 'Flight Deck',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://sb.example/api/v4/workspaces/npub1workspace/apps');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ app_npub: 'npub1app', app_name: 'Flight Deck' }),
+    });
+    expect(result.requestUrl).toBe('https://sb.example/api/v4/workspaces/npub1workspace/apps');
+  });
+
   it('uses the configured backend for storage prepare requests', async () => {
     const fetchMock = vi.fn(async (requestUrl) => {
       return {

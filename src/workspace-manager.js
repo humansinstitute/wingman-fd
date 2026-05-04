@@ -23,6 +23,7 @@ import {
   getWorkspaces,
   recoverWorkspace,
   updateWorkspace,
+  registerWorkspaceApp,
   prepareStorageObject,
   uploadStorageObject,
   completeStorageObject,
@@ -58,7 +59,7 @@ import { outboundWorkspaceSettings, normalizeHarnessUrl } from './translators/se
 import { buildStoragePrepareBody } from './storage-payloads.js';
 import { buildSuperBasedConnectionToken } from './superbased-token.js';
 import { flightDeckLog } from './logging.js';
-import { DEFAULT_SUPERBASED_URL } from './app-identity.js';
+import { APP_NAME, APP_NPUB, DEFAULT_SUPERBASED_URL } from './app-identity.js';
 import { getRecordWriteFieldsForStore } from './preferred-write-group.js';
 
 export function guessDefaultBackendUrl() {
@@ -811,6 +812,9 @@ export const workspaceManagerMixin = {
       this.validateSelectedBoardId();
       this.normalizeSettingsTab();
       await this.persistWorkspaceSettings();
+      this.registerCurrentWorkspaceApp().catch((error) => {
+        console.debug('workspace app registration skipped:', error?.message || error);
+      });
       await this.refreshWorkspaceSettings();
       this.syncWorkspaceProfileDraft({ force: true });
     } finally {
@@ -821,6 +825,15 @@ export const workspaceManagerMixin = {
         this.workspaceSwitchPendingNpub = '';
       }
     }
+  },
+
+  async registerCurrentWorkspaceApp() {
+    const workspaceOwnerNpub = String(this.currentWorkspaceOwnerNpub || this.ownerNpub || '').trim();
+    if (!workspaceOwnerNpub || !APP_NPUB || !this.backendUrl) return null;
+    return registerWorkspaceApp(workspaceOwnerNpub, {
+      app_npub: APP_NPUB,
+      app_name: APP_NAME || 'Flight Deck',
+    });
   },
 
   async removeWorkspace(workspaceKeyOrOwner) {

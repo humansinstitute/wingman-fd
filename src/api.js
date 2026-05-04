@@ -269,6 +269,16 @@ export async function updateWorkspace(workspaceOwnerNpub, body) {
   return json(resp, { requestUrl, method: 'PATCH' });
 }
 
+export async function registerWorkspaceApp(workspaceOwnerNpub, { app_npub, app_name }) {
+  const requestPath = `/api/v4/workspaces/${encodeURIComponent(workspaceOwnerNpub)}/apps`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetchWithFallbacks(requestPath, {
+    method: 'POST',
+    body: { app_npub, app_name },
+  });
+  return json(resp, { requestUrl, method: 'POST' });
+}
+
 export async function registerWorkspaceKey({ workspace_owner_npub, ws_key_npub }) {
   const requestPath = '/api/v4/user/workspace-keys';
   const requestUrl = url(requestPath);
