@@ -1111,39 +1111,7 @@ export const syncManagerMixin = {
         return;
       }
 
-      let synced = 0;
-      let cleared = 0;
-      let attempted = 0;
-      const skippedRecordIds = new Set();
-      const failures = [];
-
-      for (const target of targets) {
-        const targetKey = `${target.familyId}\u0000${target.recordId}`;
-        if (skippedRecordIds.has(targetKey)) continue;
-        attempted += 1;
-        try {
-          const towerContext = await this.getRecordStatusTowerVersionContext(target.recordId);
-          const result = await this.forcePushLocalRecordSnapshot({
-            familyId: target.familyId,
-            recordId: target.recordId,
-            label: target.label,
-            towerVersionCount: towerContext.visibleVersionCount,
-            towerLatestVersion: towerContext.latestVersionNumber,
-            pendingWrites,
-          });
-          synced += 1;
-          cleared += result.clearedRecordIds.length;
-          for (const clearedRecordId of result.clearedRecordIds) {
-            const familyId = clearedRecordId === result.recordId ? result.familyId : 'comment';
-            skippedRecordIds.add(`${familyId}\u0000${clearedRecordId}`);
-          }
-        } catch (error) {
-          failures.push({
-            ...target,
-            message: error?.message || 'Force sync failed.',
-          });
-        }
-      }
+      const { synced, cleared, attempted, failures } = await this.forceSyncPendingWriteTargets(targets, { pendingWrites });
 
       await this.refreshPendingWriteDiagnostics();
       await this.refreshSyncStatus({ refreshUnread: false });
@@ -1161,6 +1129,71 @@ export const syncManagerMixin = {
     } finally {
       this.pendingWritesBusy = false;
     }
+  },
+
+  async forceSyncPendingWriteTargets(targets = [], options = {}) {
+    const pendingWrites = Array.isArray(options.pendingWrites)
+      ? options.pendingWrites
+      : await this.getRecordStatusPendingWrites();
+    const wanted = new Map();
+    for (const target of targets) {
+      const familyId = String(target?.familyId || '').trim();
+      const recordId = String(target?.recordId || '').trim();
+      if (!familyId || !recordId) continue;
+      const key = `${familyId}\u0000${recordId}`;
+      if (wanted.has(key)) continue;
+      wanted.set(key, {
+        familyId,
+        recordId,
+        label: String(target?.label || '').trim() || recordId,
+      });
+    }
+    if (wanted.size === 0) {
+      return { synced: 0, cleared: 0, attempted: 0, failures: [] };
+    }
+
+    const pendingTargets = this.getPendingWriteForceSyncTargets(pendingWrites)
+      .filter((target) => wanted.has(`${target.familyId}\u0000${target.recordId}`))
+      .map((target) => ({
+        ...target,
+        label: wanted.get(`${target.familyId}\u0000${target.recordId}`)?.label || target.label,
+      }));
+
+    let synced = 0;
+    let cleared = 0;
+    let attempted = 0;
+    const skippedRecordIds = new Set();
+    const failures = [];
+
+    for (const target of pendingTargets) {
+      const targetKey = `${target.familyId}\u0000${target.recordId}`;
+      if (skippedRecordIds.has(targetKey)) continue;
+      attempted += 1;
+      try {
+        const towerContext = await this.getRecordStatusTowerVersionContext(target.recordId);
+        const result = await this.forcePushLocalRecordSnapshot({
+          familyId: target.familyId,
+          recordId: target.recordId,
+          label: target.label,
+          towerVersionCount: towerContext.visibleVersionCount,
+          towerLatestVersion: towerContext.latestVersionNumber,
+          pendingWrites,
+        });
+        synced += 1;
+        cleared += result.clearedRecordIds.length;
+        for (const clearedRecordId of result.clearedRecordIds) {
+          const familyId = clearedRecordId === result.recordId ? result.familyId : 'comment';
+          skippedRecordIds.add(`${familyId}\u0000${clearedRecordId}`);
+        }
+      } catch (error) {
+        failures.push({
+          ...target,
+          message: error?.message || 'Force sync failed.',
+        });
+      }
+    }
+
+    return { synced, cleared, attempted, failures };
   },
 
   // --- generic record version history ---

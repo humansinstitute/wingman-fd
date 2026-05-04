@@ -545,6 +545,73 @@ describe('pending write diagnostics', () => {
     expect(store.pendingWritesError).toContain('Doc Fail');
     expect(store.pendingWritesError).toContain('writer is not a member of write group');
   });
+
+  it('force-syncs only the requested pending targets', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    const documentFamilyHash = getSyncFamilyHash('document');
+    const pendingRows = [
+      {
+        row_id: 31,
+        record_id: 'task-1',
+        record_family_hash: taskFamilyHash,
+        envelope: {
+          record_id: 'task-1',
+          record_family_hash: taskFamilyHash,
+          version: 4,
+          previous_version: 3,
+        },
+      },
+      {
+        row_id: 32,
+        record_id: 'doc-1',
+        record_family_hash: documentFamilyHash,
+        envelope: {
+          record_id: 'doc-1',
+          record_family_hash: documentFamilyHash,
+          version: 3,
+          previous_version: 2,
+        },
+      },
+    ];
+    getPendingWrites.mockResolvedValue(pendingRows);
+    fetchRecordHistory.mockResolvedValueOnce({ versions: [{ version: 3, updated_at: '2026-03-28T10:00:00.000Z' }] });
+    syncRecords.mockResolvedValueOnce({ synced: 1, updated: 1, rejected: [] });
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
+
+    const store = createStore({
+      session: { npub: 'npub1me' },
+      groups: [{ group_id: 'group-1', member_npubs: ['npub1me'] }],
+      tasks: [
+        { record_id: 'task-1', owner_npub: 'npub1owner', title: 'Task One', board_group_id: 'group-1', group_ids: ['group-1'], shares: [], version: 4, sync_status: 'failed' },
+      ],
+      documents: [
+        { record_id: 'doc-1', owner_npub: 'npub1owner', title: 'Doc One', group_ids: ['group-1'], shares: ['group-1'], version: 3, sync_status: 'failed' },
+      ],
+      getTaskDetailCheckoutPolicyConfig: vi.fn(() => checkoutPolicyConfig),
+      buildRecordStatusEnvelope: vi.fn(async (record, familyId, options = {}) => ({
+        record_id: record.record_id,
+        record_family_hash: getSyncFamilyHash(familyId),
+        version: Number(options.latestTowerVersion || 0) + 1,
+        previous_version: Number(options.latestTowerVersion || 0),
+        checkout: { checkout_id: 'checkout-task-1', consume_on_success: true },
+      })),
+      getRecordStatusRelatedComments: vi.fn(async () => []),
+    });
+
+    const result = await store.forceSyncPendingWriteTargets([
+      { familyId: 'task', recordId: 'task-1', label: 'Task One' },
+    ]);
+
+    expect(result).toMatchObject({ synced: 1, cleared: 1, attempted: 1, failures: [] });
+    expect(syncRecords).toHaveBeenCalledTimes(1);
+    expect(syncRecords).toHaveBeenCalledWith({
+      owner_npub: 'npub1owner',
+      records: [expect.objectContaining({ record_id: 'task-1' })],
+      checkout_policy_config: checkoutPolicyConfig,
+    });
+    expect(removePendingWrite).toHaveBeenCalledWith(31);
+    expect(removePendingWrite).not.toHaveBeenCalledWith(32);
+  });
 });
 
 // ---------------------------------------------------------------------------
