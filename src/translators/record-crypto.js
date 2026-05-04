@@ -1,7 +1,7 @@
 import {
   decryptOwnerPayloadJsonWithActiveWorkspaceUserKey,
   encryptOwnerPayloadWithActiveWorkspaceUserKey,
-} from '@superbased/browser/workspace-keys';
+} from '@nostr-superbased/browser/workspace-keys';
 import { personalDecryptFromNpub, personalEncryptForNpub } from '../auth/nostr.js';
 import {
   decryptPayloadForGroup,
@@ -79,6 +79,7 @@ export async function encryptOwnerPayload(ownerNpub, payload) {
 export function buildGroupPayloads(groupRefs, payload, canWriteByGroup = null) {
   const plaintext = JSON.stringify(payload);
   const uniqueGroups = [...new Set((groupRefs || []).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (uniqueGroups.length === 0) return [];
   const senderNpub = getActiveSessionNpub();
   if (!senderNpub) throw new Error('No active session available for group payload encryption.');
 

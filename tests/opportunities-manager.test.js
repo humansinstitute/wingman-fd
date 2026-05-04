@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/crypto/group-keys.js', () => ({
   hasGroupKey: vi.fn(() => true),
@@ -154,6 +154,10 @@ describe('opportunitiesManagerMixin', () => {
     vi.clearAllMocks();
     getOpportunityById.mockResolvedValue(null);
     getPendingWrites.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('does not return person, organisation, or task suggestions for empty link queries', () => {
@@ -406,6 +410,9 @@ describe('opportunitiesManagerMixin', () => {
   });
 
   it('derives high-level opportunity metrics from filtered opportunities and linked tasks', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-25T12:00:00.000Z'));
+
     const store = createStore({
       opportunityFilter: '',
       opportunities: [
@@ -415,7 +422,7 @@ describe('opportunitiesManagerMixin', () => {
           stage: 'qualified',
           expected_value: 125000,
           currency: 'AUD',
-          expected_close_at: '2026-04-30',
+          expected_close_at: '2026-04-30T12:00:00.000Z',
           task_links: [{ task_id: 'task-1', primary: true }],
         },
         {
@@ -424,7 +431,7 @@ describe('opportunitiesManagerMixin', () => {
           stage: 'proposal',
           expected_value: 40000,
           currency: 'USD',
-          expected_close_at: '2026-06-15',
+          expected_close_at: '2026-06-15T12:00:00.000Z',
           task_links: [{ task_id: 'task-2', primary: true }],
         },
         {
@@ -433,7 +440,7 @@ describe('opportunitiesManagerMixin', () => {
           stage: 'lost',
           expected_value: 9000,
           currency: 'AUD',
-          expected_close_at: '2026-04-28',
+          expected_close_at: '2026-04-28T12:00:00.000Z',
           task_links: [{ task_id: 'task-3', primary: true }],
         },
       ],

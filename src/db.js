@@ -47,6 +47,7 @@ const WORKSPACE_STORES = {
   tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, *predecessor_task_ids, flow_id, flow_run_id, flow_step',
   schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
   comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+  reactions:          'record_id, target_record_id, target_record_family_hash, emoji, reactor_npub, &[target_record_family_hash+target_record_id+emoji+reactor_npub], updated_at',
   audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
   scopes:             'record_id, owner_npub, level, parent_id, l1_id, l2_id, l3_id, l4_id, l5_id, updated_at',
   flows:              'record_id, owner_npub, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, sync_status, updated_at, *group_ids',
@@ -64,6 +65,11 @@ const WORKSPACE_STORES_V8 = {
   opportunities: 'record_id, owner_npub, stage, responsible_npub, sync_status, updated_at, scope_id, scope_l1_id, scope_l2_id, scope_l3_id, scope_l4_id, scope_l5_id, *group_ids',
 };
 
+const WORKSPACE_STORES_V10 = {
+  ...WORKSPACE_STORES_V8,
+  reactions: WORKSPACE_STORES.reactions,
+};
+
 function createWorkspaceDb(workspaceDbKey) {
   const db = new Dexie(`wingman-fd-ws-${workspaceDbKey}`);
   const WORKSPACE_STORES_V2 = {
@@ -76,6 +82,7 @@ function createWorkspaceDb(workspaceDbKey) {
     tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
     schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
     comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+    reactions:          'record_id, target_record_id, target_record_family_hash, emoji, reactor_npub, &[target_record_family_hash+target_record_id+emoji+reactor_npub], updated_at',
     audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
     scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
     sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
@@ -94,6 +101,7 @@ function createWorkspaceDb(workspaceDbKey) {
     tasks:              'record_id, owner_npub, parent_task_id, state, sync_status, updated_at, scope_id, scope_product_id, scope_project_id, scope_deliverable_id',
     schedules:          'record_id, owner_npub, active, repeat, updated_at, sync_status',
     comments:           'record_id, target_record_id, target_record_family_hash, parent_comment_id, updated_at',
+    reactions:          'record_id, target_record_id, target_record_family_hash, emoji, reactor_npub, &[target_record_family_hash+target_record_id+emoji+reactor_npub], updated_at',
     audio_notes:        'record_id, owner_npub, target_record_id, target_record_family_hash, transcript_status, sync_status, updated_at',
     scopes:             'record_id, owner_npub, level, parent_id, product_id, project_id, updated_at',
     sync_quarantine:    '&key, family_hash, family_id, record_id, last_seen_at',
@@ -129,6 +137,7 @@ function createWorkspaceDb(workspaceDbKey) {
     97, 103, 101, 110, 116, 95, 99, 104, 97, 116, 95, 116, 114, 105, 103, 103, 101, 114, 115,
   ].map((code) => String.fromCharCode(code)).join('');
   db.version(9).stores({ [retiredAgentChatStore]: null });
+  db.version(10).stores(WORKSPACE_STORES_V10);
   return db;
 }
 
@@ -717,6 +726,97 @@ export async function upsertComment(comment) {
   return wsDb().comments.put(sanitizeForStorage(comment));
 }
 
+export async function getCommentById(recordId) {
+  return wsDb().comments.get(recordId);
+}
+
+// ---------------------------------------------------------------------------
+// reactions — workspace DB
+// ---------------------------------------------------------------------------
+
+function reactionIdentityKey(row = {}) {
+  return [
+    String(row.target_record_family_hash || '').trim(),
+    String(row.target_record_id || '').trim(),
+    String(row.emoji || '').trim(),
+    String(row.reactor_npub || '').trim(),
+  ];
+}
+
+function reactionFreshness(row = {}) {
+  return `${String(row.updated_at || '')}\u0000${String(row.version ?? 0).padStart(12, '0')}`;
+}
+
+export async function getReactionsByTarget(targetRecordId, targetRecordFamilyHash = null) {
+  const targetId = String(targetRecordId || '').trim();
+  if (!targetId) return [];
+  const rows = await wsDb().reactions.where('target_record_id').equals(targetId).toArray();
+  const targetFamily = String(targetRecordFamilyHash || '').trim();
+  return rows
+    .filter((row) => !targetFamily || row.target_record_family_hash === targetFamily)
+    .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+}
+
+export async function getReactionsByTargets(targetRecordIds = [], targetRecordFamilyHash = null) {
+  const targetIds = [...new Set((Array.isArray(targetRecordIds) ? targetRecordIds : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+  if (targetIds.length === 0) return [];
+  const rows = await wsDb().reactions.where('target_record_id').anyOf(targetIds).toArray();
+  const targetFamily = String(targetRecordFamilyHash || '').trim();
+  return rows
+    .filter((row) => !targetFamily || row.target_record_family_hash === targetFamily)
+    .sort((a, b) => String(a.updated_at || '').localeCompare(String(b.updated_at || '')));
+}
+
+export async function getRecentReactionsSince(sinceIso, options = {}) {
+  const rows = await wsDb().reactions.where('updated_at').aboveOrEqual(sinceIso).toArray();
+  const ordered = sortRowsByTimestamp(rows.filter((row) => row.record_state !== 'deleted'));
+  if (!options.limit) return ordered;
+  return takeNewestWindow(ordered, resolveWindowLimit('threadReplies', options));
+}
+
+export async function getReactionByIdentity({
+  target_record_family_hash,
+  target_record_id,
+  emoji,
+  reactor_npub,
+}) {
+  const key = reactionIdentityKey({
+    target_record_family_hash,
+    target_record_id,
+    emoji,
+    reactor_npub,
+  });
+  if (key.some((part) => !part)) return null;
+  return wsDb().reactions
+    .where('[target_record_family_hash+target_record_id+emoji+reactor_npub]')
+    .equals(key)
+    .first();
+}
+
+export async function upsertReaction(reaction) {
+  const row = sanitizeForStorage(reaction);
+  const key = reactionIdentityKey(row);
+  if (key.some((part) => !part)) {
+    throw new Error('reaction identity requires target family, target id, emoji, and reactor');
+  }
+  const db = wsDb();
+  return db.transaction('rw', db.reactions, async () => {
+    const existing = await db.reactions
+      .where('[target_record_family_hash+target_record_id+emoji+reactor_npub]')
+      .equals(key)
+      .first();
+    if (existing?.record_id && existing.record_id !== row.record_id) {
+      if (reactionFreshness(existing) > reactionFreshness(row)) {
+        return existing.record_id;
+      }
+      await db.reactions.delete(existing.record_id);
+    }
+    return db.reactions.put(row);
+  });
+}
+
 export async function deleteRuntimeRecordByFamily(familyIdOrHash, recordId) {
   const family = getSyncFamily(familyIdOrHash);
   const tableName = family?.table;
@@ -890,6 +990,7 @@ export async function clearRuntimeData() {
     db.tasks.clear(),
     db.schedules.clear(),
     db.comments.clear(),
+    db.reactions.clear(),
     db.audio_notes.clear(),
     db.scopes.clear(),
     db.flows.clear(),

@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-B9uHrg8A.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-GoiOVZTo.css">
+  <script type="module" crossorigin src="/assets/index-DH3Ie4hg.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DO18XR-x.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -759,6 +759,7 @@
             <aside class="flightdeck-side-column">
               <section class="flightdeck-side-panel flightdeck-approvals-panel">
                 <h3>Approvals <span class="flightdeck-approvals-count" x-show="$store.chat.pendingApprovalsByScope.length > 0" x-text="$store.chat.pendingApprovalsByScope.length"></span></h3>
+                <button type="button" class="btn-link-subtle" x-show="$store.chat.pendingApprovalsByScope.length > 0" @click="if(confirm('Delete all visible pending approvals?')) $store.chat.deletePendingApprovalsByScope()">Delete pending</button>
                 <div x-show="$store.chat.pendingApprovalsByScope.length === 0">
                   <p class="flightdeck-approvals-empty">No pending approvals.</p>
                 </div>
@@ -779,6 +780,7 @@
                         <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id)">Reject</button>
                         <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, prompt('Improvement notes:') || '')">Improve</button>
                         <button type="button" class="btn-archive" @click="$store.chat.archiveApproval(approval.record_id)">Archive</button>
+                        <button type="button" class="btn-delete" @click="if(confirm('Delete this approval?')) $store.chat.deleteApproval(approval.record_id)">Delete</button>
                       </div>
                     </article>
                   </template>
@@ -1743,6 +1745,23 @@
                             </button>
                           </template>
                         </div>
+                        <div class="reaction-bar" x-show="$store.chat.session?.npub" @click.stop>
+                          <template x-for="reaction in $store.chat.getReactionSummary(comment.record_id, $store.chat.reactionTargetFamilyHash('comment'))" :key="reaction.emoji">
+                            <button type="button" class="reaction-pill" :class="{ 'reaction-pill-active': reaction.reacted_by_me }" @click="$store.chat.toggleReaction(comment.record_id, $store.chat.reactionTargetFamilyHash('comment'), reaction.emoji)" :title="reaction.emoji_shortcode">
+                              <span x-text="$store.chat.reactionLabel(reaction.emoji)"></span>
+                              <span x-text="reaction.count"></span>
+                            </button>
+                          </template>
+                          <button type="button" class="reaction-quick-btn" title="React with thumbs up" @click="$store.chat.toggleReaction(comment.record_id, $store.chat.reactionTargetFamilyHash('comment'), 'thumbs_up')" x-text="$store.chat.reactionLabel('thumbs_up')"></button>
+                          <div class="reaction-picker-wrap" @click.outside="$store.chat.closeReactionPicker()">
+                            <button type="button" class="reaction-add-btn" title="Add reaction" @click="$store.chat.toggleReactionPicker($store.chat.reactionTargetFamilyHash('comment'), comment.record_id)">+</button>
+                            <div class="reaction-picker" x-show="$store.chat.isReactionPickerOpen($store.chat.reactionTargetFamilyHash('comment'), comment.record_id)" x-cloak>
+                              <template x-for="option in $store.chat.reactionEmojiOptions" :key="option.emoji">
+                                <button type="button" @click="$store.chat.toggleReaction(comment.record_id, $store.chat.reactionTargetFamilyHash('comment'), option.emoji)" :title="option.shortcode" x-text="option.label"></button>
+                              </template>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </template>
                     <template x-if="$store.chat.taskComments.length === 0">
@@ -1880,6 +1899,23 @@
                         </button>
                       </template>
                     </div>
+                    <div class="reaction-bar" x-show="$store.chat.session?.npub" @click.stop>
+                      <template x-for="reaction in $store.chat.getReactionSummary(msg.record_id, $store.chat.reactionTargetFamilyHash('chat_message'))" :key="reaction.emoji">
+                        <button type="button" class="reaction-pill" :class="{ 'reaction-pill-active': reaction.reacted_by_me }" @click="$store.chat.toggleReaction(msg.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), reaction.emoji)" :title="reaction.emoji_shortcode">
+                          <span x-text="$store.chat.reactionLabel(reaction.emoji)"></span>
+                          <span x-text="reaction.count"></span>
+                        </button>
+                      </template>
+                      <button type="button" class="reaction-quick-btn" title="React with thumbs up" @click="$store.chat.toggleReaction(msg.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), 'thumbs_up')" x-text="$store.chat.reactionLabel('thumbs_up')"></button>
+                      <div class="reaction-picker-wrap" @click.outside="$store.chat.closeReactionPicker()">
+                        <button type="button" class="reaction-add-btn" title="Add reaction" @click="$store.chat.toggleReactionPicker($store.chat.reactionTargetFamilyHash('chat_message'), msg.record_id)">+</button>
+                        <div class="reaction-picker" x-show="$store.chat.isReactionPickerOpen($store.chat.reactionTargetFamilyHash('chat_message'), msg.record_id)" x-cloak>
+                          <template x-for="option in $store.chat.reactionEmojiOptions" :key="option.emoji">
+                            <button type="button" @click="$store.chat.toggleReaction(msg.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), option.emoji)" :title="option.shortcode" x-text="option.label"></button>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
                     <template x-if="$store.chat.getThreadReplyCount(msg.record_id) > 0">
                       <div class="chat-thread-preview" @click="$store.chat.openThread(msg.record_id)">
                         <span class="chat-thread-preview-count" x-text="$store.chat.getThreadReplyCount(msg.record_id) + ' replies'"></span>
@@ -2001,6 +2037,23 @@
                           </button>
                         </template>
                       </div>
+                      <div class="reaction-bar" x-show="$store.chat.session?.npub" @click.stop>
+                        <template x-for="reaction in $store.chat.getReactionSummary($store.chat.getThreadParentMessage()?.record_id, $store.chat.reactionTargetFamilyHash('chat_message'))" :key="reaction.emoji">
+                          <button type="button" class="reaction-pill" :class="{ 'reaction-pill-active': reaction.reacted_by_me }" @click="$store.chat.toggleReaction($store.chat.getThreadParentMessage()?.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), reaction.emoji)" :title="reaction.emoji_shortcode">
+                            <span x-text="$store.chat.reactionLabel(reaction.emoji)"></span>
+                            <span x-text="reaction.count"></span>
+                          </button>
+                        </template>
+                        <button type="button" class="reaction-quick-btn" title="React with thumbs up" @click="$store.chat.toggleReaction($store.chat.getThreadParentMessage()?.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), 'thumbs_up')" x-text="$store.chat.reactionLabel('thumbs_up')"></button>
+                        <div class="reaction-picker-wrap" @click.outside="$store.chat.closeReactionPicker()">
+                          <button type="button" class="reaction-add-btn" title="Add reaction" @click="$store.chat.toggleReactionPicker($store.chat.reactionTargetFamilyHash('chat_message'), $store.chat.getThreadParentMessage()?.record_id)">+</button>
+                          <div class="reaction-picker" x-show="$store.chat.isReactionPickerOpen($store.chat.reactionTargetFamilyHash('chat_message'), $store.chat.getThreadParentMessage()?.record_id)" x-cloak>
+                            <template x-for="option in $store.chat.reactionEmojiOptions" :key="option.emoji">
+                              <button type="button" @click="$store.chat.toggleReaction($store.chat.getThreadParentMessage()?.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), option.emoji)" :title="option.shortcode" x-text="option.label"></button>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </template>
@@ -2051,6 +2104,23 @@
                             </div>
                           </button>
                         </template>
+                      </div>
+                      <div class="reaction-bar" x-show="$store.chat.session?.npub" @click.stop>
+                        <template x-for="reaction in $store.chat.getReactionSummary(reply.record_id, $store.chat.reactionTargetFamilyHash('chat_message'))" :key="reaction.emoji">
+                          <button type="button" class="reaction-pill" :class="{ 'reaction-pill-active': reaction.reacted_by_me }" @click="$store.chat.toggleReaction(reply.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), reaction.emoji)" :title="reaction.emoji_shortcode">
+                            <span x-text="$store.chat.reactionLabel(reaction.emoji)"></span>
+                            <span x-text="reaction.count"></span>
+                          </button>
+                        </template>
+                        <button type="button" class="reaction-quick-btn" title="React with thumbs up" @click="$store.chat.toggleReaction(reply.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), 'thumbs_up')" x-text="$store.chat.reactionLabel('thumbs_up')"></button>
+                        <div class="reaction-picker-wrap" @click.outside="$store.chat.closeReactionPicker()">
+                          <button type="button" class="reaction-add-btn" title="Add reaction" @click="$store.chat.toggleReactionPicker($store.chat.reactionTargetFamilyHash('chat_message'), reply.record_id)">+</button>
+                          <div class="reaction-picker" x-show="$store.chat.isReactionPickerOpen($store.chat.reactionTargetFamilyHash('chat_message'), reply.record_id)" x-cloak>
+                            <template x-for="option in $store.chat.reactionEmojiOptions" :key="option.emoji">
+                              <button type="button" @click="$store.chat.toggleReaction(reply.record_id, $store.chat.reactionTargetFamilyHash('chat_message'), option.emoji)" :title="option.shortcode" x-text="option.label"></button>
+                            </template>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2607,6 +2677,23 @@
                                     </button>
                                   </template>
                                 </div>
+                                <div class="reaction-bar" x-show="$store.chat.session?.npub" @click.stop>
+                                  <template x-for="reaction in $store.chat.getReactionSummary(root.record_id, $store.chat.reactionTargetFamilyHash('comment'))" :key="reaction.emoji">
+                                    <button type="button" class="reaction-pill" :class="{ 'reaction-pill-active': reaction.reacted_by_me }" @click="$store.chat.toggleReaction(root.record_id, $store.chat.reactionTargetFamilyHash('comment'), reaction.emoji)" :title="reaction.emoji_shortcode">
+                                      <span x-text="$store.chat.reactionLabel(reaction.emoji)"></span>
+                                      <span x-text="reaction.count"></span>
+                                    </button>
+                                  </template>
+                                  <button type="button" class="reaction-quick-btn" title="React with thumbs up" @click="$store.chat.toggleReaction(root.record_id, $store.chat.reactionTargetFamilyHash('comment'), 'thumbs_up')" x-text="$store.chat.reactionLabel('thumbs_up')"></button>
+                                  <div class="reaction-picker-wrap" @click.outside="$store.chat.closeReactionPicker()">
+                                    <button type="button" class="reaction-add-btn" title="Add reaction" @click="$store.chat.toggleReactionPicker($store.chat.reactionTargetFamilyHash('comment'), root.record_id)">+</button>
+                                    <div class="reaction-picker" x-show="$store.chat.isReactionPickerOpen($store.chat.reactionTargetFamilyHash('comment'), root.record_id)" x-cloak>
+                                      <template x-for="option in $store.chat.reactionEmojiOptions" :key="option.emoji">
+                                        <button type="button" @click="$store.chat.toggleReaction(root.record_id, $store.chat.reactionTargetFamilyHash('comment'), option.emoji)" :title="option.shortcode" x-text="option.label"></button>
+                                      </template>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
 
                               <template x-for="reply in $store.chat.getDocCommentReplies(root.record_id)" :key="reply.record_id">
@@ -2636,6 +2723,23 @@
                                         </div>
                                       </button>
                                     </template>
+                                  </div>
+                                  <div class="reaction-bar" x-show="$store.chat.session?.npub" @click.stop>
+                                    <template x-for="reaction in $store.chat.getReactionSummary(reply.record_id, $store.chat.reactionTargetFamilyHash('comment'))" :key="reaction.emoji">
+                                      <button type="button" class="reaction-pill" :class="{ 'reaction-pill-active': reaction.reacted_by_me }" @click="$store.chat.toggleReaction(reply.record_id, $store.chat.reactionTargetFamilyHash('comment'), reaction.emoji)" :title="reaction.emoji_shortcode">
+                                        <span x-text="$store.chat.reactionLabel(reaction.emoji)"></span>
+                                        <span x-text="reaction.count"></span>
+                                      </button>
+                                    </template>
+                                    <button type="button" class="reaction-quick-btn" title="React with thumbs up" @click="$store.chat.toggleReaction(reply.record_id, $store.chat.reactionTargetFamilyHash('comment'), 'thumbs_up')" x-text="$store.chat.reactionLabel('thumbs_up')"></button>
+                                    <div class="reaction-picker-wrap" @click.outside="$store.chat.closeReactionPicker()">
+                                      <button type="button" class="reaction-add-btn" title="Add reaction" @click="$store.chat.toggleReactionPicker($store.chat.reactionTargetFamilyHash('comment'), reply.record_id)">+</button>
+                                      <div class="reaction-picker" x-show="$store.chat.isReactionPickerOpen($store.chat.reactionTargetFamilyHash('comment'), reply.record_id)" x-cloak>
+                                        <template x-for="option in $store.chat.reactionEmojiOptions" :key="option.emoji">
+                                          <button type="button" @click="$store.chat.toggleReaction(reply.record_id, $store.chat.reactionTargetFamilyHash('comment'), option.emoji)" :title="option.shortcode" x-text="option.label"></button>
+                                        </template>
+                                      </div>
+                                    </div>
                                   </div>
                                 </div>
                               </template>
@@ -3485,7 +3589,11 @@
                   <button type="button" class="btn-reject" @click="if (await $store.chat.rejectApproval(approval.record_id, $store.chat.approvalDecisionNote)) $store.chat.showApprovalDetail = false">Reject</button>
                   <button type="button" class="btn-improve" @click="if (await $store.chat.improveApproval(approval.record_id, $store.chat.approvalDecisionNote)) $store.chat.showApprovalDetail = false">Improve</button>
                   <button type="button" class="btn-archive" @click="if (await $store.chat.archiveApproval(approval.record_id, $store.chat.approvalDecisionNote)) $store.chat.showApprovalDetail = false">Archive</button>
+                  <button type="button" class="btn-delete" @click="if(confirm('Delete this approval?') && await $store.chat.deleteApproval(approval.record_id)) $store.chat.showApprovalDetail = false">Delete</button>
                   <input type="text" x-model="$store.chat.approvalDecisionNote" placeholder="Decision note (optional)" class="approval-decision-input" />
+                </div>
+                <div class="approval-detail-actions" x-show="approval?.status !== 'pending'">
+                  <button type="button" class="btn-delete" @click="if(confirm('Delete this approval?') && await $store.chat.deleteApproval(approval.record_id)) $store.chat.showApprovalDetail = false">Delete</button>
                 </div>
               </div>
 
@@ -3643,6 +3751,7 @@
                     <th>Mode</th>
                     <th>Decision</th>
                     <th>Updated</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3654,6 +3763,7 @@
                       <td x-text="a.approval_mode === 'agent' ? 'Agent' : 'Manual'"></td>
                       <td class="approval-history-note" x-text="(a.decision_note || '—').slice(0, 80)"></td>
                       <td class="approval-history-date" x-text="a.updated_at ? new Date(a.updated_at).toLocaleDateString() : '—'"></td>
+                      <td><button type="button" class="btn-delete" @click.stop="if(confirm('Delete this approval?')) $store.chat.deleteApproval(a.record_id)">Delete</button></td>
                     </tr>
                   </template>
                 </tbody>
@@ -5356,7 +5466,7 @@
 
             <!-- Pending approvals banner -->
             <section class="flows-approvals-banner" x-show="$store.chat.pendingApprovalsByScope.length > 0">
-              <h3>Pending Approvals</h3>
+              <h3>Pending Approvals <button type="button" class="btn-link-subtle" @click.stop="if(confirm('Delete all visible pending approvals?')) $store.chat.deletePendingApprovalsByScope()">Delete pending</button></h3>
               <div class="flows-approval-cards">
                 <template x-for="approval in $store.chat.pendingApprovalsByScope" :key="approval.record_id">
                   <article class="flows-approval-card" @click="$store.chat.activeApprovalId = approval.record_id; $store.chat.showApprovalDetail = true">
@@ -5374,6 +5484,7 @@
                       <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id)">Reject</button>
                       <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, prompt('Improvement notes:') || '')">Improve</button>
                       <button type="button" class="btn-archive" @click="$store.chat.archiveApproval(approval.record_id)">Archive</button>
+                      <button type="button" class="btn-delete" @click="if(confirm('Delete this approval?')) $store.chat.deleteApproval(approval.record_id)">Delete</button>
                     </div>
                   </article>
                 </template>

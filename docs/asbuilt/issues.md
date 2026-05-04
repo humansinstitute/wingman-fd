@@ -59,7 +59,7 @@ Practical follow-up:
 
 Evidence:
 
-- `src/crypto/workspace-keys.js` keeps Flight Deck's historical function and Dexie field names, but delegates active-key state and encrypted blob helpers to `@superbased/browser`.
+- `src/crypto/workspace-keys.js` keeps Flight Deck's historical function and Dexie field names, but delegates active-key state and encrypted blob helpers to `@nostr-superbased/browser`.
 - Workspace bootstrap is called from the app and shell workspace lifecycle, then registration state gates NIP-98 API auth.
 - Worker handoff still uses the FD-compatible serializable payload so existing sync worker behavior and pending writes remain stable.
 

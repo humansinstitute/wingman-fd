@@ -13,6 +13,7 @@ import {
   getSchedulesByOwner,
   getScopesByOwner,
   getCommentsByTarget,
+  getReactionsByTargets,
   getFlowsByOwner,
   getApprovalsByStatus,
   getPersonsByOwner,
@@ -259,6 +260,22 @@ function buildDetailSpecs(store) {
             return store.applyMessages(messages);
           },
         },
+        {
+          key: `chat:reactions:${channelId}`,
+          query: async () => {
+            const messages = await getMessagesByChannel(channelId, {
+              limit: store?.mainFeedVisibleCount || store?.MAIN_FEED_PAGE_SIZE,
+            });
+            return getReactionsByTargets(
+              messages.map((message) => message.record_id).filter(Boolean),
+              recordFamilyHash('chat_message'),
+            );
+          },
+          onNext: (reactions) => {
+            if (store.workspaceOwnerNpub !== ownerNpub || store.selectedChannelId !== channelId) return;
+            return store.applyReactions(reactions);
+          },
+        },
       ];
     }
     case 'tasks': {
@@ -279,6 +296,20 @@ function buildDetailSpecs(store) {
           onNext: (comments) => {
             if (store.workspaceOwnerNpub !== ownerNpub || store.activeTaskId !== taskId) return;
             return store.applyTaskComments(comments);
+          },
+        },
+        {
+          key: `tasks:comment-reactions:${taskId}`,
+          query: async () => {
+            const comments = await getCommentsByTarget(taskId);
+            return getReactionsByTargets(
+              comments.map((comment) => comment.record_id).filter(Boolean),
+              recordFamilyHash('comment'),
+            );
+          },
+          onNext: (reactions) => {
+            if (store.workspaceOwnerNpub !== ownerNpub || store.activeTaskId !== taskId) return;
+            return store.applyReactions(reactions);
           },
         },
       ];
@@ -314,6 +345,27 @@ function buildDetailSpecs(store) {
               comments.filter((comment) => comment.target_record_family_hash === documentFamilyHash),
               { docId, allowBackfill: true },
             );
+          },
+        },
+        {
+          key: `docs:comment-reactions:${docId}`,
+          query: async () => {
+            const comments = await getCommentsByTarget(docId);
+            return getReactionsByTargets(
+              comments
+                .filter((comment) => comment.target_record_family_hash === documentFamilyHash)
+                .map((comment) => comment.record_id)
+                .filter(Boolean),
+              recordFamilyHash('comment'),
+            );
+          },
+          onNext: (reactions) => {
+            if (
+              store.workspaceOwnerNpub !== ownerNpub
+              || store.selectedDocType !== 'document'
+              || store.selectedDocId !== docId
+            ) return;
+            return store.applyReactions(reactions);
           },
         },
       ];
@@ -434,7 +486,7 @@ export const sectionLiveQueryMixin = {
   stopSelectedChannelLiveQuery() {
     const state = getSectionState(this);
     for (const [key, subscription] of state.detail.entries()) {
-      if (!key.startsWith('chat:messages:')) continue;
+      if (!key.startsWith('chat:messages:') && !key.startsWith('chat:reactions:')) continue;
       stopSubscription(this, subscription);
       state.detail.delete(key);
     }
@@ -447,7 +499,7 @@ export const sectionLiveQueryMixin = {
   stopTaskCommentsLiveQuery() {
     const state = getSectionState(this);
     for (const [key, subscription] of state.detail.entries()) {
-      if (!key.startsWith('tasks:comments:') && !key.startsWith('tasks:selected-task:')) continue;
+      if (!key.startsWith('tasks:comments:') && !key.startsWith('tasks:comment-reactions:') && !key.startsWith('tasks:selected-task:')) continue;
       stopSubscription(this, subscription);
       state.detail.delete(key);
     }
@@ -473,7 +525,7 @@ export const sectionLiveQueryMixin = {
   stopDocCommentsLiveQuery() {
     const state = getSectionState(this);
     for (const [key, subscription] of state.detail.entries()) {
-      if (!key.startsWith('docs:comments:') && !key.startsWith('docs:selected-doc:')) continue;
+      if (!key.startsWith('docs:comments:') && !key.startsWith('docs:comment-reactions:') && !key.startsWith('docs:selected-doc:')) continue;
       stopSubscription(this, subscription);
       state.detail.delete(key);
     }

@@ -753,6 +753,9 @@ export const docsManagerMixin = {
     }
     this.scheduleDocCommentConnectorUpdate();
     this.scheduleStorageImageHydration();
+    if (typeof this.refreshReactionsForVisibleTargets === 'function') {
+      this.refreshReactionsForVisibleTargets().catch(() => {});
+    }
   },
 
   async hasMissingDocCommentAudio(comments = []) {

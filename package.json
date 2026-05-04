@@ -13,8 +13,8 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@superbased/browser": "file:../../superbased-library/packages/browser",
-    "@superbased/core": "file:../../superbased-library/packages/core",
+    "@nostr-superbased/browser": "0.1.0",
+    "@nostr-superbased/core": "0.1.0",
     "alpinejs": "^3.14.8",
     "dexie": "^4.0.10",
     "diff": "^8.0.4",
@@ -27,8 +27,5 @@
     "playwright": "1.51.1",
     "vite": "^6.2.0",
     "vitest": "^3.0.0"
-  },
-  "overrides": {
-    "@superbased/core": "file:../../superbased-library/packages/core"
   }
 }

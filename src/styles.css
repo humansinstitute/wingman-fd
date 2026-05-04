@@ -2849,6 +2849,88 @@ button:disabled {
   text-decoration: underline;
 }
 
+.reaction-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.45rem;
+  min-height: 1.8rem;
+}
+
+.reaction-pill,
+.reaction-quick-btn,
+.reaction-add-btn,
+.reaction-picker button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.8rem;
+  height: 1.8rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.82rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.reaction-pill {
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  font-weight: 600;
+}
+
+.reaction-pill-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.reaction-quick-btn,
+.reaction-add-btn {
+  padding: 0;
+  color: #64748b;
+}
+
+.reaction-quick-btn {
+  filter: grayscale(1);
+  opacity: 0.62;
+}
+
+.reaction-quick-btn:hover,
+.reaction-quick-btn:focus-visible {
+  opacity: 0.82;
+}
+
+.reaction-pill:hover,
+.reaction-quick-btn:hover,
+.reaction-add-btn:hover,
+.reaction-picker button:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.reaction-picker-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.reaction-picker {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  bottom: calc(100% + 0.35rem);
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+}
+
 .chat-post-markdown,
 .thread-msg-text .chat-post-markdown,
 .doc-thread-entry-body,
@@ -9692,7 +9774,7 @@ button:disabled {
   gap: 0.35rem;
 }
 
-.btn-approve, .btn-reject, .btn-improve, .btn-archive {
+.btn-approve, .btn-reject, .btn-improve, .btn-archive, .btn-delete {
   padding: 0.28rem 0.7rem;
   border-radius: 6px;
   font-size: 0.78rem;
@@ -9706,8 +9788,9 @@ button:disabled {
 .btn-reject { background: #f87171; color: #7f1d1d; }
 .btn-improve { background: #a78bfa; color: #3b0764; }
 .btn-archive { background: #cbd5e1; color: #334155; }
+.btn-delete { background: #fee2e2; color: #991b1b; }
 
-.btn-approve:hover, .btn-reject:hover, .btn-improve:hover, .btn-archive:hover {
+.btn-approve:hover, .btn-reject:hover, .btn-improve:hover, .btn-archive:hover, .btn-delete:hover {
   opacity: 0.85;
 }
 

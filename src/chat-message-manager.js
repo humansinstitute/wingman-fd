@@ -305,6 +305,9 @@ export const chatMessageManagerMixin = {
     this.syncChatPreviewState();
     this.scheduleChatPreviewMeasurement();
     this.scheduleStorageImageHydration();
+    if (typeof this.refreshReactionsForVisibleTargets === 'function') {
+      this.refreshReactionsForVisibleTargets().catch(() => {});
+    }
 
     const shouldScrollChatToLatest = options.scrollToLatest === true || this.pendingChatScrollToLatest || chatFeedAnchor?.atBottom;
     const shouldScrollThreadToLatest = options.scrollThreadToLatest === true || this.pendingThreadScrollToLatest || threadRepliesAnchor?.atBottom;

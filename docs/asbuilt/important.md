@@ -169,7 +169,7 @@ Primary files reviewed for this refresh:
 - Stored auth credentials expire after 7 days in `src/auth/secure-store.js`.
 - When Web Crypto AES-GCM is available, secrets are encrypted before being stored in IndexedDB. When it is not available, secrets are stored in plain form in the secure-auth DB.
 - `src/api.js` and `src/sync-manager.js` prefer a registered workspace user key for NIP-98 auth, then fall back to the logged-in user signer when no registered workspace user key is active.
-- `src/crypto/workspace-keys.js` is now an FD compatibility adapter over `@superbased/browser` workspace user key runtime and encrypted blob helpers.
+- `src/crypto/workspace-keys.js` is now an FD compatibility adapter over `@nostr-superbased/browser` workspace user key runtime and encrypted blob helpers.
 - The canonical identity names are:
   - `userNpub`: the real user and read viewer
   - `workspaceServiceNpub`: the workspace service identity, still aliased by legacy `workspace_owner_npub` / `owner_npub` at compatibility boundaries

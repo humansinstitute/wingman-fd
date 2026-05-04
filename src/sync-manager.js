@@ -491,6 +491,26 @@ export const syncManagerMixin = {
     );
   },
 
+  getRecordStatusSubmitCheckoutPolicyConfig(familyId, options = {}) {
+    const id = String(familyId || '').trim();
+    if (id === 'task' && options.bootstrap !== true) {
+      if (typeof this.getTaskDetailCheckoutPolicyConfig === 'function') {
+        return this.getTaskDetailCheckoutPolicyConfig();
+      }
+      const baseConfig = this.recordCheckoutPolicyConfig || {};
+      return {
+        recordFamilyHashes: {
+          ...(baseConfig.recordFamilyHashes || {}),
+        },
+        familySuffixes: {
+          ...(baseConfig.familySuffixes || {}),
+          task: 'checkout_required',
+        },
+      };
+    }
+    return this.recordCheckoutPolicyConfig || null;
+  },
+
   async buildRecordStatusEnvelope(localRecord, familyId, options = {}) {
     if (!localRecord) throw new Error('Local record not found.');
 
@@ -506,6 +526,9 @@ export const syncManagerMixin = {
     const isOwnerWrite = realUserNpub === String(ownerNpub || '').trim();
 
     if (familyId === 'task') {
+      const checkoutPolicyConfig = Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig')
+        ? options.checkoutPolicyConfig
+        : this.getRecordStatusSubmitCheckoutPolicyConfig(familyId, { bootstrap });
       const writeFields = await getRecordWriteFieldsForStore(this, {
         ...effectiveLocalRecord,
         board_group_id: effectiveLocalRecord.board_group_id || effectiveLocalRecord.group_ids?.[0] || null,
@@ -527,7 +550,10 @@ export const syncManagerMixin = {
         write_group_ref: isOwnerWrite ? null : writeGroupRef,
       });
       return typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
-        ? this.attachCheckoutRequiredCheckoutToEnvelope(effectiveLocalRecord, envelope, { intent: 'retry' })
+        ? this.attachCheckoutRequiredCheckoutToEnvelope(effectiveLocalRecord, envelope, {
+          intent: 'retry',
+          checkoutPolicyConfig,
+        })
         : envelope;
     }
 
@@ -897,6 +923,9 @@ export const syncManagerMixin = {
 
     const familyLabel = this.getRecordStatusFamilyLabel(familyId);
     const bootstrap = this.recordStatusTowerVersionCount === 0;
+    const checkoutPolicyConfig = this.getRecordStatusSubmitCheckoutPolicyConfig(familyId, { bootstrap });
+    const envelopeOptions = { bootstrap };
+    if (checkoutPolicyConfig) envelopeOptions.checkoutPolicyConfig = checkoutPolicyConfig;
     const { version: submittedVersion } = this.getRecordStatusSubmitVersion(localRecord, { bootstrap });
     this.recordStatusSyncBusy = true;
     this.recordStatusError = null;
@@ -908,7 +937,7 @@ export const syncManagerMixin = {
       const relevantRecordIds = new Set([recordId, ...relatedComments.map((comment) => comment.record_id)]);
       const pendingWrites = (await this.getRecordStatusPendingWrites())
         .filter((row) => relevantRecordIds.has(row.record_id));
-      const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, { bootstrap });
+      const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, envelopeOptions);
       const commentEnvelopes = [];
       const targetWriteFields = await getRecordWriteFieldsForStore(this, localRecord, {
         label: `${familyLabel} comment force submit`,
@@ -925,11 +954,12 @@ export const syncManagerMixin = {
         commentEnvelopes.push(await this.buildRecordStatusCommentEnvelope(comment, { targetGroupIds }));
       }
 
-      const syncResult = await syncRecords({
+      const syncRequest = {
         owner_npub: this.workspaceOwnerNpub,
         records: [envelope, ...commentEnvelopes],
-        checkout_policy_config: this.recordCheckoutPolicyConfig,
-      });
+      };
+      if (checkoutPolicyConfig) syncRequest.checkout_policy_config = checkoutPolicyConfig;
+      const syncResult = await syncRecords(syncRequest);
 
       const rejected = Array.isArray(syncResult?.rejected) ? syncResult.rejected : [];
       const deferredIds = new Set(Array.isArray(syncResult?.deferred) ? syncResult.deferred : []);

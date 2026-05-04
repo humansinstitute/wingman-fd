@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { localEncryptForNpub } from '@superbased/core/client';
+import { localEncryptForNpub } from '@nostr-superbased/core/client';
 import {
   cacheGroupKey,
   clearCryptoContext,
@@ -95,5 +95,9 @@ describe('workspace-key owner payload crypto', () => {
       ['group-loaded', 'group-missing'],
       { data: { title: 'Strict delivery groups' } },
     )).toThrow(/Missing group keys for group-missing/);
+  });
+
+  it('does not require group crypto context for empty delivery groups', () => {
+    expect(buildGroupPayloads([], { data: { record_state: 'deleted' } })).toEqual([]);
   });
 });

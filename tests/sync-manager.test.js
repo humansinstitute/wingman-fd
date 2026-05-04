@@ -303,6 +303,63 @@ describe('record status actions', () => {
     expect(envelope.previous_version).toBe(3);
     expect(envelope.channel_group_ids).toEqual(['group-1']);
   });
+
+  it('force-submits existing tasks with checkout-required policy config', async () => {
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
+    syncRecords.mockResolvedValueOnce({ synced: 1, created: 0, updated: 1, rejected: [] });
+    const buildRecordStatusEnvelope = vi.fn().mockResolvedValue({
+      record_id: 'task-1',
+      record_family_hash: getSyncFamilyHash('task'),
+      version: 7,
+      previous_version: 6,
+      checkout: { checkout_id: 'checkout-task-1', consume_on_success: true },
+    });
+    const markRecordStatusLocalRecordSynced = vi.fn().mockResolvedValue(undefined);
+    const { fn } = bindMethod('forcePushRecordStatusTarget', {
+      session: { npub: 'npub1me' },
+      recordStatusFamilyId: 'task',
+      recordStatusTargetId: 'task-1',
+      recordStatusTargetLabel: 'Task One',
+      recordStatusLocalPresent: true,
+      recordStatusTowerVersionCount: 6,
+      recordStatusTowerLatestVersion: 6,
+      groups: [{ group_id: 'group-1', member_npubs: ['npub1me'] }],
+      tasks: [{
+        record_id: 'task-1',
+        owner_npub: 'npub1owner',
+        title: 'Task One',
+        board_group_id: 'group-1',
+        group_ids: ['group-1'],
+        shares: [],
+        version: 6,
+        sync_status: 'failed',
+      }],
+      getTaskDetailCheckoutPolicyConfig: vi.fn(() => checkoutPolicyConfig),
+      getRecordStatusPendingWrites: vi.fn().mockResolvedValue([]),
+      getRecordStatusRelatedComments: vi.fn().mockResolvedValue([]),
+      buildRecordStatusEnvelope,
+      markRecordStatusLocalRecordSynced,
+      markRecordStatusCommentsSynced: vi.fn().mockResolvedValue(undefined),
+      checkRecordStatusOnTower: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await fn();
+
+    expect(buildRecordStatusEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+      record_id: 'task-1',
+    }), 'task', { bootstrap: false, checkoutPolicyConfig });
+    expect(syncRecords).toHaveBeenCalledWith({
+      owner_npub: 'npub1owner',
+      records: [expect.objectContaining({
+        record_id: 'task-1',
+        checkout: { checkout_id: 'checkout-task-1', consume_on_success: true },
+      })],
+      checkout_policy_config: checkoutPolicyConfig,
+    });
+    expect(markRecordStatusLocalRecordSynced).toHaveBeenCalledWith('task', expect.objectContaining({
+      record_id: 'task-1',
+    }), { version: 7 });
+  });
 });
 
 describe('pending write diagnostics', () => {

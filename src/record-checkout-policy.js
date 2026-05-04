@@ -2,7 +2,7 @@ import {
   createRecordCheckoutPolicyResolver,
   isCheckoutRequiredRecordFamily,
   resolveRecordCheckoutPolicy,
-} from '@superbased/core/records';
+} from '@nostr-superbased/core/records';
 
 const CHECKOUT_REQUIRED = 'checkout_required';
 const OPTIMISTIC_WRITE = 'optimistic_write';

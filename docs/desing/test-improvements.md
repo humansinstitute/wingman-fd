@@ -1,20 +1,30 @@
 # Flight Deck Test Improvements
 
-Status: proposed remediation note
-Last updated: 2026-04-07
+Status: historical remediation note; default Vitest lane is currently green
+Last updated: 2026-05-03
 
 ## Problem Summary
 
-`bun run test` in `wingman-fd` currently runs `vitest run`, but the default collection boundary is too broad. The main app/unit tests mostly pass; the red state comes from mixed test runners being collected together.
+`bun run test` in `wingman-fd` currently runs `vitest run`. As of
+2026-05-03, the default Vitest lane is clean against the current working tree.
+This note is retained as history for the earlier mixed-runner collection issue
+and as guardrail documentation for future test additions.
 
-Current sources of failure:
+Earlier sources of failure:
 
-- `tests/coworker-identifier-inventory.test.js` imports `bun:test`
+- `tests/coworker-identifier-inventory.test.js` previously imported `bun:test`
 - `tests/e2e/workspace-profile.spec.js` imports `playwright/test`
 - `package.json` defines `test` as `vitest run`
-- `vite.config.js` defines Vitest settings but does not exclude Bun-only or Playwright suites
+- `vite.config.js` owns Vitest collection settings
 
-This is test-runner hygiene, not evidence that the core Flight Deck app is broadly broken.
+The current default command is:
+
+```bash
+bun run test
+```
+
+It should stay focused on Vitest-owned tests. Browser e2e remains separate via
+`bun run test:e2e`.
 
 ## Desired End State
 
@@ -114,13 +124,13 @@ Add a short note to `wingman-fd/README.md` or `tests/README.md` covering:
 
 Without that, the repo will regress back into mixed-runner collection.
 
-## Suggested Implementation Order
+## Historical Implementation Order
 
-1. Exclude `tests/e2e/**` from Vitest
-2. Rename the Bun-only inventory test to `*.bun.test.js`
-3. Add `test:bun`
-4. Add a combined non-e2e gate such as `test:all`
-5. Document the convention
+1. Keep `tests/e2e/**` out of Vitest.
+2. Keep inventory tests on Vitest unless they intentionally require Bun-only APIs.
+3. Add a dedicated `test:bun` lane only if Bun-only tests return.
+4. Add a combined non-e2e gate only after separate lanes exist.
+5. Document the convention when new lanes are added.
 
 ## Non-Goals
 

@@ -15,6 +15,7 @@ import { triggersManagerMixin } from './triggers-manager.js';
 import { jobsManagerMixin } from './jobs-manager.js';
 import { workspaceManagerMixin, guessDefaultBackendUrl } from './workspace-manager.js';
 import { chatMessageManagerMixin } from './chat-message-manager.js';
+import { reactionsManagerMixin } from './reactions-manager.js';
 import { syncManagerMixin } from './sync-manager.js';
 import { peopleProfilesManagerMixin } from './people-profiles-manager.js';
 import { connectSettingsManagerMixin } from './connect-settings-manager.js';
@@ -355,6 +356,8 @@ export function initApp() {
     channels: [],
     selectedChannelId: null,
     messages: [],
+    reactionRows: [],
+    reactionPickerTargetKey: '',
     audioNotes: [],
     groups: [],
     documents: [],
@@ -3942,6 +3945,9 @@ export function initApp() {
         await this.rememberPeople([comment.sender_npub], 'task-comment');
       }
       this.scheduleStorageImageHydration();
+      if (typeof this.refreshReactionsForVisibleTargets === 'function') {
+        this.refreshReactionsForVisibleTargets().catch(() => {});
+      }
     },
 
     async addTaskComment(taskId) {
@@ -5297,6 +5303,7 @@ export function initApp() {
     taskBoardStateMixin,
     workspaceManagerMixin,
     chatMessageManagerMixin,
+    reactionsManagerMixin,
     syncManagerMixin,
     peopleProfilesManagerMixin,
     connectSettingsManagerMixin,

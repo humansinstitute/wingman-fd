@@ -412,6 +412,70 @@ describe('flowsManagerMixin — approval actions', () => {
       intent: 'approval_archive',
     });
   });
+
+  it('deleteApproval tombstones locally and queues an owner-only delete envelope', async () => {
+    const store = createStore({
+      activeApprovalId: 'approval-1',
+      showApprovalDetail: true,
+      approvalPreviewRecord: { record_id: 'task-1' },
+      approvalPreviewBlocks: [{ id: 'block-1' }],
+      approvalPreviewComments: [{ record_id: 'comment-1' }],
+      approvalPreviewExpanded: true,
+      approvals: [
+        {
+          record_id: 'approval-1',
+          status: 'pending',
+          task_ids: ['task-1'],
+          group_ids: ['missing-group'],
+          version: 7,
+          record_state: 'active',
+        },
+      ],
+    });
+
+    const result = await store.deleteApproval('approval-1');
+
+    expect(result).toMatchObject({
+      record_id: 'approval-1',
+      record_state: 'deleted',
+      sync_status: 'pending',
+      version: 8,
+    });
+    expect(store.approvals).toEqual([]);
+    expect(store.activeApprovalId).toBeNull();
+    expect(store.showApprovalDetail).toBe(false);
+    expect(store.approvalPreviewRecord).toBeNull();
+    expect(addPendingWrite).toHaveBeenCalledWith(expect.objectContaining({
+      record_id: 'approval-1',
+      record_family_hash: 'mock:approval',
+      envelope: expect.objectContaining({
+        record_id: 'approval-1',
+        record_state: 'deleted',
+        group_ids: [],
+        previous_version: 7,
+        write_group_ref: null,
+      }),
+    }));
+    expect(store.flushAndBackgroundSync).toHaveBeenCalledTimes(1);
+    expect(store.applyTaskPatch).not.toHaveBeenCalled();
+  });
+
+  it('deletePendingApprovalsByScope deletes visible pending approvals with one flush', async () => {
+    const store = createStore({
+      approvals: [
+        { record_id: 'a1', status: 'pending', group_ids: ['g1'], version: 1, record_state: 'active' },
+        { record_id: 'a2', status: 'pending', group_ids: ['g1'], version: 1, record_state: 'active' },
+        { record_id: 'a3', status: 'approved', group_ids: ['g1'], version: 1, record_state: 'active' },
+      ],
+    });
+
+    const count = await store.deletePendingApprovalsByScope();
+
+    expect(count).toBe(2);
+    expect(store.approvals.map((approval) => approval.record_id)).toEqual(['a3']);
+    expect(addPendingWrite).toHaveBeenCalledTimes(2);
+    expect(store.flushAndBackgroundSync).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('flowsManagerMixin — computed getters', () => {

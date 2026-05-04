@@ -38,6 +38,7 @@ describe('sync repair helpers', () => {
       'task',
       'schedule',
       'comment',
+      'reaction',
       'audio_note',
       'scope',
       'flow',

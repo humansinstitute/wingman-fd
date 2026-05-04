@@ -25,6 +25,7 @@ import { outboundFlow } from '../src/translators/flows.js';
 import { outboundOrganisation } from '../src/translators/organisations.js';
 import { outboundOpportunity } from '../src/translators/opportunities.js';
 import { outboundPerson } from '../src/translators/persons.js';
+import { outboundReaction } from '../src/translators/reactions.js';
 import { outboundReport } from '../src/translators/reports.js';
 import { outboundSchedule } from '../src/translators/schedules.js';
 import { outboundScope } from '../src/translators/scopes.js';
@@ -48,6 +49,7 @@ const expectedFamilies = [
   'opportunity',
   'organisation',
   'person',
+  'reaction',
   'report',
   'schedule',
   'scope',
@@ -231,6 +233,15 @@ describe('published Flight Deck schema manifests', () => {
         scope_l5_id: null,
         shares: [],
         group_ids: ['group-1'],
+      })).owner_payload.ciphertext),
+      reaction: JSON.parse((await outboundReaction({
+        record_id: 'reaction-1',
+        owner_npub: 'npub_owner',
+        target_record_id: 'msg-1',
+        target_record_family_hash: `${APP_NPUB}:chat_message`,
+        emoji: 'thumbs_up',
+        reactor_npub: 'npub_actor',
+        target_group_ids: ['group-1'],
       })).owner_payload.ciphertext),
       report: JSON.parse((await outboundReport({
         record_id: 'report-1',

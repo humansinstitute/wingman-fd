@@ -26,6 +26,7 @@ import {
   getTaskById,
   upsertSchedule,
   upsertComment,
+  upsertReaction,
   upsertAudioNote,
   upsertScope,
   upsertFlow,
@@ -51,6 +52,7 @@ import { inboundReport, recordFamilyHash as reportFamilyHash } from '../translat
 import { inboundTask } from '../translators/tasks.js';
 import { inboundSchedule, recordFamilyHash as scheduleFamilyHash } from '../translators/schedules.js';
 import { inboundComment } from '../translators/comments.js';
+import { inboundReaction, recordFamilyHash as reactionFamilyHash } from '../translators/reactions.js';
 import { inboundAudioNote } from '../translators/audio-notes.js';
 import { inboundScope } from '../translators/scopes.js';
 import { inboundFlow, recordFamilyHash as flowFamilyHash } from '../translators/flows.js';
@@ -73,6 +75,7 @@ const REPORT_FAMILY = reportFamilyHash('report');
 const TASK_FAMILY = recordFamilyHash('task');
 const SCHEDULE_FAMILY = scheduleFamilyHash('schedule');
 const COMMENT_FAMILY = recordFamilyHash('comment');
+const REACTION_FAMILY = reactionFamilyHash('reaction');
 const AUDIO_NOTE_FAMILY = recordFamilyHash('audio_note');
 const SCOPE_FAMILY = recordFamilyHash('scope');
 const FLOW_FAMILY = flowFamilyHash('flow');
@@ -280,6 +283,9 @@ async function materializeRecordForFamily(family, record) {
   } else if (family === COMMENT_FAMILY) {
     const row = await inboundComment(record);
     await upsertComment(row);
+  } else if (family === REACTION_FAMILY) {
+    const row = await inboundReaction(record);
+    await upsertReaction(row);
   } else if (family === AUDIO_NOTE_FAMILY) {
     const row = await inboundAudioNote(record);
     await upsertAudioNote(row);

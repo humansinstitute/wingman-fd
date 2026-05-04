@@ -1,6 +1,6 @@
-import { createNip98AuthHeaderForSecret } from '@superbased/core/client';
-import { normalizeSuperbasedIdentityContext } from '@superbased/core/identity-model';
-import { RecordManager } from '@superbased/core/records';
+import { createNip98AuthHeaderForSecret } from '@nostr-superbased/core/client';
+import { normalizeSuperbasedIdentityContext } from '@nostr-superbased/core/identity-model';
+import { RecordManager } from '@nostr-superbased/core/records';
 
 import { getGroupKey } from '../crypto/group-keys.js';
 import { buildFlightDeckIdentityContext } from './identity-context.js';

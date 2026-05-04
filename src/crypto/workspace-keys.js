@@ -24,8 +24,8 @@ import {
   isActiveWorkspaceUserKeyRegistered,
   markActiveWorkspaceUserKeyRegistered,
   setActiveWorkspaceUserKey,
-} from '@superbased/browser/workspace-keys';
-import { bytesToHex, decodeNsec, generateLocalIdentity } from '@superbased/core/client';
+} from '@nostr-superbased/browser/workspace-keys';
+import { bytesToHex, decodeNsec, generateLocalIdentity } from '@nostr-superbased/core/client';
 import { personalEncryptForNpub, personalDecryptFromNpub } from '../auth/nostr.js';
 import { getSharedDb } from '../db.js';
 import { flightDeckLog } from '../logging.js';
@@ -33,7 +33,7 @@ import { flightDeckLog } from '../logging.js';
 // ---------------------------------------------------------------------------
 // Flight Deck compatibility adapters.
 // Public function names keep FD's historical "workspace key" API, while
-// internals delegate to @superbased/browser's workspaceUserKey runtime.
+// internals delegate to @nostr-superbased/browser's workspaceUserKey runtime.
 // ---------------------------------------------------------------------------
 
 function clean(value) {

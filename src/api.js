@@ -3,7 +3,7 @@
  * The UI never calls these directly; the worker or explicit user actions do.
  */
 
-import { SuperbasedClient } from '@superbased/core/client';
+import { SuperbasedClient } from '@nostr-superbased/core/client';
 import { createNip98AuthHeader, createNip98AuthHeaderForSecret } from './auth/nostr.js';
 import { getActiveSessionNpub } from './crypto/group-keys.js';
 import { getActiveWorkspaceKeySecretForAuth } from './crypto/workspace-keys.js';

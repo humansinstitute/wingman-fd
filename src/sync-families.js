@@ -8,6 +8,7 @@ import { recordFamilyHash as approvalFamilyHash } from './translators/approvals.
 import { recordFamilyHash as personFamilyHash } from './translators/persons.js';
 import { recordFamilyHash as organisationFamilyHash } from './translators/organisations.js';
 import { recordFamilyHash as opportunityFamilyHash } from './translators/opportunities.js';
+import { recordFamilyHash as reactionFamilyHash } from './translators/reactions.js';
 
 export const SYNC_FAMILY_OPTIONS = Object.freeze([
   { id: 'settings', label: 'Workspace settings', hash: settingsFamilyHash('settings'), table: 'workspace_settings' },
@@ -19,6 +20,7 @@ export const SYNC_FAMILY_OPTIONS = Object.freeze([
   { id: 'task', label: 'Tasks', hash: taskFamilyHash('task'), table: 'tasks' },
   { id: 'schedule', label: 'Schedules', hash: scheduleFamilyHash('schedule'), table: 'schedules' },
   { id: 'comment', label: 'Comments', hash: chatFamilyHash('comment'), table: 'comments' },
+  { id: 'reaction', label: 'Reactions', hash: reactionFamilyHash('reaction'), table: 'reactions' },
   { id: 'audio_note', label: 'Audio notes', hash: chatFamilyHash('audio_note'), table: 'audio_notes' },
   { id: 'scope', label: 'Scopes', hash: chatFamilyHash('scope'), table: 'scopes' },
   { id: 'flow', label: 'Flows', hash: flowFamilyHash('flow'), table: 'flows' },

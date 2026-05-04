@@ -1240,6 +1240,62 @@ export const flowsManagerMixin = {
     return updated;
   },
 
+  async deleteApproval(approvalId, options = {}) {
+    const approval = this.approvals.find((a) => a.record_id === approvalId);
+    if (!approval || !this.session?.npub) return null;
+
+    const now = new Date().toISOString();
+    const nextVersion = (approval.version ?? 1) + 1;
+    const updated = toRaw({
+      ...approval,
+      record_state: 'deleted',
+      sync_status: 'pending',
+      version: nextVersion,
+      updated_at: now,
+    });
+
+    await upsertApproval(updated);
+    this.approvals = this.approvals.filter((a) => a.record_id !== approvalId);
+
+    if (this.activeApprovalId === approvalId) {
+      this.activeApprovalId = null;
+      this.showApprovalDetail = false;
+      this.approvalPreviewRecord = null;
+      this.approvalPreviewBlocks = [];
+      this.approvalPreviewComments = [];
+      this.approvalPreviewExpanded = false;
+    }
+
+    const envelope = await outboundApproval({
+      ...updated,
+      group_ids: [],
+      previous_version: approval.version ?? 1,
+      signature_npub: this.signingNpub,
+      write_group_ref: null,
+    });
+
+    await addPendingWrite({
+      record_id: approval.record_id,
+      record_family_hash: envelope.record_family_hash,
+      envelope,
+    });
+
+    if (options.flush !== false) {
+      await this.flushAndBackgroundSync();
+    }
+    return updated;
+  },
+
+  async deletePendingApprovalsByScope() {
+    const approvals = [...this.pendingApprovalsByScope];
+    if (approvals.length === 0) return 0;
+    for (const approval of approvals) {
+      await this.deleteApproval(approval.record_id, { flush: false });
+    }
+    await this.flushAndBackgroundSync();
+    return approvals.length;
+  },
+
   async _patchApproval(approval, patch) {
     const checkoutPolicyConfig = this.getApprovalCheckoutPolicyConfig();
     if (approval?.record_id) {

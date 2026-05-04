@@ -13,7 +13,7 @@ describe('section live query plan', () => {
 
     expect(plan.shared).toEqual(['address-book']);
     expect(plan.workspace).toEqual(['ws:flows', 'ws:opportunities', 'chat:channels', 'chat:audio-notes']);
-    expect(plan.detail).toEqual(['chat:messages:channel-1']);
+    expect(plan.detail).toEqual(['chat:messages:channel-1', 'chat:reactions:channel-1']);
   });
 
   it('switches task and report routes to their own workspace slices', () => {
@@ -24,7 +24,11 @@ describe('section live query plan', () => {
       applyAddressBookPeople() {},
     });
     expect(taskPlan.workspace).toEqual(['ws:flows', 'ws:opportunities', 'tasks:tasks', 'tasks:scopes']);
-    expect(taskPlan.detail).toEqual(['tasks:selected-task:task-1', 'tasks:comments:task-1']);
+    expect(taskPlan.detail).toEqual([
+      'tasks:selected-task:task-1',
+      'tasks:comments:task-1',
+      'tasks:comment-reactions:task-1',
+    ]);
 
     const reportPlan = getSectionLiveQueryPlan({
       workspaceOwnerNpub: 'npub-owner',
@@ -66,7 +70,11 @@ describe('section live query plan', () => {
       selectedDocId: 'doc-1',
       applyAddressBookPeople() {},
     });
-    expect(detailPlan.detail).toEqual(['docs:selected-doc:doc-1', 'docs:comments:doc-1']);
+    expect(detailPlan.detail).toEqual([
+      'docs:selected-doc:doc-1',
+      'docs:comments:doc-1',
+      'docs:comment-reactions:doc-1',
+    ]);
   });
 
   it('loads settings schedules, scopes, and approvals in the settings section', () => {
