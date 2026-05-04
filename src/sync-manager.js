@@ -305,6 +305,26 @@ export const syncManagerMixin = {
     }
   },
 
+  getPendingWriteForceSyncTargets(rows = []) {
+    const targets = new Map();
+    for (const row of rows) {
+      const envelope = row?.envelope || {};
+      const familyHash = String(row?.record_family_hash || envelope.record_family_hash || '').trim();
+      const family = getSyncFamily(familyHash);
+      const recordId = String(row?.record_id || envelope.record_id || '').trim();
+      if (!family?.id || !recordId) continue;
+      const key = `${family.id}\u0000${recordId}`;
+      if (targets.has(key)) continue;
+      const diagnostic = this.describePendingWriteRow(row);
+      targets.set(key, {
+        familyId: family.id,
+        recordId,
+        label: diagnostic.title || recordId,
+      });
+    }
+    return [...targets.values()];
+  },
+
   async getRecordStatusRelatedComments(recordId, targetFamilyHash) {
     const comments = await getCommentsByTarget(recordId);
     return comments.filter((comment) => comment?.target_record_family_hash === targetFamilyHash);
@@ -411,7 +431,9 @@ export const syncManagerMixin = {
     if (bootstrap) {
       return { version: 1, previousVersion: 0 };
     }
-    const latestTowerVersion = Math.max(0, Number(this.recordStatusTowerLatestVersion ?? 0) || 0);
+    const latestTowerVersion = Object.prototype.hasOwnProperty.call(options, 'latestTowerVersion')
+      ? Math.max(0, Number(options.latestTowerVersion ?? 0) || 0)
+      : Math.max(0, Number(this.recordStatusTowerLatestVersion ?? 0) || 0);
     const fallbackLocalVersion = Math.max(1, this.getRecordStatusLocalVersion(localRecord) || 1);
     const version = latestTowerVersion > 0 ? latestTowerVersion + 1 : fallbackLocalVersion;
     return {
@@ -518,7 +540,11 @@ export const syncManagerMixin = {
     const effectiveLocalRecord = this.buildRecordStatusLocalRecord(localRecord, familyId, { bootstrap });
     const channelRecord = this.getRecordStatusChannelForRecord(effectiveLocalRecord, familyId);
     const ownerNpub = effectiveLocalRecord.owner_npub || channelRecord?.owner_npub || this.workspaceOwnerNpub;
-    const { version, previousVersion } = this.getRecordStatusSubmitVersion(effectiveLocalRecord, { bootstrap });
+    const submitVersionOptions = { bootstrap };
+    if (Object.prototype.hasOwnProperty.call(options, 'latestTowerVersion')) {
+      submitVersionOptions.latestTowerVersion = options.latestTowerVersion;
+    }
+    const { version, previousVersion } = this.getRecordStatusSubmitVersion(effectiveLocalRecord, submitVersionOptions);
     const signatureNpub = this.signingNpub || this.session?.npub || ownerNpub;
     // owner_npub is a workspace service identity, not a person's npub.
     // All writes are non-owner and need write_group_ref for Tower auth.
@@ -862,27 +888,15 @@ export const syncManagerMixin = {
     this.recordStatusError = null;
     this.recordStatusNotice = '';
     try {
-      const result = await fetchRecordHistory({
-        record_id: recordId,
-        owner_npub: this.workspaceOwnerNpub,
-        viewer_npub: this.session.npub,
-      });
-      const versions = Array.isArray(result?.versions) ? result.versions : [];
-      const latestVersionNumber = versions.reduce((latest, current) => {
-        const version = Number(current?.version ?? 0) || 0;
-        return version > latest ? version : latest;
-      }, 0);
-      const visibleVersionCount = Math.max(versions.length, latestVersionNumber);
-      const latestVersion = versions.reduce((latest, current) => {
-        if (!latest) return current;
-        const currentTime = Date.parse(current?.updated_at || '') || 0;
-        const latestTime = Date.parse(latest?.updated_at || '') || 0;
-        return currentTime >= latestTime ? current : latest;
-      }, null);
+      const {
+        visibleVersionCount,
+        latestVersionNumber,
+        latestUpdatedAt,
+      } = await this.getRecordStatusTowerVersionContext(recordId);
 
       this.recordStatusTowerVersionCount = visibleVersionCount;
       this.recordStatusTowerLatestVersion = latestVersionNumber;
-      this.recordStatusTowerUpdatedAt = latestVersion?.updated_at || '';
+      this.recordStatusTowerUpdatedAt = latestUpdatedAt;
       await this.refreshRecordStatusLocalContext();
 
       if (visibleVersionCount === 0) {
@@ -904,6 +918,136 @@ export const syncManagerMixin = {
     }
   },
 
+  async getRecordStatusTowerVersionContext(recordId) {
+    const result = await fetchRecordHistory({
+      record_id: recordId,
+      owner_npub: this.workspaceOwnerNpub,
+      viewer_npub: this.session.npub,
+    });
+    const versions = Array.isArray(result?.versions) ? result.versions : [];
+    const latestVersionNumber = versions.reduce((latest, current) => {
+      const version = Number(current?.version ?? 0) || 0;
+      return version > latest ? version : latest;
+    }, 0);
+    const visibleVersionCount = Math.max(versions.length, latestVersionNumber);
+    const latestVersion = versions.reduce((latest, current) => {
+      if (!latest) return current;
+      const currentTime = Date.parse(current?.updated_at || '') || 0;
+      const latestTime = Date.parse(latest?.updated_at || '') || 0;
+      return currentTime >= latestTime ? current : latest;
+    }, null);
+    return {
+      versions,
+      visibleVersionCount,
+      latestVersionNumber,
+      latestUpdatedAt: latestVersion?.updated_at || '',
+    };
+  },
+
+  async forcePushLocalRecordSnapshot(input = {}) {
+    const familyId = String(input.familyId || '').trim();
+    const recordId = String(input.recordId || '').trim();
+    const rawLocalRecord = this.getLocalStatusRecord(familyId, recordId);
+    const localRecord = this.buildRecordStatusLocalRecord(rawLocalRecord, familyId, { bootstrap: true });
+    if (!familyId || !recordId) {
+      throw new Error('Select a record first.');
+    }
+    if (!rawLocalRecord || !localRecord) {
+      throw new Error('No local record is available to push.');
+    }
+    if (!this.workspaceOwnerNpub || !this.session?.npub) {
+      throw new Error('Configure workspace sync first.');
+    }
+
+    const familyLabel = this.getRecordStatusFamilyLabel(familyId);
+    const hasExplicitTowerLatestVersion = Object.prototype.hasOwnProperty.call(input, 'towerLatestVersion');
+    const bootstrap = Math.max(0, Number(input.towerVersionCount ?? this.recordStatusTowerVersionCount ?? 0) || 0) === 0;
+    const latestTowerVersion = Math.max(0, Number(input.towerLatestVersion ?? this.recordStatusTowerLatestVersion ?? 0) || 0);
+    const checkoutPolicyConfig = this.getRecordStatusSubmitCheckoutPolicyConfig(familyId, { bootstrap });
+    const envelopeOptions = { bootstrap };
+    if (hasExplicitTowerLatestVersion) envelopeOptions.latestTowerVersion = latestTowerVersion;
+    if (checkoutPolicyConfig) envelopeOptions.checkoutPolicyConfig = checkoutPolicyConfig;
+    const submitVersionOptions = { bootstrap };
+    if (hasExplicitTowerLatestVersion) submitVersionOptions.latestTowerVersion = latestTowerVersion;
+    const { version: submittedVersion } = this.getRecordStatusSubmitVersion(localRecord, submitVersionOptions);
+    const targetFamilyHash = getSyncFamily(familyId)?.hash || null;
+    const relatedComments = bootstrap && targetFamilyHash
+      ? await this.getRecordStatusRelatedComments(recordId, targetFamilyHash)
+      : [];
+    const relevantRecordIds = new Set([recordId, ...relatedComments.map((comment) => comment.record_id)]);
+    const allPendingWrites = Array.isArray(input.pendingWrites)
+      ? input.pendingWrites
+      : await this.getRecordStatusPendingWrites();
+    const pendingWrites = allPendingWrites.filter((row) => relevantRecordIds.has(row.record_id));
+    const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, envelopeOptions);
+    const commentEnvelopes = [];
+    const targetWriteFields = await getRecordWriteFieldsForStore(this, localRecord, {
+      label: `${familyLabel} comment force submit`,
+    });
+    const targetGroupIds = targetWriteFields.group_ids;
+
+    for (const comment of relatedComments
+      .slice()
+      .sort((left, right) => {
+        if (left.parent_comment_id && !right.parent_comment_id) return 1;
+        if (!left.parent_comment_id && right.parent_comment_id) return -1;
+        return String(left.created_at || left.updated_at || '').localeCompare(String(right.created_at || right.updated_at || ''));
+      })) {
+      commentEnvelopes.push(await this.buildRecordStatusCommentEnvelope(comment, { targetGroupIds }));
+    }
+
+    const syncRequest = {
+      owner_npub: this.workspaceOwnerNpub,
+      records: [envelope, ...commentEnvelopes],
+    };
+    if (checkoutPolicyConfig) syncRequest.checkout_policy_config = checkoutPolicyConfig;
+    const syncResult = await syncRecords(syncRequest);
+
+    const rejected = Array.isArray(syncResult?.rejected) ? syncResult.rejected : [];
+    const deferredIds = new Set(Array.isArray(syncResult?.deferred) ? syncResult.deferred : []);
+    const rejectedIds = new Set(rejected.map((entry) => String(entry?.record_id || '').trim()).filter(Boolean));
+    const hasUnscopedRejection = rejected.some((entry) => !String(entry?.record_id || '').trim());
+
+    const recordIds = [recordId, ...relatedComments.map((comment) => String(comment?.record_id || '').trim()).filter(Boolean)];
+    const failedRecordIds = recordIds.filter((id) => rejectedIds.has(id) || deferredIds.has(id));
+    const targetRejected = rejectedIds.has(recordId);
+    const targetDeferred = deferredIds.has(recordId);
+    const clearedRecordIds = [];
+
+    for (const row of pendingWrites) {
+      const pendingRecordId = String(row?.record_id || '').trim();
+      if (!pendingRecordId) continue;
+      if (hasUnscopedRejection) continue;
+      if (rejectedIds.has(pendingRecordId)) continue;
+      if (deferredIds.has(pendingRecordId)) continue;
+      if (row?.row_id != null) await this.removeRecordStatusPendingWrite(row.row_id);
+      clearedRecordIds.push(pendingRecordId);
+    }
+
+    if (targetRejected || targetDeferred || hasUnscopedRejection) {
+      const firstRejected = rejected.find((entry) => String(entry?.record_id || '').trim() === recordId) || rejected[0] || null;
+      const code = String(firstRejected?.code || '').trim();
+      const reason = String(firstRejected?.reason || '').trim() || String(firstRejected?.message || '').trim();
+      const detail = targetDeferred
+        ? 'group key for the selected write group is not loaded yet'
+        : reason || code || (hasUnscopedRejection ? 'Tower rejected the sync batch without record-level details' : 'Tower rejected this write');
+      throw new Error(`Force submit rejected for ${familyLabel} ${recordId}: ${detail}.`);
+    }
+
+    await this.markRecordStatusLocalRecordSynced(familyId, localRecord, { version: submittedVersion });
+    await this.markRecordStatusCommentsSynced(relatedComments);
+    return {
+      familyId,
+      familyLabel,
+      recordId,
+      submittedVersion,
+      pendingWriteCount: pendingWrites.length,
+      relatedCommentCount: relatedComments.length,
+      failedRecordIds,
+      clearedRecordIds,
+    };
+  },
+
   async forcePushRecordStatusTarget() {
     const familyId = String(this.recordStatusFamilyId || '').trim();
     const recordId = String(this.recordStatusTargetId || '').trim();
@@ -922,94 +1066,100 @@ export const syncManagerMixin = {
       return;
     }
 
-    const familyLabel = this.getRecordStatusFamilyLabel(familyId);
-    const bootstrap = this.recordStatusTowerVersionCount === 0;
-    const checkoutPolicyConfig = this.getRecordStatusSubmitCheckoutPolicyConfig(familyId, { bootstrap });
-    const envelopeOptions = { bootstrap };
-    if (checkoutPolicyConfig) envelopeOptions.checkoutPolicyConfig = checkoutPolicyConfig;
-    const { version: submittedVersion } = this.getRecordStatusSubmitVersion(localRecord, { bootstrap });
     this.recordStatusSyncBusy = true;
     this.recordStatusError = null;
     try {
-      const targetFamilyHash = getSyncFamily(familyId)?.hash || null;
-      const relatedComments = bootstrap && targetFamilyHash
-        ? await this.getRecordStatusRelatedComments(recordId, targetFamilyHash)
-        : [];
-      const relevantRecordIds = new Set([recordId, ...relatedComments.map((comment) => comment.record_id)]);
-      const pendingWrites = (await this.getRecordStatusPendingWrites())
-        .filter((row) => relevantRecordIds.has(row.record_id));
-      const envelope = await this.buildRecordStatusEnvelope(localRecord, familyId, envelopeOptions);
-      const commentEnvelopes = [];
-      const targetWriteFields = await getRecordWriteFieldsForStore(this, localRecord, {
-        label: `${familyLabel} comment force submit`,
+      const result = await this.forcePushLocalRecordSnapshot({
+        familyId,
+        recordId,
       });
-      const targetGroupIds = targetWriteFields.group_ids;
-
-      for (const comment of relatedComments
-        .slice()
-        .sort((left, right) => {
-          if (left.parent_comment_id && !right.parent_comment_id) return 1;
-          if (!left.parent_comment_id && right.parent_comment_id) return -1;
-          return String(left.created_at || left.updated_at || '').localeCompare(String(right.created_at || right.updated_at || ''));
-        })) {
-        commentEnvelopes.push(await this.buildRecordStatusCommentEnvelope(comment, { targetGroupIds }));
-      }
-
-      const syncRequest = {
-        owner_npub: this.workspaceOwnerNpub,
-        records: [envelope, ...commentEnvelopes],
-      };
-      if (checkoutPolicyConfig) syncRequest.checkout_policy_config = checkoutPolicyConfig;
-      const syncResult = await syncRecords(syncRequest);
-
-      const rejected = Array.isArray(syncResult?.rejected) ? syncResult.rejected : [];
-      const deferredIds = new Set(Array.isArray(syncResult?.deferred) ? syncResult.deferred : []);
-      const rejectedIds = new Set(rejected.map((entry) => String(entry?.record_id || '').trim()).filter(Boolean));
-      const hasUnscopedRejection = rejected.some((entry) => !String(entry?.record_id || '').trim());
-
-      const recordIds = [recordId, ...relatedComments.map((comment) => String(comment?.record_id || '').trim()).filter(Boolean)];
-      const failedRecordIds = recordIds.filter((id) => rejectedIds.has(id) || deferredIds.has(id));
-      const targetRejected = rejectedIds.has(recordId);
-      const targetDeferred = deferredIds.has(recordId);
-
-      for (const row of pendingWrites) {
-        const pendingRecordId = String(row?.record_id || '').trim();
-        if (!pendingRecordId) continue;
-        if (hasUnscopedRejection) continue;
-        if (rejectedIds.has(pendingRecordId)) continue;
-        if (deferredIds.has(pendingRecordId)) continue;
-        if (row?.row_id != null) await this.removeRecordStatusPendingWrite(row.row_id);
-      }
-
-      if (targetRejected || targetDeferred || hasUnscopedRejection) {
-        const firstRejected = rejected.find((entry) => String(entry?.record_id || '').trim() === recordId) || rejected[0] || null;
-        const code = String(firstRejected?.code || '').trim();
-        const reason = String(firstRejected?.reason || '').trim() || String(firstRejected?.message || '').trim();
-        const detail = targetDeferred
-          ? 'group key for the selected write group is not loaded yet'
-          : reason || code || (hasUnscopedRejection ? 'Tower rejected the sync batch without record-level details' : 'Tower rejected this write');
-        throw new Error(`Force submit rejected for ${familyLabel} ${recordId}: ${detail}.`);
-      }
-
-      await this.markRecordStatusLocalRecordSynced(familyId, localRecord, { version: submittedVersion });
-      await this.markRecordStatusCommentsSynced(relatedComments);
       await this.checkRecordStatusOnTower();
       if (!this.recordStatusError) {
-        const commentSuffix = relatedComments.length > 0
-          ? ` Recreated ${relatedComments.length} local ${relatedComments.length === 1 ? 'comment' : 'comments'} too.`
+        const commentSuffix = result.relatedCommentCount > 0
+          ? ` Recreated ${result.relatedCommentCount} local ${result.relatedCommentCount === 1 ? 'comment' : 'comments'} too.`
           : '';
-        const failureSuffix = failedRecordIds.length > 0
-          ? ` ${failedRecordIds.length} related ${failedRecordIds.length === 1 ? 'record was' : 'records were'} not accepted and left pending.`
+        const failureSuffix = result.failedRecordIds.length > 0
+          ? ` ${result.failedRecordIds.length} related ${result.failedRecordIds.length === 1 ? 'record was' : 'records were'} not accepted and left pending.`
           : '';
-        this.recordStatusNotice = pendingWrites.length > 0
-          ? `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion} and cleared accepted pending writes.${commentSuffix}${failureSuffix}`
-          : `Force-submitted the current local snapshot as ${familyLabel} version ${submittedVersion}.${commentSuffix}${failureSuffix}`;
+        this.recordStatusNotice = result.pendingWriteCount > 0
+          ? `Force-submitted the current local snapshot as ${result.familyLabel} version ${result.submittedVersion} and cleared accepted pending writes.${commentSuffix}${failureSuffix}`
+          : `Force-submitted the current local snapshot as ${result.familyLabel} version ${result.submittedVersion}.${commentSuffix}${failureSuffix}`;
       }
     } catch (error) {
       this.recordStatusError = error?.message || 'Failed to force push this record to Tower.';
     } finally {
       await this.refreshRecordStatusLocalContext();
       this.recordStatusSyncBusy = false;
+    }
+  },
+
+  async forceSyncAllPendingWrites() {
+    if (this.pendingWritesBusy) return;
+    if (!this.workspaceOwnerNpub || !this.session?.npub) {
+      this.pendingWritesError = 'Configure workspace sync first.';
+      return;
+    }
+
+    this.pendingWritesBusy = true;
+    this.pendingWritesError = null;
+    this.pendingWritesNotice = 'Force syncing pending writes...';
+    try {
+      const pendingWrites = await this.getRecordStatusPendingWrites();
+      const targets = this.getPendingWriteForceSyncTargets(pendingWrites);
+      if (targets.length === 0) {
+        this.pendingWritesNotice = 'No pending writes.';
+        return;
+      }
+
+      let synced = 0;
+      let cleared = 0;
+      let attempted = 0;
+      const skippedRecordIds = new Set();
+      const failures = [];
+
+      for (const target of targets) {
+        const targetKey = `${target.familyId}\u0000${target.recordId}`;
+        if (skippedRecordIds.has(targetKey)) continue;
+        attempted += 1;
+        try {
+          const towerContext = await this.getRecordStatusTowerVersionContext(target.recordId);
+          const result = await this.forcePushLocalRecordSnapshot({
+            familyId: target.familyId,
+            recordId: target.recordId,
+            label: target.label,
+            towerVersionCount: towerContext.visibleVersionCount,
+            towerLatestVersion: towerContext.latestVersionNumber,
+            pendingWrites,
+          });
+          synced += 1;
+          cleared += result.clearedRecordIds.length;
+          for (const clearedRecordId of result.clearedRecordIds) {
+            const familyId = clearedRecordId === result.recordId ? result.familyId : 'comment';
+            skippedRecordIds.add(`${familyId}\u0000${clearedRecordId}`);
+          }
+        } catch (error) {
+          failures.push({
+            ...target,
+            message: error?.message || 'Force sync failed.',
+          });
+        }
+      }
+
+      await this.refreshPendingWriteDiagnostics();
+      await this.refreshSyncStatus({ refreshUnread: false });
+      this.pendingWritesNotice = `Force synced ${synced}/${attempted} pending ${attempted === 1 ? 'record' : 'records'} and cleared ${cleared} queued ${cleared === 1 ? 'write' : 'writes'}.`;
+      if (failures.length > 0) {
+        const details = failures
+          .slice(0, 5)
+          .map((failure) => `${failure.label || failure.recordId}: ${failure.message}`)
+          .join(' | ');
+        const suffix = failures.length > 5 ? ` | +${failures.length - 5} more` : '';
+        this.pendingWritesError = `Force sync failed for ${failures.length}/${attempted}: ${details}${suffix}`;
+      }
+    } catch (error) {
+      this.pendingWritesError = error?.message || 'Failed to force sync pending writes.';
+    } finally {
+      this.pendingWritesBusy = false;
     }
   },
 

@@ -6944,6 +6944,10 @@
             <div class="record-status-actions">
               <button type="button" class="btn-cancel" @click="$store.chat.refreshPendingWriteDiagnostics()" :disabled="$store.chat.pendingWritesBusy">Refresh</button>
               <button type="button" class="btn-confirm" @click="$store.chat.syncNow()" :disabled="$store.chat.pendingWritesBusy">Sync now</button>
+              <button type="button" class="btn-confirm" @click="$store.chat.forceSyncAllPendingWrites()" :disabled="$store.chat.pendingWritesBusy || $store.chat.pendingWriteDiagnostics.length === 0">
+                <span x-show="!$store.chat.pendingWritesBusy">Force sync all</span>
+                <span x-show="$store.chat.pendingWritesBusy">Force syncing...</span>
+              </button>
             </div>
           </div>
         </div>

@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-BvzVx2vs.js"></script>
+  <script type="module" crossorigin src="/assets/index-Dj4faGIO.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-DO18XR-x.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -6946,6 +6946,10 @@
             <div class="record-status-actions">
               <button type="button" class="btn-cancel" @click="$store.chat.refreshPendingWriteDiagnostics()" :disabled="$store.chat.pendingWritesBusy">Refresh</button>
               <button type="button" class="btn-confirm" @click="$store.chat.syncNow()" :disabled="$store.chat.pendingWritesBusy">Sync now</button>
+              <button type="button" class="btn-confirm" @click="$store.chat.forceSyncAllPendingWrites()" :disabled="$store.chat.pendingWritesBusy || $store.chat.pendingWriteDiagnostics.length === 0">
+                <span x-show="!$store.chat.pendingWritesBusy">Force sync all</span>
+                <span x-show="$store.chat.pendingWritesBusy">Force syncing...</span>
+              </button>
             </div>
           </div>
         </div>

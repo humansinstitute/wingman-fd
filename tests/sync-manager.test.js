@@ -480,6 +480,71 @@ describe('pending write diagnostics', () => {
     expect(removePendingWrite).toHaveBeenCalledWith(7);
     expect(refreshSyncStatus).toHaveBeenCalledWith({ refreshUnread: false });
   });
+
+  it('force-syncs all pending records and returns per-record errors', async () => {
+    const documentFamilyHash = getSyncFamilyHash('document');
+    const pendingRows = [
+      {
+        row_id: 21,
+        record_id: 'doc-ok',
+        record_family_hash: documentFamilyHash,
+        envelope: {
+          record_id: 'doc-ok',
+          record_family_hash: documentFamilyHash,
+          version: 3,
+          previous_version: 2,
+        },
+      },
+      {
+        row_id: 22,
+        record_id: 'doc-fail',
+        record_family_hash: documentFamilyHash,
+        envelope: {
+          record_id: 'doc-fail',
+          record_family_hash: documentFamilyHash,
+          version: 2,
+          previous_version: 1,
+        },
+      },
+    ];
+    getPendingWrites.mockResolvedValue(pendingRows);
+    fetchRecordHistory
+      .mockResolvedValueOnce({ versions: [{ version: 2, updated_at: '2026-03-28T10:00:00.000Z' }] })
+      .mockResolvedValueOnce({ versions: [{ version: 1, updated_at: '2026-03-28T11:00:00.000Z' }] });
+    syncRecords
+      .mockResolvedValueOnce({ synced: 1, updated: 1, rejected: [] })
+      .mockResolvedValueOnce({
+        synced: 0,
+        updated: 0,
+        rejected: [{ record_id: 'doc-fail', code: 'write_group_forbidden', reason: 'writer is not a member of write group' }],
+      });
+
+    const store = createStore({
+      session: { npub: 'npub1me' },
+      groups: [{ group_id: 'group-1', member_npubs: ['npub1me'] }],
+      documents: [
+        { record_id: 'doc-ok', owner_npub: 'npub1owner', title: 'Doc OK', group_ids: ['group-1'], shares: ['group-1'], version: 3, sync_status: 'failed' },
+        { record_id: 'doc-fail', owner_npub: 'npub1owner', title: 'Doc Fail', group_ids: ['group-1'], shares: ['group-1'], version: 2, sync_status: 'failed' },
+      ],
+      buildRecordStatusEnvelope: vi.fn(async (record, familyId, options = {}) => ({
+        record_id: record.record_id,
+        record_family_hash: getSyncFamilyHash(familyId),
+        version: options.bootstrap ? 1 : Number(options.latestTowerVersion || 0) + 1,
+        previous_version: options.bootstrap ? 0 : Number(options.latestTowerVersion || 0),
+      })),
+      getRecordStatusRelatedComments: vi.fn(async () => []),
+      refreshSyncStatus: vi.fn(async () => {}),
+    });
+
+    await store.forceSyncAllPendingWrites();
+
+    expect(syncRecords).toHaveBeenCalledTimes(2);
+    expect(removePendingWrite).toHaveBeenCalledWith(21);
+    expect(removePendingWrite).not.toHaveBeenCalledWith(22);
+    expect(store.pendingWritesNotice).toContain('Force synced 1/2 pending records');
+    expect(store.pendingWritesError).toContain('Doc Fail');
+    expect(store.pendingWritesError).toContain('writer is not a member of write group');
+  });
 });
 
 // ---------------------------------------------------------------------------
