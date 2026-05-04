@@ -872,6 +872,7 @@ export const syncManagerMixin = {
         const version = Number(current?.version ?? 0) || 0;
         return version > latest ? version : latest;
       }, 0);
+      const visibleVersionCount = Math.max(versions.length, latestVersionNumber);
       const latestVersion = versions.reduce((latest, current) => {
         if (!latest) return current;
         const currentTime = Date.parse(current?.updated_at || '') || 0;
@@ -879,12 +880,12 @@ export const syncManagerMixin = {
         return currentTime >= latestTime ? current : latest;
       }, null);
 
-      this.recordStatusTowerVersionCount = versions.length;
+      this.recordStatusTowerVersionCount = visibleVersionCount;
       this.recordStatusTowerLatestVersion = latestVersionNumber;
       this.recordStatusTowerUpdatedAt = latestVersion?.updated_at || '';
       await this.refreshRecordStatusLocalContext();
 
-      if (versions.length === 0) {
+      if (visibleVersionCount === 0) {
         if (this.recordStatusLocalPresent) {
           this.recordStatusNotice = `${targetLabel} is missing on Tower. You can force submit this local snapshot as version 1.`;
         } else {
@@ -894,8 +895,8 @@ export const syncManagerMixin = {
       }
 
       this.recordStatusNotice = this.recordStatusLocalPresent
-        ? `${targetLabel} is on Tower with ${versions.length} version${versions.length === 1 ? '' : 's'}, and the local copy is present.`
-        : `${targetLabel} is on Tower with ${versions.length} version${versions.length === 1 ? '' : 's'}, but the local copy is missing.`;
+        ? `${targetLabel} is on Tower with ${visibleVersionCount} version${visibleVersionCount === 1 ? '' : 's'}, and the local copy is present.`
+        : `${targetLabel} is on Tower with ${visibleVersionCount} version${visibleVersionCount === 1 ? '' : 's'}, but the local copy is missing.`;
     } catch (error) {
       this.recordStatusError = error?.message || 'Failed to check record status on Tower.';
     } finally {

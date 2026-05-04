@@ -3247,6 +3247,21 @@ export function initApp() {
       };
     },
 
+    getTaskPatchCheckoutPolicyConfig(updatedTask, previousTask = null, options = {}) {
+      if (Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig')) {
+        return options.checkoutPolicyConfig;
+      }
+      const nextState = String(updatedTask?.state || '').trim();
+      const previousState = String(previousTask?.state || '').trim();
+      if (
+        (nextState === 'done' || nextState === 'archive')
+        && previousState !== nextState
+      ) {
+        return null;
+      }
+      return this.getTaskDetailCheckoutPolicyConfig();
+    },
+
     async getEncryptableTaskGroupIdsForWrite(record = null) {
       return getEncryptableRecordGroupRefsForStore(this, record, {
         label: 'Task write',
@@ -3316,10 +3331,9 @@ export function initApp() {
         this.editingTask = { ...updated };
       }
 
-      const queueOptions = {};
-      if (Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig')) {
-        queueOptions.checkoutPolicyConfig = options.checkoutPolicyConfig;
-      }
+      const queueOptions = {
+        checkoutPolicyConfig: this.getTaskPatchCheckoutPolicyConfig(updated, task, options),
+      };
       if (options.intent) queueOptions.intent = options.intent;
       await this.queueTaskWrite(updated, task, queueOptions);
 

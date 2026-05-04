@@ -1046,6 +1046,25 @@ describe('record status modal', () => {
     expect(store.recordStatusNotice).toContain('local copy is present');
   });
 
+  it('uses the latest Tower version as the visible count when history is compacted', async () => {
+    fetchRecordHistory.mockResolvedValueOnce({
+      versions: [
+        { version: 2, updated_at: '2026-03-28T11:00:00.000Z' },
+      ],
+    });
+    const { fn, store } = bindMethod('openRecordStatusModal', {
+      session: { npub: 'npub1me' },
+      tasks: [{ record_id: 'task-1' }],
+      getRecordStatusPendingWrites: vi.fn().mockResolvedValue([]),
+    });
+
+    await fn({ familyId: 'task', recordId: 'task-1', label: 'Task One' });
+
+    expect(store.recordStatusTowerVersionCount).toBe(2);
+    expect(store.recordStatusTowerLatestVersion).toBe(2);
+    expect(store.recordStatusNotice).toContain('2 versions');
+  });
+
   it('reports when a record is missing on Tower', async () => {
     fetchRecordHistory.mockResolvedValueOnce({ versions: [] });
     const { fn, store } = bindMethod('openRecordStatusModal', {

@@ -289,6 +289,7 @@ describe('sync worker pending write batching', () => {
         envelope: {
           record_id: 'task-archived',
           record_family_hash: taskFamilyHash,
+          checkout: { checkout_id: 'checkout-archive-stale', consume_on_success: true },
         },
       },
       {
@@ -299,6 +300,7 @@ describe('sync worker pending write batching', () => {
         envelope: {
           record_id: 'task-done',
           record_family_hash: taskFamilyHash,
+          checkout: { checkout_id: 'checkout-done-stale', consume_on_success: true },
         },
       },
     ];
@@ -315,6 +317,8 @@ describe('sync worker pending write batching', () => {
 
     expect(state.syncCalls).toEqual([['task-archived', 'task-done']]);
     expect(state.syncArgs[0].checkout_policy_config).toBeNull();
+    expect(state.syncArgs[0].records[0].checkout).toBeUndefined();
+    expect(state.syncArgs[0].records[1].checkout).toBeUndefined();
     expect(state.removed).toEqual([1, 2]);
   });
 

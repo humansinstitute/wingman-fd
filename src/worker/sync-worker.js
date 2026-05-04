@@ -109,7 +109,12 @@ function isCreateEnvelope(envelope = {}) {
 
 function stripPendingWriteCheckoutPolicyConfig(pendingWrite) {
   const { checkout_policy_config: _checkoutPolicyConfig, ...optimisticPendingWrite } = pendingWrite;
-  return optimisticPendingWrite;
+  if (!optimisticPendingWrite?.envelope?.checkout) return optimisticPendingWrite;
+  const { checkout: _checkout, ...optimisticEnvelope } = optimisticPendingWrite.envelope;
+  return {
+    ...optimisticPendingWrite,
+    envelope: optimisticEnvelope,
+  };
 }
 
 function normalizeEnvelopeForTowerBootstrap(envelope = {}) {
@@ -205,7 +210,6 @@ async function normalizePendingWritesForFlush(pendingWrites = []) {
     if (
       familyHash === TASK_FAMILY
       && pendingWrite?.checkout_policy_config
-      && !pendingWrite?.envelope?.checkout?.checkout_id
     ) {
       const task = await getTaskById(String(pendingWrite?.record_id || pendingWrite?.envelope?.record_id || '').trim());
       if (task?.state === 'archive' || task?.state === 'done') {
