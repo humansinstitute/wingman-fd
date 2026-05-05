@@ -75,7 +75,7 @@ function createStore(overrides = {}) {
     openNewChannelModal: vi.fn(),
     createBotDm: vi.fn(async () => {}),
     createDocument: vi.fn(async () => {}),
-    addTask: vi.fn(async () => {}),
+    addTask: vi.fn(async () => ({ record_id: 'task-new' })),
     $nextTick: (fn) => fn(),
     ...overrides,
   });
@@ -308,6 +308,29 @@ describe('command palette actions', () => {
     expect(store.selectedBoardId).toBe('scope-a');
     expect(store.newTaskTitle).toBe('Draft launch checklist');
     expect(store.addTask).toHaveBeenCalledTimes(1);
+    expect(store.navigateTo).toHaveBeenCalledWith('tasks', { syncRoute: false });
+    expect(store.openTaskDetail).toHaveBeenCalledWith('task-new');
+    expect(store.syncRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the configured default New Work board while keeping the modal board selectable', async () => {
+    const store = createStore({
+      selectedBoardScope: { record_id: 'scope-a', title: 'Apollo' },
+      commandPaletteNewWorkDefaultScopeId: 'scope-b',
+      scopesMap: new Map([
+        ['scope-a', { record_id: 'scope-a', title: 'Apollo' }],
+        ['scope-b', { record_id: 'scope-b', title: 'Pete Scratch' }],
+      ]),
+    });
+
+    await store.runCommandPaletteAction({ action: 'new-work' });
+    expect(store.commandPaletteNewWorkScopeId).toBe('scope-b');
+
+    store.commandPaletteNewWorkScopeId = 'scope-a';
+    store.commandPaletteNewWorkTitle = 'Override board';
+    await store.createCommandPaletteNewWork();
+
+    expect(store.selectedBoardId).toBe('scope-a');
   });
 
   it('routes all-scope task board shortcuts through the all board', async () => {

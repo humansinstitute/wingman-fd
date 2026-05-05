@@ -3156,10 +3156,10 @@ export function initApp() {
 
     async addTask() {
       const title = String(this.newTaskTitle || '').trim();
-      if (!title || !this.session?.npub) return;
+      if (!title || !this.session?.npub) return null;
       if (!this.selectedBoardId) {
         this.error = 'Select a scope board first.';
-        return;
+        return null;
       }
       const now = new Date().toISOString();
       const recordId = crypto.randomUUID();
@@ -3167,7 +3167,7 @@ export function initApp() {
       const assignment = this.buildTaskBoardAssignment(this.selectedBoardId);
       if (!assignment.scope_id) {
         this.error = 'Select a valid scope board first.';
-        return;
+        return null;
       }
 
       const flowLinkage = resolveFlowLinkage({
@@ -3227,6 +3227,7 @@ export function initApp() {
       });
       await this.flushAndBackgroundSync();
       await this.refreshTasks();
+      return localRow;
     },
 
     getTaskDetailCheckoutPolicyConfig() {

@@ -465,7 +465,7 @@
           </div>
           <div class="command-palette-form-body">
             <label>
-              <span>Scope</span>
+              <span>Board</span>
               <select x-model="$store.chat.commandPaletteNewWorkScopeId">
                 <option value="">Current board</option>
                 <template x-for="scope in $store.chat.scopes.filter((item) => item.record_state !== 'deleted')" :key="`new-work-scope-${scope.record_id}`">
@@ -5000,6 +5000,17 @@
                 </li>
               </template>
             </ul>
+            <label class="settings-field-label" for="new-work-board-input">New Work board</label>
+            <select
+              id="new-work-board-input"
+              x-model="$store.chat.commandPaletteNewWorkDefaultScopeId"
+              @change="$store.chat.persistCommandPaletteNewWorkDefaultScopeId($event.target.value)"
+            >
+              <option value="">Current board</option>
+              <template x-for="scope in $store.chat.scopes.filter((item) => item.record_state !== 'deleted')" :key="`new-work-default-scope-${scope.record_id}`">
+                <option :value="scope.record_id" x-text="$store.chat.getScopeBreadcrumb(scope.record_id) || scope.title || scope.record_id"></option>
+              </template>
+            </select>
             <label class="settings-field-label" for="quick-doc-scope-input">Quick Doc scope</label>
             <select
               id="quick-doc-scope-input"

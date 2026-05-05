@@ -39,10 +39,11 @@ const COMMAND_GROUP_ORDER = Object.freeze([
 
 const MAX_GROUP_RESULTS = 8;
 const QUICK_DOC_SCOPE_STORAGE_KEY = 'flightdeck:quick-doc-default-scope-id';
+const NEW_WORK_SCOPE_STORAGE_KEY = 'flightdeck:new-work-default-scope-id';
 
-function readStoredQuickDocScopeId() {
+function readStoredScopeId(key) {
   if (typeof window === 'undefined' || !window.localStorage) return '';
-  return String(window.localStorage.getItem(QUICK_DOC_SCOPE_STORAGE_KEY) || '').trim();
+  return String(window.localStorage.getItem(key) || '').trim();
 }
 
 export function createCommandPaletteState() {
@@ -54,7 +55,8 @@ export function createCommandPaletteState() {
     commandPaletteLoading: false,
     commandPaletteNotice: '',
     commandPaletteShortcutHandler: null,
-    commandPaletteQuickDocScopeId: readStoredQuickDocScopeId(),
+    commandPaletteQuickDocScopeId: readStoredScopeId(QUICK_DOC_SCOPE_STORAGE_KEY),
+    commandPaletteNewWorkDefaultScopeId: readStoredScopeId(NEW_WORK_SCOPE_STORAGE_KEY),
     showCommandPaletteNewWorkModal: false,
     commandPaletteNewWorkTitle: '',
     commandPaletteNewWorkScopeId: '',
@@ -607,7 +609,7 @@ export const commandPaletteMixin = {
   },
 
   resolveCommandPaletteQuickDocScopeId() {
-    const configured = String(this.commandPaletteQuickDocScopeId || readStoredQuickDocScopeId()).trim();
+    const configured = String(this.commandPaletteQuickDocScopeId || readStoredScopeId(QUICK_DOC_SCOPE_STORAGE_KEY)).trim();
     if (configured && this.scopesMap?.has(configured)) return configured;
     if (this.selectedBoardScope?.record_id) return this.selectedBoardScope.record_id;
     if (this.selectedBoardId && this.scopesMap?.has(this.selectedBoardId)) return this.selectedBoardId;
@@ -623,15 +625,39 @@ export const commandPaletteMixin = {
     else window.localStorage.removeItem(QUICK_DOC_SCOPE_STORAGE_KEY);
   },
 
+  resolveCommandPaletteNewWorkScopeId() {
+    const configured = String(this.commandPaletteNewWorkDefaultScopeId || readStoredScopeId(NEW_WORK_SCOPE_STORAGE_KEY)).trim();
+    if (configured && this.scopesMap?.has(configured)) return configured;
+    if (this.selectedBoardScope?.record_id) return this.selectedBoardScope.record_id;
+    if (this.selectedBoardId && this.scopesMap?.has(this.selectedBoardId)) return this.selectedBoardId;
+    const firstScope = (this.scopes || []).find((scope) => scope?.record_id && scope.record_state !== 'deleted');
+    return firstScope?.record_id || '';
+  },
+
+  persistCommandPaletteNewWorkDefaultScopeId(scopeId = '') {
+    const nextScopeId = String(scopeId || '').trim();
+    this.commandPaletteNewWorkDefaultScopeId = nextScopeId;
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    if (nextScopeId) window.localStorage.setItem(NEW_WORK_SCOPE_STORAGE_KEY, nextScopeId);
+    else window.localStorage.removeItem(NEW_WORK_SCOPE_STORAGE_KEY);
+  },
+
+  focusCommandPaletteNewWorkInput() {
+    const focus = () => {
+      if (typeof document === 'undefined') return;
+      const input = document.querySelector('[data-command-palette-new-work-input]');
+      input?.focus();
+      input?.select?.();
+    };
+    this.$nextTick?.(focus);
+    if (typeof window !== 'undefined') window.setTimeout(focus, 0);
+  },
+
   openCommandPaletteNewWorkModal() {
     this.commandPaletteNewWorkTitle = '';
-    this.commandPaletteNewWorkScopeId = this.selectedBoardScope?.record_id
-      || (this.scopesMap?.has(this.selectedBoardId) ? this.selectedBoardId : '');
+    this.commandPaletteNewWorkScopeId = this.resolveCommandPaletteNewWorkScopeId();
     this.showCommandPaletteNewWorkModal = true;
-    this.$nextTick?.(() => {
-      if (typeof document === 'undefined') return;
-      document.querySelector('[data-command-palette-new-work-input]')?.focus();
-    });
+    this.focusCommandPaletteNewWorkInput();
   },
 
   closeCommandPaletteNewWorkModal() {
@@ -645,8 +671,12 @@ export const commandPaletteMixin = {
     if (!title) return;
     if (this.commandPaletteNewWorkScopeId) this.applyCommandPaletteScope(this.commandPaletteNewWorkScopeId);
     this.newTaskTitle = title;
-    await this.addTask?.();
+    const createdTask = await this.addTask?.();
+    if (!createdTask?.record_id) return;
     this.closeCommandPaletteNewWorkModal();
+    this.navigateTo?.('tasks', { syncRoute: false });
+    this.openTaskDetail?.(createdTask.record_id);
+    this.syncRoute?.();
   },
 
   findPrimaryAgentChannel(agentNpub) {
