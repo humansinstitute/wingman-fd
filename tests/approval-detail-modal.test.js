@@ -4,6 +4,8 @@ import path from 'path';
 
 const indexPath = path.resolve(__dirname, '../index.html');
 const indexContent = fs.readFileSync(indexPath, 'utf-8');
+const appPath = path.resolve(__dirname, '../src/app.js');
+const appContent = fs.readFileSync(appPath, 'utf-8');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -84,15 +86,15 @@ describe('approval detail modal is globally accessible', () => {
 // ---------------------------------------------------------------------------
 
 describe('approval card click handlers wire to modal state', () => {
-  it('status page approval cards set activeApprovalId and showApprovalDetail', () => {
-    // The status section approval card should have the click wiring
+  it('status page attention cards can open approval details', () => {
     const statusRanges = findSectionBoundaries('status');
     expect(statusRanges.length).toBeGreaterThan(0);
     const statusHtml = statusRanges.map((r) => indexContent.slice(r.start, r.end)).join('');
 
-    expect(statusHtml).toContain('flightdeck-approval-card');
-    expect(statusHtml).toContain('activeApprovalId');
-    expect(statusHtml).toContain('showApprovalDetail');
+    expect(statusHtml).toContain('@click="$store.chat.openAttentionItem(item)"');
+    expect(appContent).toContain("if (item.section === 'approvals')");
+    expect(appContent).toContain('activeApprovalId = item.recordId');
+    expect(appContent).toContain('showApprovalDetail = true');
   });
 
   it('flows settings tab approval cards set activeApprovalId and showApprovalDetail', () => {

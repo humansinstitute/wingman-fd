@@ -2803,6 +2803,168 @@ button:disabled {
   color: #475569;
 }
 
+.timing-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.timing-panel-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.timing-panel-header h3 {
+  margin-bottom: 0.2rem;
+}
+
+.timing-panel-header p {
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.timing-panel-count {
+  min-width: 1.65rem;
+  height: 1.65rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #075985;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.timing-empty {
+  padding: 0.85rem;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #64748b !important;
+  font-size: 0.84rem !important;
+}
+
+.timing-group {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.timing-group h4 {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.25;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.timing-card-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.timing-card {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
+  background: #ffffff;
+  color: #0f172a;
+  display: grid;
+  grid-template-columns: 2.1rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.62rem;
+  padding: 0.65rem;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.045);
+}
+
+.timing-card:hover {
+  border-color: rgba(14, 165, 233, 0.38);
+  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.07);
+  transform: translateY(-1px);
+}
+
+.timing-card-icon {
+  width: 2.1rem;
+  height: 2.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: #ecfeff;
+  color: #0e7490;
+}
+
+.timing-card-past .timing-card-icon {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.timing-card-icon svg {
+  width: 1.12rem;
+  height: 1.12rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.timing-card-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.timing-card-time {
+  color: #0e7490;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.timing-card-past .timing-card-time {
+  color: #64748b;
+}
+
+.timing-card-title {
+  color: #0f172a;
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timing-card-subtitle {
+  color: #64748b;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timing-card-badge {
+  padding: 0.28rem 0.44rem;
+  border-radius: 999px;
+  background: #f0f9ff;
+  color: #0369a1;
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.timing-card-past .timing-card-badge {
+  background: #f1f5f9;
+  color: #475569;
+}
+
 @media (max-width: 960px) {
   .flightdeck-reports-grid {
     grid-template-columns: repeat(6, minmax(0, 1fr));

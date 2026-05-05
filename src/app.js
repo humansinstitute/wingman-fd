@@ -59,7 +59,7 @@ import { applySelectedDocumentUpdate } from './document-selection.js';
 import { createChatThreadFlowDispatchState } from './chat-thread-flow-dispatch.js';
 import { createChatGetItDoneState } from './chat-get-it-done.js';
 import { commandPaletteMixin, createCommandPaletteState } from './command-palette.js';
-import { buildAttentionFeed, summarizeAttentionFeed } from './attention-feed.js';
+import { buildAttentionFeed, buildTimingFeed, summarizeAttentionFeed } from './attention-feed.js';
 import {
   toRaw,
   normalizeBackendUrl,
@@ -876,6 +876,18 @@ export function initApp() {
 
     get attentionFeedItemCount() {
       return this.attentionFeedGroups.reduce((sum, group) => sum + group.items.length, 0);
+    },
+
+    get statusTimingFeed() {
+      return buildTimingFeed({
+        schedules: this.schedules,
+        tasks: this.boardScopedTasks,
+      });
+    },
+
+    get statusTimingItemCount() {
+      const feed = this.statusTimingFeed;
+      return feed.upcoming.length + feed.justGone.length;
     },
 
     get selectedReport() {
@@ -2665,6 +2677,7 @@ export function initApp() {
         doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"></path><path d="M14 2v5a2 2 0 0 0 2 2h4"></path><path d="M8 13h8"></path><path d="M8 17h5"></path></svg>',
         report: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"></path><path d="M7 16l4-5 4 3 5-8"></path></svg>',
         flow: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="18" r="3"></circle><path d="M9 6h3a6 6 0 0 1 6 6v3"></path></svg>',
+        calendar: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path></svg>',
         activity: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 8-6-16-3 8H2"></path></svg>',
       };
       return icons[icon] || icons.activity;
@@ -2677,6 +2690,10 @@ export function initApp() {
         this.showApprovalDetail = true;
         return;
       }
+      await this.openStatusChange(item);
+    },
+
+    async openTimingItem(item) {
       await this.openStatusChange(item);
     },
 
@@ -3220,7 +3237,7 @@ export function initApp() {
       const recordId = crypto.randomUUID();
       const ownerNpub = this.workspaceOwnerNpub;
       const assignment = this.buildTaskBoardAssignment(targetScopeId);
-      if (!assignment.scope_id) {
+      if (targetScopeId !== UNSCOPED_TASK_BOARD_ID && !assignment.scope_id) {
         this.error = 'Select a valid scope board first.';
         return null;
       }

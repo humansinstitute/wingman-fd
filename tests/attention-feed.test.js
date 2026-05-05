@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAttentionFeed, summarizeAttentionFeed } from '../src/attention-feed.js';
+import { buildAttentionFeed, buildTimingFeed, summarizeAttentionFeed } from '../src/attention-feed.js';
 
 const VIEWER = 'npub_viewer';
 const AGENT = 'npub_agent';
@@ -106,5 +106,69 @@ describe('buildAttentionFeed', () => {
     expect(groupById(groups, 'agent_updates').items.map((item) => item.title)).toContain('Draft onboarding doc');
     expect(groupById(groups, 'changed_work').items.map((item) => item.title)).toEqual(['Operating model']);
     expect(groupById(groups, 'due_next').items.map((item) => item.title)).toEqual(['Draft onboarding doc']);
+  });
+});
+
+describe('buildTimingFeed', () => {
+  it('builds coming-up and just-gone items from schedules and scheduled tasks', () => {
+    const feed = buildTimingFeed({
+      now: new Date(2026, 4, 5, 10, 30, 0),
+      schedules: [
+        {
+          record_id: 'schedule-1',
+          title: 'Morning briefing',
+          description: 'Daily check-in',
+          days: ['tue'],
+          time_start: '09:00',
+          time_end: '09:30',
+          active: true,
+          record_state: 'active',
+        },
+        {
+          record_id: 'schedule-2',
+          title: 'Evening wrap',
+          days: ['tue'],
+          time_start: '17:00',
+          time_end: '17:30',
+          active: true,
+          record_state: 'active',
+        },
+      ],
+      tasks: [
+        {
+          record_id: 'task-due',
+          title: 'Publish release note',
+          state: 'ready',
+          scheduled_for: '2026-05-06',
+          record_state: 'active',
+        },
+        {
+          record_id: 'task-past',
+          title: 'Send invoice',
+          state: 'ready',
+          scheduled_for: '2026-05-04',
+          record_state: 'active',
+        },
+      ],
+    });
+
+    expect(feed.upcoming.map((item) => item.title)).toEqual([
+      'Evening wrap',
+      'Publish release note',
+    ]);
+    expect(feed.justGone.map((item) => item.title)).toEqual([
+      'Morning briefing',
+      'Send invoice',
+    ]);
+    expect(feed.upcoming[0]).toMatchObject({
+      section: 'schedules',
+      actionLabel: 'Open schedule',
+      badge: 'Coming up',
+    });
+    expect(feed.justGone[1]).toMatchObject({
+      section: 'tasks',
+      actionLabel: 'Open task',
+      badge: 'Overdue',
+    });
   });
 });

@@ -23,6 +23,9 @@ export const ATTENTION_LANE_ORDER = Object.freeze([
 
 const TERMINAL_TASK_STATES = new Set(['done', 'complete', 'completed', 'archived', 'cancelled']);
 const ACTIVE_TASK_STATES = new Set(['ready', 'in_progress', 'review', 'blocked']);
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const UPCOMING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+const JUST_GONE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 function compactText(parts = []) {
   return parts
@@ -60,6 +63,82 @@ function isoOf(record = {}) {
 
 function isLive(record = {}) {
   return record && record.record_state !== 'deleted';
+}
+
+function nowDate(value) {
+  if (value instanceof Date) return new Date(value.getTime());
+  if (typeof value === 'number') return new Date(value);
+  const parsed = Date.parse(value || '');
+  return Number.isFinite(parsed) ? new Date(parsed) : new Date();
+}
+
+function parseTimeMinutes(value) {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return 9 * 60;
+  const hours = Math.max(0, Math.min(23, Number(match[1]) || 0));
+  const minutes = Math.max(0, Math.min(59, Number(match[2]) || 0));
+  return (hours * 60) + minutes;
+}
+
+function dateAtMinutes(baseDate, minutes) {
+  const result = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0, 0, 0, 0);
+  result.setMinutes(minutes);
+  return result;
+}
+
+function parseDateOnly(value) {
+  const match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0);
+}
+
+function startOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatClock(date) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatTimingLabel(date, now) {
+  const dayDelta = Math.round((startOfLocalDay(date) - startOfLocalDay(now)) / (24 * 60 * 60 * 1000));
+  const dayLabel = dayDelta === 0
+    ? 'Today'
+    : dayDelta === 1
+      ? 'Tomorrow'
+      : dayDelta === -1
+        ? 'Yesterday'
+        : date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dayLabel} ${formatClock(date)}`;
+}
+
+function formatDueDateLabel(date, now) {
+  const dayDelta = Math.round((startOfLocalDay(date) - startOfLocalDay(now)) / (24 * 60 * 60 * 1000));
+  if (dayDelta === 0) return 'Due today';
+  if (dayDelta === 1) return 'Due tomorrow';
+  if (dayDelta === -1) return 'Due yesterday';
+  if (dayDelta < 0) return `Due ${Math.abs(dayDelta)} days ago`;
+  return `Due in ${dayDelta} days`;
+}
+
+function normalizeScheduleDays(days) {
+  const normalized = Array.isArray(days)
+    ? days.map((day) => String(day || '').slice(0, 3).toLowerCase()).filter(Boolean)
+    : String(days || '').split(',').map((day) => day.trim().slice(0, 3).toLowerCase()).filter(Boolean);
+  return normalized.length ? new Set(normalized) : new Set(DAY_KEYS);
+}
+
+function getScheduleOccurrences(schedule, now) {
+  const minutes = parseTimeMinutes(schedule.time_start);
+  const days = normalizeScheduleDays(schedule.days);
+  const occurrences = [];
+  for (let offset = -7; offset <= 14; offset += 1) {
+    const base = startOfLocalDay(now);
+    base.setDate(base.getDate() + offset);
+    if (!days.has(DAY_KEYS[base.getDay()])) continue;
+    occurrences.push(dateAtMinutes(base, minutes));
+  }
+  return occurrences.sort((left, right) => left - right);
 }
 
 function taskScopeId(task = {}) {
@@ -298,4 +377,112 @@ export function summarizeAttentionFeed(groups = []) {
   return compactText(groups
     .filter((group) => group.items?.length)
     .map((group) => `${group.items.length} ${group.label.toLowerCase()}`));
+}
+
+function buildScheduleTimingItems(schedule, now) {
+  if (!isLive(schedule) || schedule.active === false) return [];
+  const occurrences = getScheduleOccurrences(schedule, now);
+  const previous = [...occurrences].reverse().find((date) => date < now);
+  const next = occurrences.find((date) => date >= now);
+  const items = [];
+  if (next && next - now <= UPCOMING_WINDOW_MS) {
+    items.push({
+      id: `schedule:upcoming:${schedule.record_id}:${next.toISOString()}`,
+      section: 'schedules',
+      recordId: schedule.record_id,
+      kind: 'schedule',
+      icon: 'calendar',
+      title: truncateText(schedule.title || 'Untitled schedule', 88),
+      subtitle: truncateText(schedule.description || `${schedule.time_start || '??:??'}-${schedule.time_end || '??:??'}`, 120),
+      timingLabel: formatTimingLabel(next, now),
+      badge: 'Coming up',
+      date: next.toISOString(),
+      sortTs: next.getTime(),
+      actionLabel: 'Open schedule',
+    });
+  }
+  if (previous && now - previous <= JUST_GONE_WINDOW_MS) {
+    items.push({
+      id: `schedule:past:${schedule.record_id}:${previous.toISOString()}`,
+      section: 'schedules',
+      recordId: schedule.record_id,
+      kind: 'schedule',
+      icon: 'calendar',
+      title: truncateText(schedule.title || 'Untitled schedule', 88),
+      subtitle: truncateText(schedule.description || `${schedule.time_start || '??:??'}-${schedule.time_end || '??:??'}`, 120),
+      timingLabel: formatTimingLabel(previous, now),
+      badge: 'Just gone',
+      date: previous.toISOString(),
+      sortTs: previous.getTime(),
+      actionLabel: 'Open schedule',
+    });
+  }
+  return items;
+}
+
+function buildTaskTimingItem(task, now) {
+  if (!isLive(task) || TERMINAL_TASK_STATES.has(String(task.state || '').trim())) return null;
+  const dueDate = parseDateOnly(task.scheduled_for);
+  if (!dueDate) return null;
+  const delta = dueDate - now;
+  if (delta >= 0 && delta <= UPCOMING_WINDOW_MS) {
+    return {
+      id: `task:upcoming:${task.record_id}`,
+      section: 'tasks',
+      recordId: task.record_id,
+      boardScopeId: taskScopeId(task),
+      kind: 'task',
+      icon: 'task',
+      title: truncateText(task.title || 'Untitled task', 88),
+      subtitle: truncateText(task.description || taskLabel(task), 120),
+      timingLabel: formatDueDateLabel(dueDate, now),
+      badge: taskLabel(task),
+      date: dueDate.toISOString(),
+      sortTs: dueDate.getTime(),
+      actionLabel: 'Open task',
+    };
+  }
+  if (delta < 0 && Math.abs(delta) <= JUST_GONE_WINDOW_MS) {
+    return {
+      id: `task:past:${task.record_id}`,
+      section: 'tasks',
+      recordId: task.record_id,
+      boardScopeId: taskScopeId(task),
+      kind: 'task',
+      icon: 'task',
+      title: truncateText(task.title || 'Untitled task', 88),
+      subtitle: truncateText(task.description || taskLabel(task), 120),
+      timingLabel: formatDueDateLabel(dueDate, now),
+      badge: 'Overdue',
+      date: dueDate.toISOString(),
+      sortTs: dueDate.getTime(),
+      actionLabel: 'Open task',
+    };
+  }
+  return null;
+}
+
+export function buildTimingFeed(input = {}) {
+  const now = nowDate(input.now);
+  const upcoming = [];
+  const justGone = [];
+
+  for (const schedule of input.schedules || []) {
+    for (const item of buildScheduleTimingItems(schedule, now)) {
+      if (item.badge === 'Coming up') upcoming.push(item);
+      else justGone.push(item);
+    }
+  }
+
+  for (const task of input.tasks || input.boardScopedTasks || []) {
+    const item = buildTaskTimingItem(task, now);
+    if (!item) continue;
+    if (String(item.id).includes(':upcoming:')) upcoming.push(item);
+    else justGone.push(item);
+  }
+
+  return {
+    upcoming: upcoming.sort((left, right) => left.sortTs - right.sortTs).slice(0, input.maxUpcoming || 5),
+    justGone: justGone.sort((left, right) => right.sortTs - left.sortTs).slice(0, input.maxJustGone || 4),
+  };
 }

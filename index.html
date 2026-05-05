@@ -904,41 +904,52 @@
             </section>
 
             <aside class="flightdeck-side-column">
-              <section class="flightdeck-side-panel flightdeck-approvals-panel">
-                <h3>Approvals <span class="flightdeck-approvals-count" x-show="$store.chat.pendingApprovalsByScope.length > 0" x-text="$store.chat.pendingApprovalsByScope.length"></span></h3>
-                <button type="button" class="btn-link-subtle" x-show="$store.chat.pendingApprovalsByScope.length > 0" @click="if(confirm('Delete all visible pending approvals?')) $store.chat.deletePendingApprovalsByScope()">Delete pending</button>
-                <div x-show="$store.chat.pendingApprovalsByScope.length === 0">
-                  <p class="flightdeck-approvals-empty">No pending approvals.</p>
+              <section class="flightdeck-side-panel timing-panel">
+                <div class="timing-panel-header">
+                  <div>
+                    <h3>Timing</h3>
+                    <p>Scheduled work around the current board.</p>
+                  </div>
+                  <span class="timing-panel-count" x-show="$store.chat.statusTimingItemCount > 0" x-text="$store.chat.statusTimingItemCount"></span>
                 </div>
-                <div class="flightdeck-approvals-list" x-show="$store.chat.pendingApprovalsByScope.length > 0">
-                  <template x-for="approval in $store.chat.pendingApprovalsByScope" :key="approval.record_id">
-                    <article class="flightdeck-approval-card" @click="$store.chat.activeApprovalId = approval.record_id; $store.chat.showApprovalDetail = true">
-                      <div class="flightdeck-approval-card-header">
-                        <strong x-text="approval.title || 'Untitled approval'"></strong>
-                        <span class="flightdeck-approval-confidence" x-show="approval.confidence_score != null" x-text="Math.round((approval.confidence_score || 0) * 100) + '%'"></span>
-                      </div>
-                      <p class="flightdeck-approval-brief" x-text="(approval.brief || '').slice(0, 120) + ((approval.brief || '').length > 120 ? '...' : '')"></p>
-                      <div class="flightdeck-approval-card-meta">
-                        <span class="flightdeck-approval-mode-badge" x-text="approval.approval_mode === 'agent' ? 'Agent review' : 'Manual'"></span>
-                        <span x-show="approval.task_ids && approval.task_ids.length > 1" x-text="approval.task_ids.length + ' tasks'"></span>
-                      </div>
-                      <div class="flightdeck-approval-card-actions" @click.stop>
-                        <button type="button" class="btn-approve" @click="$store.chat.approveApproval(approval.record_id)">Approve</button>
-                        <button type="button" class="btn-reject" @click="$store.chat.rejectApproval(approval.record_id)">Reject</button>
-                        <button type="button" class="btn-improve" @click="$store.chat.improveApproval(approval.record_id, prompt('Improvement notes:') || '')">Improve</button>
-                        <button type="button" class="btn-archive" @click="$store.chat.archiveApproval(approval.record_id)">Archive</button>
-                        <button type="button" class="btn-delete" @click="if(confirm('Delete this approval?')) $store.chat.deleteApproval(approval.record_id)">Delete</button>
-                      </div>
-                    </article>
-                  </template>
+
+                <p class="timing-empty" x-show="$store.chat.statusTimingItemCount === 0">
+                  No scheduled tasks or schedule runs near this board.
+                </p>
+
+                <div class="timing-group" x-show="$store.chat.statusTimingFeed.upcoming.length > 0">
+                  <h4>Coming Up</h4>
+                  <div class="timing-card-list">
+                    <template x-for="item in $store.chat.statusTimingFeed.upcoming" :key="item.id">
+                      <button type="button" class="timing-card" @click="$store.chat.openTimingItem(item)">
+                        <span class="timing-card-icon" x-html="$store.chat.getAttentionIconSvg(item.icon)" aria-hidden="true"></span>
+                        <span class="timing-card-body">
+                          <span class="timing-card-time" x-text="item.timingLabel"></span>
+                          <span class="timing-card-title" x-text="item.title"></span>
+                          <span class="timing-card-subtitle" x-show="item.subtitle" x-text="item.subtitle"></span>
+                        </span>
+                        <span class="timing-card-badge" x-text="item.badge"></span>
+                      </button>
+                    </template>
+                  </div>
                 </div>
-                <div class="flightdeck-approvals-history-link">
-                  <button type="button" class="btn-link-subtle" @click="$store.chat.showApprovalHistory = true; $store.chat.approvalHistoryFilter = ''">Approval History</button>
+
+                <div class="timing-group" x-show="$store.chat.statusTimingFeed.justGone.length > 0">
+                  <h4>Just Gone</h4>
+                  <div class="timing-card-list">
+                    <template x-for="item in $store.chat.statusTimingFeed.justGone" :key="item.id">
+                      <button type="button" class="timing-card timing-card-past" @click="$store.chat.openTimingItem(item)">
+                        <span class="timing-card-icon" x-html="$store.chat.getAttentionIconSvg(item.icon)" aria-hidden="true"></span>
+                        <span class="timing-card-body">
+                          <span class="timing-card-time" x-text="item.timingLabel"></span>
+                          <span class="timing-card-title" x-text="item.title"></span>
+                          <span class="timing-card-subtitle" x-show="item.subtitle" x-text="item.subtitle"></span>
+                        </span>
+                        <span class="timing-card-badge" x-text="item.badge"></span>
+                      </button>
+                    </template>
+                  </div>
                 </div>
-              </section>
-              <section class="flightdeck-side-panel">
-                <h3>Coming Up</h3>
-                <p>Coming Up will hold the next deadlines, meetings, and handoffs tied to your current scope. Treat it as the short runway for what needs attention next.</p>
               </section>
             </aside>
           </div>

@@ -1216,6 +1216,44 @@ describe('chat get it done modal state', () => {
     expect(openTaskDetail).toHaveBeenCalledWith('task-new');
     expect(syncRoute).toHaveBeenCalled();
   });
+
+  it('creates an unscoped ready task when Get it done has no selected scope', async () => {
+    const addTask = vi.fn(async () => ({ record_id: 'task-unscoped' }));
+    const createDocument = vi.fn();
+    const store = createStore({
+      session: { npub: 'npub1me' },
+      selectedBoardId: null,
+      selectedChannelId: 'channel-1',
+      channels: [{ record_id: 'channel-1', title: 'General' }],
+      messages: [{
+        record_id: 'root-1',
+        channel_id: 'channel-1',
+        parent_message_id: null,
+        body: 'Please write this up.',
+        sender_npub: 'npub1me',
+        updated_at: '2026-05-05T10:00:00.000Z',
+        record_state: 'active',
+      }],
+      addTask,
+      createDocument,
+      navigateTo: vi.fn(),
+      openTaskDetail: vi.fn(),
+    });
+
+    await store.openChatGetItDone('root-1', 'main_feed');
+    store.chatGetItDoneTitle = 'Write this up';
+    store.chatGetItDoneOutputType = 'doc';
+
+    const result = await store.submitChatGetItDone();
+
+    expect(result).toEqual({ record_id: 'task-unscoped' });
+    expect(createDocument).not.toHaveBeenCalled();
+    expect(addTask).toHaveBeenCalledWith(expect.objectContaining({
+      state: 'ready',
+      scopeId: '__unscoped__',
+      deliverableLinks: [],
+    }));
+  });
 });
 
 describe('chat thread flow dispatch preview lifecycle', () => {

@@ -16,6 +16,16 @@ describe('flight deck attention feed template', () => {
     expect(html).toContain('@change="$store.chat.refreshStatusRecentChanges({ force: true })"');
   });
 
+  it('uses the side column for timing instead of duplicating approvals', () => {
+    const html = readFileSync(INDEX_PATH, 'utf8');
+
+    expect(html).toContain('<h3>Timing</h3>');
+    expect(html).toContain('x-show="$store.chat.statusTimingFeed.upcoming.length > 0"');
+    expect(html).toContain('x-show="$store.chat.statusTimingFeed.justGone.length > 0"');
+    expect(html).toContain('@click="$store.chat.openTimingItem(item)"');
+    expect(html).not.toContain('class="flightdeck-side-panel flightdeck-approvals-panel"');
+  });
+
   it('does not expose the removed calendar surface', () => {
     const html = readFileSync(INDEX_PATH, 'utf8');
 

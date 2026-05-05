@@ -1136,11 +1136,13 @@ export const chatMessageManagerMixin = {
     const sourceLink = { type: 'chat', id: `${source.channelId}#${source.threadRootMessageId}` };
     const sourceLinks = [sourceLink];
     const deliverableLinks = [];
-    const scopeId = this.chatGetItDoneScopeId || this.resolveChatGetItDoneDefaultScope();
+    const selectedScopeId = this.chatGetItDoneScopeId || this.resolveChatGetItDoneDefaultScope();
+    const taskScopeId = selectedScopeId || UNSCOPED_TASK_BOARD_ID;
+    const hasScopedDocTarget = Boolean(selectedScopeId && this.scopesMap?.has?.(selectedScopeId));
     this.chatGetItDoneSubmitting = true;
     try {
-      if (this.chatGetItDoneOutputType === 'doc' && typeof this.createDocument === 'function') {
-        const doc = await this.createDocument(this.chatGetItDoneTitle, { scopeId, sourceLinks });
+      if (this.chatGetItDoneOutputType === 'doc' && hasScopedDocTarget && typeof this.createDocument === 'function') {
+        const doc = await this.createDocument(this.chatGetItDoneTitle, { scopeId: selectedScopeId, sourceLinks });
         if (doc?.record_id) deliverableLinks.push({ type: 'doc', id: doc.record_id, order: 1 });
       }
 
@@ -1157,13 +1159,13 @@ export const chatMessageManagerMixin = {
       const createdTask = await this.addTask?.({
         description,
         state: 'ready',
-        scopeId,
+        scopeId: taskScopeId,
         assignedToNpub: this.chatGetItDoneAssigneeNpub || null,
         sourceLinks,
         deliverableLinks,
       });
       if (!createdTask?.record_id) {
-        throw new Error('Failed to create the ready task from this chat thread.');
+        throw new Error(this.error || 'Failed to create the ready task from this chat thread.');
       }
       this.closeChatGetItDone();
       this.navigateTo?.('tasks', { syncRoute: false });
