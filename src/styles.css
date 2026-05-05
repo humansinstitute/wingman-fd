@@ -2390,6 +2390,10 @@ button:disabled {
   padding: 0.55rem;
 }
 
+.command-palette-results-quick {
+  padding: 0.8rem;
+}
+
 .command-palette-group + .command-palette-group {
   margin-top: 0.55rem;
 }
@@ -2413,6 +2417,16 @@ button:disabled {
   gap: 0.18rem;
 }
 
+.command-palette-group-quick h3 {
+  display: none;
+}
+
+.command-palette-group-quick ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
 .command-palette-result {
   width: 100%;
   min-height: 3.1rem;
@@ -2420,12 +2434,25 @@ button:disabled {
   border-radius: 6px;
   background: transparent;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.6rem;
   align-items: center;
   padding: 0.58rem 0.65rem;
   text-align: left;
   cursor: pointer;
+}
+
+.command-palette-results-quick .command-palette-result {
+  min-height: 9.25rem;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  align-content: center;
+  gap: 0.55rem;
+  padding: 1rem;
+  border-color: rgba(148, 163, 184, 0.24);
+  background: #ffffff;
+  text-align: center;
 }
 
 .command-palette-result:hover,
@@ -2441,18 +2468,9 @@ button:disabled {
   gap: 0.13rem;
 }
 
-.command-palette-result-key {
-  width: 1.5rem;
-  height: 1.5rem;
-  display: inline-flex;
+.command-palette-results-quick .command-palette-result-main {
   align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(100, 116, 139, 0.32);
-  border-radius: 6px;
-  background: #ffffff;
-  color: #334155;
-  font-size: 0.78rem;
-  font-weight: 800;
+  gap: 0;
 }
 
 .command-palette-result-icon {
@@ -2465,6 +2483,16 @@ button:disabled {
   background: #eef2ff;
   color: #334155;
   font-size: 0.98rem;
+}
+
+.command-palette-results-quick .command-palette-result-icon {
+  width: 4.6rem;
+  height: 4.6rem;
+  align-self: end;
+  border-radius: 8px;
+  background: #eef6ff;
+  color: #0f172a;
+  font-size: 2.25rem;
 }
 
 .command-palette-result-icon::before {
@@ -2500,9 +2528,18 @@ button:disabled {
   font-weight: 700;
 }
 
+.command-palette-results-quick .command-palette-result-title {
+  font-size: 0.98rem;
+}
+
 .command-palette-result-subtitle {
   color: #64748b;
   font-size: 0.78rem;
+}
+
+.command-palette-results-quick .command-palette-result-subtitle,
+.command-palette-results-quick .command-palette-result-type {
+  display: none;
 }
 
 .command-palette-result-type {
@@ -2514,6 +2551,16 @@ button:disabled {
   font-weight: 800;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .command-palette-group-quick ul {
+    grid-template-columns: 1fr;
+  }
+
+  .command-palette-results-quick .command-palette-result {
+    min-height: 7.5rem;
+  }
 }
 
 .command-palette-empty {

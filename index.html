@@ -409,9 +409,13 @@
         <p class="command-palette-empty" x-show="$store.chat.commandPaletteLoading">
           Indexing local records...
         </p>
-        <div class="command-palette-results" x-show="$store.chat.commandPaletteFlatResults.length > 0">
+        <div
+          class="command-palette-results"
+          :class="{ 'command-palette-results-quick': !$store.chat.commandPaletteQuery }"
+          x-show="$store.chat.commandPaletteFlatResults.length > 0"
+        >
           <template x-for="group in $store.chat.commandPaletteGroups" :key="group.id">
-            <section class="command-palette-group">
+            <section class="command-palette-group" :class="{ 'command-palette-group-quick': !$store.chat.commandPaletteQuery && group.id === 'shortcut' }">
               <h3 x-text="group.label"></h3>
               <ul>
                 <template x-for="item in group.items" :key="item.id">
@@ -423,7 +427,6 @@
                       @mouseenter="$store.chat.commandPaletteActiveId = item.id"
                       @click="$store.chat.executeCommandPaletteItem(item)"
                     >
-                      <span class="command-palette-result-key" x-show="item.shortcutKey" x-text="item.shortcutKey"></span>
                       <span class="command-palette-result-icon" :data-icon="item.icon || item.group" aria-hidden="true"></span>
                       <span class="command-palette-result-main">
                         <span class="command-palette-result-title" x-text="item.title"></span>

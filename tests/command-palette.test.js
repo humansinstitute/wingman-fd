@@ -87,6 +87,12 @@ describe('command palette launchers', () => {
     expect(indexSource).not.toContain('mobile-radar');
   });
 
+  it('renders quick launch items as a quadrant grid without shortcut pills', () => {
+    expect(indexSource).toContain('command-palette-results-quick');
+    expect(indexSource).toContain('command-palette-group-quick');
+    expect(indexSource).not.toContain('command-palette-result-key');
+  });
+
   it('registers Command/Super+K to open the palette', () => {
     let handler = null;
     const windowMock = {
