@@ -93,7 +93,7 @@ describe('command palette launchers', () => {
     expect(indexSource).not.toContain('command-palette-result-key');
   });
 
-  it('registers Command/Super+K to open the palette', () => {
+  it('registers Command/Super+K to open the palette in capture phase', () => {
     let handler = null;
     const windowMock = {
       addEventListener: vi.fn((eventName, callback) => {
@@ -115,8 +115,60 @@ describe('command palette launchers', () => {
       preventDefault: vi.fn(),
     });
 
-    expect(windowMock.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
+    expect(windowMock.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function), true);
     expect(openCommandPalette).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports Alt+K as a browser-safe fallback shortcut', () => {
+    let handler = null;
+    const preventDefault = vi.fn();
+    stubWindow({
+      addEventListener: vi.fn((eventName, callback) => {
+        if (eventName === 'keydown') handler = callback;
+      }),
+    });
+    const store = createStore();
+    store.openCommandPalette = vi.fn();
+
+    store.initCommandPaletteShortcuts();
+    handler({
+      key: 'k',
+      metaKey: false,
+      ctrlKey: false,
+      altKey: true,
+      shiftKey: false,
+      defaultPrevented: false,
+      target: { closest: () => null },
+      preventDefault,
+    });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(store.openCommandPalette).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not steal fallback shortcuts from editable fields', () => {
+    let handler = null;
+    stubWindow({
+      addEventListener: vi.fn((eventName, callback) => {
+        if (eventName === 'keydown') handler = callback;
+      }),
+    });
+    const store = createStore();
+    store.openCommandPalette = vi.fn();
+
+    store.initCommandPaletteShortcuts();
+    handler({
+      key: 'k',
+      metaKey: false,
+      ctrlKey: false,
+      altKey: true,
+      shiftKey: false,
+      defaultPrevented: false,
+      target: { closest: () => ({ tagName: 'INPUT' }) },
+      preventDefault: vi.fn(),
+    });
+
+    expect(store.openCommandPalette).not.toHaveBeenCalled();
   });
 
   it('executes quick launch items with number keys while the palette is open', async () => {

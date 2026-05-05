@@ -126,6 +126,20 @@ function buildItem(input = {}) {
   };
 }
 
+function isEditableShortcutTarget(target) {
+  if (!target || typeof target.closest !== 'function') return false;
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
+}
+
+function isCommandPaletteOpenShortcut(event, key) {
+  if (key !== 'k' || event.shiftKey) return false;
+  const targetIsEditable = isEditableShortcutTarget(event.target);
+  if (event.metaKey && !event.ctrlKey && !event.altKey) return true;
+  if (!targetIsEditable && event.altKey && !event.metaKey && !event.ctrlKey) return true;
+  if (!targetIsEditable && event.ctrlKey && !event.metaKey && !event.altKey) return true;
+  return false;
+}
+
 export const commandPaletteMixin = {
   get commandPalettePrimaryAgentNpub() {
     return String(this.defaultAgentNpub || this.botNpub || '').trim();
@@ -240,11 +254,11 @@ export const commandPaletteMixin = {
         void this.executeCommandPaletteItem(item);
         return;
       }
-      if (key !== 'k' || !event.metaKey || event.altKey || event.shiftKey) return;
+      if (!isCommandPaletteOpenShortcut(event, key)) return;
       event.preventDefault();
       this.openCommandPalette();
     };
-    window.addEventListener('keydown', this.commandPaletteShortcutHandler);
+    window.addEventListener('keydown', this.commandPaletteShortcutHandler, true);
   },
 
   async openCommandPalette(options = {}) {
