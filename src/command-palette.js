@@ -134,12 +134,14 @@ function isEditableShortcutTarget(target) {
 }
 
 function isCommandPaletteOpenShortcut(event, key) {
-  const isPhysicalK = String(event.code || '') === 'KeyK';
-  if ((!isPhysicalK && key !== 'k') || event.shiftKey) return false;
-  const targetIsEditable = isEditableShortcutTarget(event.target);
-  if (event.metaKey && !event.ctrlKey && !event.altKey) return true;
-  if (!targetIsEditable && event.altKey && !event.metaKey && !event.ctrlKey) return true;
-  if (!targetIsEditable && event.ctrlKey && !event.metaKey && !event.altKey) return true;
+  const code = String(event.code || '');
+  const isK = key === 'k' || code === 'KeyK';
+  const isJ = key === 'j' || code === 'KeyJ';
+  if (event.altKey) return false;
+  if (!event.metaKey && !event.ctrlKey) return false;
+  if (event.metaKey && event.ctrlKey) return false;
+  if (isJ && !event.shiftKey) return true;
+  if (isK) return true;
   return false;
 }
 

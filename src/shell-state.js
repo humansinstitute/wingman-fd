@@ -355,6 +355,7 @@ export function createShellState(options = {}) {
 
     async init() {
       this.startExtensionSignerWatch();
+      this.initCommandPaletteShortcuts?.();
       this.initRouteSync();
       this.routeSyncPaused = true;
       this.initDocCommentConnector();
