@@ -19,13 +19,26 @@ describe('Chat channel rendering hooks', () => {
     expect(html).toMatch(/chat-post-focused[\s\S]*chat-post-unread/);
   });
 
-  it('adds dispatch-to-flow actions to every chat message surface', () => {
-    const matches = html.match(/Dispatch to flow/g) || [];
+  it('adds Get it done actions to every chat message surface', () => {
+    const matches = html.match(/Get it done/g) || [];
     expect(matches.length).toBeGreaterThanOrEqual(3);
-    expect(html).toContain('data-chat-thread-flow-dispatch="true"');
+    expect(html).toContain('data-chat-get-it-done="true"');
     expect(html).toContain('data-source-surface="main_feed"');
     expect(html).toContain('data-source-surface="thread_parent"');
     expect(html).toContain('data-source-surface="thread_reply"');
+  });
+
+  it('renders the chat Get it done modal hooks', () => {
+    expect(html).toContain('data-testid="chat-get-it-done-modal"');
+    expect(html).toContain('data-testid="chat-get-it-done-title"');
+    expect(html).toContain('data-testid="chat-get-it-done-assignee"');
+    expect(html).toContain('chatGetItDoneAssigneeSuggestions');
+    expect(html).toContain('selectChatGetItDoneAssignee');
+    expect(html).toContain('data-testid="chat-get-it-done-output-type"');
+    expect(html).toContain('data-testid="chat-get-it-done-scope"');
+    expect(html).toContain('chatGetItDoneScopeSuggestions');
+    expect(html).toContain('selectChatGetItDoneScope');
+    expect(html).toContain('data-testid="chat-get-it-done-submit"');
   });
 
   it('renders the dedicated chat-thread dispatch modal hooks', () => {

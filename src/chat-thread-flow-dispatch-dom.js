@@ -12,7 +12,7 @@ function getDispatchButtonTarget(event) {
     ? rawTarget.parentElement
     : rawTarget;
   if (!element || typeof element.closest !== 'function') return null;
-  return element.closest('[data-chat-thread-flow-dispatch]');
+  return element.closest('[data-chat-get-it-done], [data-chat-thread-flow-dispatch]');
 }
 
 function shouldSkipDuplicateInvocation(recordId, sourceSurface) {
@@ -30,7 +30,7 @@ function triggerDispatchFromEvent(event) {
   if (!button) return false;
 
   const store = Alpine.store('chat');
-  if (!store || typeof store.openChatThreadFlowDispatch !== 'function') return false;
+  if (!store) return false;
 
   const recordId = String(button.getAttribute('data-record-id') || '').trim();
   const sourceSurface = String(button.getAttribute('data-source-surface') || 'main_feed').trim() || 'main_feed';
@@ -42,7 +42,11 @@ function triggerDispatchFromEvent(event) {
     event.stopImmediatePropagation();
   }
 
-  void store.openChatThreadFlowDispatch(recordId, sourceSurface);
+  const isGetItDone = button.hasAttribute('data-chat-get-it-done');
+  const handler = isGetItDone ? store.openChatGetItDone : store.openChatThreadFlowDispatch;
+  if (typeof handler !== 'function') return false;
+
+  void handler.call(store, recordId, sourceSurface);
   return true;
 }
 

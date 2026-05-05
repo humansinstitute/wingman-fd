@@ -29,6 +29,11 @@ import {
   recordFamilyHash,
 } from './translators/chat.js';
 import {
+  moveChannelInOrder,
+  normalizeChannelOrder,
+  sortChannelsByOrder,
+} from './channel-order.js';
+import {
   bootstrapWrappedGroupKeys,
   buildWrappedMemberKeys,
   cacheGroupKey,
@@ -394,7 +399,14 @@ export const channelsManagerMixin = {
 
   async applyChannels(channels = [], options = {}) {
     const allChannels = Array.isArray(channels) ? channels : [];
-    const nextChannels = filterChannelsForViewer(allChannels, this.session?.npub, this.workspaceOwnerNpub);
+    const visibleChannels = filterChannelsForViewer(allChannels, this.session?.npub, this.workspaceOwnerNpub);
+    const savedChannelOrder = Array.isArray(this.channelOrder)
+      ? this.channelOrder.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    this.channelOrder = visibleChannels.length > 0
+      ? normalizeChannelOrder(savedChannelOrder, visibleChannels)
+      : savedChannelOrder;
+    const nextChannels = sortChannelsByOrder(visibleChannels, this.channelOrder);
     if (!sameListBySignature(this.channels, nextChannels, (channel) => [
       String(channel?.record_id || ''),
       String(channel?.updated_at || ''),
@@ -439,6 +451,49 @@ export const channelsManagerMixin = {
     }
 
     this.updatePageTitle();
+  },
+
+  startChannelTabDrag(recordId, event = null) {
+    const sourceId = String(recordId || '').trim();
+    if (!sourceId) return;
+    this.channelDragSourceId = sourceId;
+    if (event?.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', sourceId);
+    }
+  },
+
+  handleChannelTabDragOver(recordId, event = null) {
+    const targetId = String(recordId || '').trim();
+    if (!this.channelDragSourceId || !targetId || this.channelDragSourceId === targetId) return;
+    event?.preventDefault?.();
+    if (event?.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  },
+
+  async dropChannelTab(recordId, event = null) {
+    event?.preventDefault?.();
+    const sourceId = String(this.channelDragSourceId || event?.dataTransfer?.getData?.('text/plain') || '').trim();
+    const targetId = String(recordId || '').trim();
+    this.channelDragSourceId = '';
+    if (!sourceId || !targetId || sourceId === targetId) return;
+
+    const nextOrder = moveChannelInOrder(this.channelOrder, this.channels, sourceId, targetId);
+    this.channelOrder = nextOrder;
+    this.channels = sortChannelsByOrder(this.channels, nextOrder);
+    if (typeof this.saveWorkspaceChannelOrder === 'function') {
+      try {
+        await this.saveWorkspaceChannelOrder(nextOrder);
+      } catch (error) {
+        this.error = error?.message || 'Failed to sync channel order.';
+        flightDeckLog('warn', 'settings', 'channel order save failed', {
+          error: error?.message || String(error),
+        });
+      }
+    }
+  },
+
+  endChannelTabDrag() {
+    this.channelDragSourceId = '';
   },
 
   async selectChannel(recordId, options = {}) {

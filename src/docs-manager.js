@@ -2009,7 +2009,7 @@ export const docsManagerMixin = {
     const ownerNpub = this.workspaceOwnerNpub;
     if (!ownerNpub) {
       this.error = 'Sign in first';
-      return;
+      return null;
     }
 
     const parentDirectoryId = this.getDefaultParentDirectoryId();
@@ -2086,7 +2086,7 @@ export const docsManagerMixin = {
     const scopedAccess = this.buildDocAccessForScope(scopeId, this.getInheritedDirectoryShares(parentDirectoryId));
     if (!scopedAccess?.scope_id) {
       this.error = 'Select a scope before creating a document.';
-      return;
+      return null;
     }
     const recordId = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -2149,6 +2149,7 @@ export const docsManagerMixin = {
     await this.refreshDocuments();
     this.openDoc(recordId);
     await this.flushAndBackgroundSync();
+    return row;
   },
 
   async saveSelectedDirectoryItem() {

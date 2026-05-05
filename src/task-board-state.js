@@ -53,6 +53,23 @@ import {
 
 const MENTION_NAVIGABLE_RECORD_LINK_TYPES = new Set(['doc', 'task', 'scope', 'flow', 'opportunity']);
 
+function parseChatRecordLinkId(id, messages = []) {
+  const raw = String(id || '').trim();
+  if (!raw) return { channelId: null, threadId: null };
+  const hashIndex = raw.indexOf('#');
+  if (hashIndex > 0) {
+    return {
+      channelId: raw.slice(0, hashIndex) || null,
+      threadId: raw.slice(hashIndex + 1) || null,
+    };
+  }
+  const message = (messages || []).find((item) => item.record_id === raw);
+  return {
+    channelId: message?.channel_id || null,
+    threadId: raw,
+  };
+}
+
 /** Shallow-compare two arrays of primitives or share objects (avoids JSON.stringify). */
 function sameShallowArray(a, b) {
   if (a === b) return true;
@@ -715,6 +732,11 @@ export const taskBoardStateMixin = {
       const opportunity = (this.opportunities || []).find((item) => item.record_id === ref.id);
       return opportunity?.title || ref.id.slice(0, 8);
     }
+    if (ref.type === 'chat') {
+      const { channelId } = parseChatRecordLinkId(ref.id, this.messages || []);
+      const channel = (this.channels || []).find((item) => item.record_id === channelId);
+      return channel?.title || channel?.name || 'Chat thread';
+    }
     return ref.id.slice(0, 8);
   },
 
@@ -722,6 +744,7 @@ export const taskBoardStateMixin = {
     if (!ref?.type) return 'Record';
     if (ref.type === 'doc') return 'Doc';
     if (ref.type === 'directory') return 'Folder';
+    if (ref.type === 'chat') return 'Chat';
     return String(ref.type).charAt(0).toUpperCase() + String(ref.type).slice(1);
   },
 
@@ -749,6 +772,7 @@ export const taskBoardStateMixin = {
     const id = String(ref?.id || '').trim();
     if (!type || !id) return false;
     if (MENTION_NAVIGABLE_RECORD_LINK_TYPES.has(type)) return true;
+    if (type === 'chat') return typeof this.selectChannel === 'function' && typeof this.openThread === 'function';
     if (type === 'directory') return typeof this.navigateToFolder === 'function';
     if (type === 'report') return typeof this.openReportModalById === 'function';
     return false;
@@ -769,6 +793,22 @@ export const taskBoardStateMixin = {
       if (typeof this.navigateTo === 'function') this.navigateTo('status', { syncRoute: false });
       else this.navSection = 'status';
       this.openReportModalById?.(ref.id);
+      this.syncRoute?.();
+      return;
+    }
+    if (ref.type === 'chat') {
+      const { channelId, threadId } = parseChatRecordLinkId(ref.id, this.messages || []);
+      if (!channelId || !threadId) {
+        this.error = 'Open the source chat link in the task description to load this thread.';
+        return;
+      }
+      if (typeof this.navigateTo === 'function') this.navigateTo('chat', { syncRoute: false });
+      else this.navSection = 'chat';
+      this.mobileNavOpen = false;
+      this.startWorkspaceLiveQueries?.();
+      await this.selectChannel(channelId, { syncRoute: false });
+      this.openThread(threadId, { scrollToLatest: false, syncRoute: false });
+      this.focusMessageId = threadId;
       this.syncRoute?.();
       return;
     }

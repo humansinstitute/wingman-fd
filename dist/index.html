@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-B9DEZ0MM.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CsIPWuQ6.css">
+  <script type="module" crossorigin src="/assets/index-DBnpIHYf.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Cd47HHsG.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -848,17 +848,14 @@
           </section>
 
           <div class="flightdeck-grid">
-            <section class="status-changes-section">
-              <div class="status-changes-header">
-                <h3>Recent Changes</h3>
-                <div class="status-changes-controls">
-                  <select x-model="$store.chat.statusRecordTypeFilter" aria-label="Recent changes record type">
-                    <option value="all">All types</option>
-                    <template x-for="option in $store.chat.statusRecordTypeOptions" :key="option.value">
-                      <option :value="option.value" x-text="option.label"></option>
-                    </template>
-                  </select>
-                  <select x-model="$store.chat.statusTimeRange" @change="$store.chat.refreshStatusRecentChanges()" aria-label="Recent changes time range">
+            <section class="attention-feed-section">
+              <div class="attention-feed-header">
+                <div>
+                  <h3>Needs Attention</h3>
+                  <p x-text="$store.chat.attentionFeedSummary"></p>
+                </div>
+                <div class="attention-feed-controls">
+                  <select x-model="$store.chat.statusTimeRange" @change="$store.chat.refreshStatusRecentChanges({ force: true })" aria-label="Attention feed time range">
                     <option value="1h">Last hour</option>
                     <option value="2h">Last 2 hours</option>
                     <option value="4h">Last 4 hours</option>
@@ -866,23 +863,46 @@
                   </select>
                 </div>
               </div>
-              <p class="status-changes-empty" x-show="$store.chat.filteredStatusRecentChanges.length === 0" x-text="$store.chat.statusRecentChanges.length === 0 ? 'No recent changes in this window.' : 'No changes match this record type.'">
+
+              <p class="attention-feed-empty" x-show="$store.chat.attentionFeedItemCount === 0">
+                Nothing needs attention in this window.
               </p>
-              <ul class="status-changes-list" x-show="$store.chat.filteredStatusRecentChanges.length > 0">
-                <template x-for="item in $store.chat.filteredStatusRecentChanges" :key="item.id">
-                  <li>
-                    <button type="button" class="status-change-row" @click="$store.chat.openStatusChange(item)">
-                      <span class="status-change-type" x-text="item.recordType"></span>
-                      <span class="status-change-title" x-text="item.title"></span>
-                      <span class="status-change-subtitle" x-text="item.subtitle"></span>
-                      <span class="status-change-time">
-                        <span x-text="$store.chat.formatRelativeTime(item.updatedAt)"></span>
-                        <span x-text="new Date(item.updatedAt).toLocaleString()"></span>
-                      </span>
-                    </button>
-                  </li>
+              <div class="attention-lanes" x-show="$store.chat.attentionFeedItemCount > 0">
+                <template x-for="group in $store.chat.attentionFeedGroups" :key="group.id">
+                  <section class="attention-lane" x-show="group.items.length > 0">
+                    <div class="attention-lane-header">
+                      <div>
+                        <h4 x-text="group.label"></h4>
+                        <p x-text="group.description"></p>
+                      </div>
+                      <span class="attention-lane-count" x-text="group.items.length"></span>
+                    </div>
+                    <div class="attention-card-list">
+                      <template x-for="item in group.items" :key="item.id">
+                        <button type="button" class="attention-card" :class="'attention-card-' + item.severity + ' attention-card-kind-' + item.kind" @click="$store.chat.openAttentionItem(item)">
+                          <span class="attention-card-icon" aria-hidden="true" x-html="$store.chat.getAttentionIconSvg(item.icon)"></span>
+                          <span class="attention-card-content">
+                            <span class="attention-card-kicker" x-text="item.reason"></span>
+                            <span class="attention-card-title" x-text="item.title"></span>
+                            <span class="attention-card-subtitle" x-show="item.subtitle" x-text="item.subtitle"></span>
+                          </span>
+                          <span class="attention-card-meta">
+                            <span class="attention-card-actor" x-show="item.actorNpub">
+                              <img x-show="$store.chat.getSenderAvatar(item.actorNpub)" :src="$store.chat.getSenderAvatar(item.actorNpub)" alt="">
+                              <span x-show="!$store.chat.getSenderAvatar(item.actorNpub)" x-text="$store.chat.getInitials($store.chat.getSenderName(item.actorNpub))"></span>
+                            </span>
+                            <span class="attention-card-time">
+                              <span x-text="$store.chat.formatRelativeTime(item.updatedAt)"></span>
+                              <span x-show="item.updatedAt" x-text="new Date(item.updatedAt).toLocaleString()"></span>
+                            </span>
+                            <span class="attention-card-action" x-text="item.actionLabel"></span>
+                          </span>
+                        </button>
+                      </template>
+                    </div>
+                  </section>
                 </template>
-              </ul>
+              </div>
             </section>
 
             <aside class="flightdeck-side-column">
@@ -1980,10 +2000,16 @@
                 <template x-for="ch in $store.chat.channels" :key="ch.record_id">
                   <div
                     class="chat-channel-tab-item"
+                    draggable="true"
                     :class="{
                       active: $store.chat.selectedChannelId === ch.record_id,
-                      'chat-channel-tab-unread': $store.chat.isChannelUnread(ch.record_id)
+                      'chat-channel-tab-unread': $store.chat.isChannelUnread(ch.record_id),
+                      'chat-channel-tab-dragging': $store.chat.channelDragSourceId === ch.record_id
                     }"
+                    @dragstart="$store.chat.startChannelTabDrag(ch.record_id, $event)"
+                    @dragover.prevent="$store.chat.handleChannelTabDragOver(ch.record_id, $event)"
+                    @drop.prevent="$store.chat.dropChannelTab(ch.record_id, $event)"
+                    @dragend="$store.chat.endChannelTabDrag()"
                   >
                     <button
                       type="button"
@@ -1996,19 +2022,21 @@
                       <span class="chat-channel-tab-label" x-text="$store.chat.getChannelLabel(ch)"></span>
                       <span class="unread-dot unread-dot-channel" x-show="$store.chat.isChannelUnread(ch.record_id)" x-cloak></span>
                     </button>
-                    <details class="chat-channel-menu chat-channel-tab-menu" x-show="$store.chat.selectedChannelId === ch.record_id" x-cloak @click.outside="$el.open = false">
-                      <summary title="Channel options">
+                    <div class="chat-channel-menu chat-channel-tab-menu" x-show="$store.chat.selectedChannelId === ch.record_id" x-cloak>
+                      <button
+                        type="button"
+                        class="chat-channel-menu-button"
+                        title="Channel settings"
+                        aria-label="Channel settings"
+                        @click.stop.prevent="$store.chat.openChannelSettings()"
+                      >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                           <circle cx="12" cy="5" r="1"></circle>
                           <circle cx="12" cy="12" r="1"></circle>
                           <circle cx="12" cy="19" r="1"></circle>
                         </svg>
-                      </summary>
-                      <div class="chat-channel-menu-popover">
-                        <button type="button" @click="$store.chat.openChannelSettings(); $event.target.closest('details').open = false">Channel settings</button>
-                        <button type="button" @click="$store.chat.openRecordStatusModal({ familyId: 'channel', recordId: $store.chat.selectedChannelId, label: $store.chat.getChannelLabel($store.chat.selectedChannel) || 'Channel' }); $event.target.closest('details').open = false">Check sync status</button>
-                      </div>
-                    </details>
+                      </button>
+                    </div>
                   </div>
                 </template>
               </div>
@@ -2049,7 +2077,7 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen(msg.record_id)" x-cloak x-transition>
-                        <button type="button" :data-record-id="msg.record_id" data-source-surface="main_feed" data-chat-thread-flow-dispatch="true">Dispatch to flow</button>
+                        <button type="button" :data-record-id="msg.record_id" data-source-surface="main_feed" data-chat-get-it-done="true">Get it done</button>
                         <button type="button" @click.stop.prevent="$store.chat.inspectMessageSyncStatus(msg.record_id)">Check sync status</button>
                       </div>
                     </div>
@@ -2198,7 +2226,7 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen($store.chat.getThreadParentMessage()?.record_id)" x-cloak x-transition>
-                        <button type="button" :data-record-id="$store.chat.getThreadParentMessage()?.record_id || ''" data-source-surface="thread_parent" data-chat-thread-flow-dispatch="true">Dispatch to flow</button>
+                        <button type="button" :data-record-id="$store.chat.getThreadParentMessage()?.record_id || ''" data-source-surface="thread_parent" data-chat-get-it-done="true">Get it done</button>
                         <button type="button" @click.stop.prevent="$store.chat.inspectMessageSyncStatus($store.chat.getThreadParentMessage()?.record_id)">Check sync status</button>
                       </div>
                     </div>
@@ -2267,7 +2295,7 @@
                         </svg>
                       </button>
                       <div class="chat-msg-actions-popover" x-show="$store.chat.isMessageActionsMenuOpen(reply.record_id)" x-cloak x-transition>
-                        <button type="button" :data-record-id="reply.record_id" data-source-surface="thread_reply" data-chat-thread-flow-dispatch="true">Dispatch to flow</button>
+                        <button type="button" :data-record-id="reply.record_id" data-source-surface="thread_reply" data-chat-get-it-done="true">Get it done</button>
                         <button type="button" @click.stop.prevent="$store.chat.inspectMessageSyncStatus(reply.record_id)">Check sync status</button>
                       </div>
                     </div>
@@ -3546,6 +3574,214 @@
           </div>
           </div>
         </template>
+
+
+        <div
+          class="flow-start-confirm-overlay"
+          x-show="$store.chat.showChatGetItDoneModal"
+          x-transition.opacity
+          @click.self="$store.chat.handleChatGetItDoneOverlayClick()"
+          @keydown.escape.window="$store.chat.closeChatGetItDone()"
+          x-cloak
+        >
+          <div class="flow-start-confirm-panel chat-thread-flow-dispatch-panel" data-testid="chat-get-it-done-modal">
+            <div class="chat-thread-flow-dispatch-header">
+              <div>
+                <h3>Get It Done</h3>
+                <p>Create a ready task from this chat thread.</p>
+              </div>
+              <button
+                type="button"
+                class="modal-close"
+                aria-label="Close Get it done dialog"
+                @click="$store.chat.closeChatGetItDone()"
+              >&times;</button>
+            </div>
+
+            <form @submit.prevent="$store.chat.submitChatGetItDone()">
+              <div class="chat-thread-flow-dispatch-body">
+                <div class="chat-thread-flow-dispatch-content">
+                  <label class="chat-thread-flow-dispatch-field">
+                    <span class="task-field-label">Task title or prompt</span>
+                    <input
+                      type="text"
+                      x-model="$store.chat.chatGetItDoneTitle"
+                      placeholder="What needs doing?"
+                      required
+                      data-testid="chat-get-it-done-title"
+                    />
+                  </label>
+
+                  <div class="chat-thread-flow-dispatch-grid">
+                    <div class="chat-thread-flow-dispatch-field" x-data="{ assigneeIdx: 0 }" @click.outside="$store.chat.closeChatGetItDoneAssigneePicker()">
+                      <span class="task-field-label">Assignee</span>
+                      <template x-if="$store.chat.chatGetItDoneAssigneeNpub">
+                        <div class="new-channel-resolved-profile task-assignee-selected chat-get-it-done-selected">
+                          <template x-if="$store.chat.getSenderAvatar($store.chat.chatGetItDoneAssigneeNpub)">
+                            <img class="new-channel-avatar" :src="$store.chat.getSenderAvatar($store.chat.chatGetItDoneAssigneeNpub)" />
+                          </template>
+                          <template x-if="!$store.chat.getSenderAvatar($store.chat.chatGetItDoneAssigneeNpub)">
+                            <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials($store.chat.chatGetItDoneAssigneeLabel)"></div>
+                          </template>
+                          <div class="docs-share-suggestion-copy">
+                            <span class="new-channel-profile-name" x-text="$store.chat.chatGetItDoneAssigneeLabel"></span>
+                            <small x-text="$store.chat.chatGetItDoneAssigneeNpub"></small>
+                          </div>
+                          <button type="button" class="task-inline-clear-btn" @click="$store.chat.clearChatGetItDoneAssignee()">Clear</button>
+                        </div>
+                      </template>
+                      <input
+                        type="text"
+                        x-model="$store.chat.chatGetItDoneAssigneeQuery"
+                        @focus="$store.chat.openChatGetItDoneAssigneePicker(); assigneeIdx = 0"
+                        @input="$store.chat.handleChatGetItDoneAssigneeInput($event.target.value); assigneeIdx = 0"
+                        @keydown.escape="$store.chat.closeChatGetItDoneAssigneePicker()"
+                        @keydown.arrow-down.prevent="assigneeIdx = Math.min(assigneeIdx + 1, $store.chat.chatGetItDoneAssigneeSuggestions.length - 1)"
+                        @keydown.arrow-up.prevent="assigneeIdx = Math.max(assigneeIdx - 1, 0)"
+                        @keydown.enter.prevent="if ($store.chat.chatGetItDoneAssigneeSuggestions[assigneeIdx]) $store.chat.selectChatGetItDoneAssignee($store.chat.chatGetItDoneAssigneeSuggestions[assigneeIdx].npub)"
+                        placeholder="Type a name or npub"
+                        autocomplete="off"
+                        data-testid="chat-get-it-done-assignee"
+                      />
+                      <ul class="docs-share-suggestions chat-get-it-done-typeahead-results" x-show="$store.chat.showChatGetItDoneAssigneePicker && $store.chat.chatGetItDoneAssigneeSuggestions.length > 0" x-cloak>
+                        <template x-for="(person, idx) in $store.chat.chatGetItDoneAssigneeSuggestions" :key="`get-it-done-assignee-${person.npub}`">
+                          <li>
+                            <button
+                              type="button"
+                              class="docs-share-suggestion"
+                              :class="{ 'scope-typeahead-active': idx === assigneeIdx }"
+                              @click="$store.chat.selectChatGetItDoneAssignee(person.npub)"
+                              @mouseenter="assigneeIdx = idx"
+                            >
+                              <template x-if="person.avatarUrl">
+                                <img class="new-channel-avatar" :src="person.avatarUrl" />
+                              </template>
+                              <template x-if="!person.avatarUrl">
+                                <div class="new-channel-avatar new-channel-avatar-fallback" x-text="$store.chat.getInitials(person.label)"></div>
+                              </template>
+                              <span class="docs-share-suggestion-copy">
+                                <strong x-text="person.label"></strong>
+                                <small x-text="person.subtitle"></small>
+                              </span>
+                            </button>
+                          </li>
+                        </template>
+                      </ul>
+                      <div class="scope-typeahead-empty" x-show="$store.chat.showChatGetItDoneAssigneePicker && $store.chat.chatGetItDoneAssigneeQuery && $store.chat.chatGetItDoneAssigneeSuggestions.length === 0">
+                        No people found.
+                      </div>
+                    </div>
+
+                    <label class="chat-thread-flow-dispatch-field">
+                      <span class="task-field-label">Output type</span>
+                      <select
+                        x-model="$store.chat.chatGetItDoneOutputType"
+                        data-testid="chat-get-it-done-output-type"
+                      >
+                        <template x-for="option in $store.chat.chatGetItDoneOutputTypes" :key="`get-it-done-output-${option.value}`">
+                          <option :value="option.value" x-text="option.label"></option>
+                        </template>
+                      </select>
+                    </label>
+
+                    <div class="chat-thread-flow-dispatch-field" x-data="{ scopeIdx: 0 }" @click.outside="$store.chat.closeChatGetItDoneScopePicker()">
+                      <span class="task-field-label">Scope</span>
+                      <template x-if="$store.chat.chatGetItDoneScopeId && !$store.chat.showChatGetItDoneScopePicker">
+                        <div class="scope-picker-selected chat-get-it-done-selected">
+                          <span class="scope-level-badge" :data-level="$store.chat.chatGetItDoneScopeSelection?.level" x-text="$store.chat.scopeLevelLabel($store.chat.chatGetItDoneScopeSelection?.level)"></span>
+                          <span x-text="$store.chat.chatGetItDoneScopeLabel"></span>
+                          <button type="button" class="scope-clear-btn" @click="$store.chat.clearChatGetItDoneScope()" title="Remove scope">x</button>
+                        </div>
+                      </template>
+                      <div class="scope-typeahead-wrapper">
+                        <input
+                          type="text"
+                          x-model="$store.chat.chatGetItDoneScopeQuery"
+                          placeholder="Search scopes..."
+                          autocomplete="off"
+                          @focus="$store.chat.openChatGetItDoneScopePicker(); scopeIdx = 0"
+                          @input="$store.chat.handleChatGetItDoneScopeInput($event.target.value); scopeIdx = 0"
+                          @keydown.escape="$store.chat.closeChatGetItDoneScopePicker()"
+                          @keydown.arrow-down.prevent="scopeIdx = Math.min(scopeIdx + 1, $store.chat.chatGetItDoneScopeSuggestions.length - 1)"
+                          @keydown.arrow-up.prevent="scopeIdx = Math.max(scopeIdx - 1, 0)"
+                          @keydown.enter.prevent="if ($store.chat.chatGetItDoneScopeSuggestions[scopeIdx]) $store.chat.selectChatGetItDoneScope($store.chat.chatGetItDoneScopeSuggestions[scopeIdx].record_id)"
+                          data-testid="chat-get-it-done-scope"
+                        />
+                        <ul class="scope-typeahead-results" x-show="$store.chat.showChatGetItDoneScopePicker && $store.chat.chatGetItDoneScopeSuggestions.length > 0" x-cloak>
+                          <template x-for="(item, idx) in $store.chat.chatGetItDoneScopeSuggestions" :key="`get-it-done-scope-${item.record_id}`">
+                            <li
+                              class="scope-typeahead-option"
+                              :class="{ 'scope-typeahead-active': idx === scopeIdx }"
+                              @click="$store.chat.selectChatGetItDoneScope(item.record_id)"
+                              @mouseenter="scopeIdx = idx"
+                            >
+                              <span class="scope-level-badge" :data-level="item.level" x-text="$store.chat.scopeLevelLabel(item.level)"></span>
+                              <span x-text="item.title"></span>
+                              <span class="scope-typeahead-breadcrumb" x-show="item.breadcrumb" x-text="item.breadcrumb"></span>
+                            </li>
+                          </template>
+                        </ul>
+                        <div class="scope-typeahead-empty" x-show="$store.chat.showChatGetItDoneScopePicker && $store.chat.chatGetItDoneScopeSuggestions.length === 0">
+                          No scopes found.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="chat-thread-flow-dispatch-provenance">
+                    <h4>Source</h4>
+                    <dl class="chat-thread-flow-dispatch-provenance-list">
+                      <div>
+                        <dt>Channel</dt>
+                        <dd x-text="$store.chat.getChannelLabel($store.chat.chatGetItDoneSourceChannel) || 'Unknown channel'"></dd>
+                      </div>
+                      <div>
+                        <dt>Thread</dt>
+                        <dd x-text="$store.chat.chatGetItDoneSource?.threadRootMessageId || '—'"></dd>
+                      </div>
+                      <div>
+                        <dt>Messages</dt>
+                        <dd x-text="$store.chat.chatGetItDoneMessages.length"></dd>
+                      </div>
+                    </dl>
+                  </div>
+
+                  <label class="chat-thread-flow-dispatch-field">
+                    <span class="task-field-label">Extra instructions</span>
+                    <textarea
+                      x-model="$store.chat.chatGetItDoneInstructions"
+                      rows="4"
+                      placeholder="Optional detail for the assignee"
+                      class="flow-start-context-input chat-thread-flow-dispatch-notes"
+                      data-testid="chat-get-it-done-instructions"
+                    ></textarea>
+                  </label>
+
+                  <p
+                    class="chat-thread-flow-dispatch-status chat-thread-flow-dispatch-error"
+                    x-show="$store.chat.chatGetItDoneError"
+                    x-text="$store.chat.chatGetItDoneError"
+                    aria-live="polite"
+                  ></p>
+                </div>
+              </div>
+
+              <div class="flow-start-confirm-actions chat-thread-flow-dispatch-actions">
+                <button
+                  type="submit"
+                  class="btn-primary"
+                  :disabled="!$store.chat.chatGetItDoneCanSubmit"
+                  data-testid="chat-get-it-done-submit"
+                >Create ready task</button>
+                <button
+                  type="button"
+                  class="btn-secondary"
+                  @click="$store.chat.closeChatGetItDone()"
+                >Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
 
 
         <div
@@ -6825,6 +7061,11 @@
 
             <div class="new-doc-modal-actions">
               <button type="button" class="btn-cancel" @click="$store.chat.closeChannelSettings()">Close</button>
+              <button
+                type="button"
+                class="btn-secondary"
+                @click="$store.chat.openRecordStatusModal({ familyId: 'channel', recordId: $store.chat.selectedChannelId, label: $store.chat.getChannelLabel($store.chat.selectedChannel) || 'Channel' })"
+              >Check sync status</button>
               <button
                 type="button"
                 class="btn-delete-doc"

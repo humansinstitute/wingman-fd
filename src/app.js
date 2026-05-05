@@ -57,7 +57,9 @@ import { filterDocItemsByScope } from './docs-scope-filter.js';
 import { sectionLiveQueryMixin } from './section-live-queries.js';
 import { applySelectedDocumentUpdate } from './document-selection.js';
 import { createChatThreadFlowDispatchState } from './chat-thread-flow-dispatch.js';
+import { createChatGetItDoneState } from './chat-get-it-done.js';
 import { commandPaletteMixin, createCommandPaletteState } from './command-palette.js';
+import { buildAttentionFeed, summarizeAttentionFeed } from './attention-feed.js';
 import {
   toRaw,
   normalizeBackendUrl,
@@ -359,6 +361,8 @@ export function initApp() {
 
     // data
     channels: [],
+    channelOrder: [],
+    channelDragSourceId: '',
     selectedChannelId: null,
     messages: [],
     reactionRows: [],
@@ -405,6 +409,7 @@ export function initApp() {
     flowStartTarget: null,
     flowStartContext: '',
     ...createChatThreadFlowDispatchState(),
+    ...createChatGetItDoneState(),
     showFlowPicker: false,
     showApprovalDetail: false,
     activeApprovalId: null,
@@ -851,6 +856,26 @@ export function initApp() {
         return this.statusRecentChanges;
       }
       return this.statusRecentChanges.filter((item) => item.recordTypeKey === this.statusRecordTypeFilter);
+    },
+
+    get attentionFeedGroups() {
+      return buildAttentionFeed({
+        session: this.session,
+        defaultAgentNpub: this.defaultAgentNpub,
+        botNpub: this.botNpub,
+        tasks: this.tasks,
+        boardScopedTasks: this.boardScopedTasks,
+        statusRecentChanges: this.statusRecentChanges,
+        pendingApprovals: this.pendingApprovalsByScope,
+      });
+    },
+
+    get attentionFeedSummary() {
+      return summarizeAttentionFeed(this.attentionFeedGroups);
+    },
+
+    get attentionFeedItemCount() {
+      return this.attentionFeedGroups.reduce((sum, group) => sum + group.items.length, 0);
     },
 
     get selectedReport() {
@@ -2449,6 +2474,7 @@ export function initApp() {
           threadId: message.parent_message_id || null,
           recordId: message.record_id,
           focusRecordId: message.record_id,
+          senderNpub: message.sender_npub,
         });
       }
 
@@ -2598,6 +2624,7 @@ export function initApp() {
           recordId: task.record_id,
           focusRecordId: comment.record_id,
           boardScopeId: task.scope_id ?? task.scope_l5_id ?? task.scope_l4_id ?? task.scope_l3_id ?? task.scope_l2_id ?? task.scope_l1_id ?? null,
+          senderNpub: comment.sender_npub,
         });
       }
 
@@ -2619,12 +2646,38 @@ export function initApp() {
           recordId: document.record_id,
           focusRecordId: comment.record_id,
           docType: 'document',
+          senderNpub: comment.sender_npub,
         });
       }
 
       this.statusRecentChanges = items
         .sort((a, b) => b.updatedTs - a.updatedTs)
         .slice(0, MAX_STATUS_RECENT_CHANGES);
+    },
+
+    getAttentionIconSvg(icon) {
+      const icons = {
+        approval: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 4v5c0 4.5-2.8 7.8-7 9-4.2-1.2-7-4.5-7-9V7l7-4z"></path><path d="M9 12l2 2 4-5"></path></svg>',
+        mention: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"></path></svg>',
+        chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path></svg>',
+        comment: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5a8.5 8.5 0 1 1 17 0z"></path></svg>',
+        task: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>',
+        doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"></path><path d="M14 2v5a2 2 0 0 0 2 2h4"></path><path d="M8 13h8"></path><path d="M8 17h5"></path></svg>',
+        report: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"></path><path d="M7 16l4-5 4 3 5-8"></path></svg>',
+        flow: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="18" r="3"></circle><path d="M9 6h3a6 6 0 0 1 6 6v3"></path></svg>',
+        activity: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 8-6-16-3 8H2"></path></svg>',
+      };
+      return icons[icon] || icons.activity;
+    },
+
+    async openAttentionItem(item) {
+      if (!item) return;
+      if (item.section === 'approvals') {
+        this.activeApprovalId = item.recordId;
+        this.showApprovalDetail = true;
+        return;
+      }
+      await this.openStatusChange(item);
     },
 
     formatRelativeTime(iso) {
@@ -3158,23 +3211,28 @@ export function initApp() {
       const title = String(this.newTaskTitle || '').trim();
       if (!title || !this.session?.npub) return null;
       const description = String(options.description || '').trim();
-      if (!this.selectedBoardId) {
+      const targetScopeId = String(options.scopeId || this.selectedBoardId || '').trim();
+      if (!targetScopeId) {
         this.error = 'Select a scope board first.';
         return null;
       }
       const now = new Date().toISOString();
       const recordId = crypto.randomUUID();
       const ownerNpub = this.workspaceOwnerNpub;
-      const assignment = this.buildTaskBoardAssignment(this.selectedBoardId);
+      const assignment = this.buildTaskBoardAssignment(targetScopeId);
       if (!assignment.scope_id) {
         this.error = 'Select a valid scope board first.';
         return null;
       }
 
+      const explicitReferences = Array.isArray(options.references) ? options.references : [];
       const flowLinkage = resolveFlowLinkage({
         title,
         description,
-        references: parseReferencesFromDescription(description),
+        references: [
+          ...parseReferencesFromDescription(description),
+          ...explicitReferences,
+        ],
         flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
       });
       const dispatchAssigneeNpub = resolveFlowDispatchAssignee({
@@ -3183,26 +3241,27 @@ export function initApp() {
         defaultAgentNpub: this.defaultAgentNpub,
         botNpub: this.botNpub,
       });
+      const hasExplicitAssignee = Object.prototype.hasOwnProperty.call(options, 'assignedToNpub');
 
       const localRow = {
         record_id: recordId,
         owner_npub: ownerNpub,
         title,
         description,
-        state: 'new',
-        priority: 'sand',
+        state: String(options.state || 'new').trim() || 'new',
+        priority: String(options.priority || 'sand').trim() || 'sand',
         parent_task_id: null,
         ...assignment,
-        assigned_to_npub: dispatchAssigneeNpub,
+        assigned_to_npub: hasExplicitAssignee ? (options.assignedToNpub || null) : dispatchAssigneeNpub,
         scheduled_for: null,
         tags: '',
         predecessor_task_ids: null,
         flow_id: flowLinkage.flow_id,
         flow_run_id: flowLinkage.flow_run_id,
         flow_step: flowLinkage.flow_step,
-        source_links: [],
+        source_links: Array.isArray(options.sourceLinks) ? options.sourceLinks : [],
         references: flowLinkage.references,
-        deliverable_links: [],
+        deliverable_links: Array.isArray(options.deliverableLinks) ? options.deliverableLinks : [],
         sync_status: 'pending',
         record_state: 'active',
         version: 1,

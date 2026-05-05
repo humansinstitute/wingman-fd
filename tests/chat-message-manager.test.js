@@ -14,6 +14,7 @@ vi.mock('../src/translators/chat.js', () => ({
 
 import { chatMessageManagerMixin } from '../src/chat-message-manager.js';
 import { createChatThreadFlowDispatchState } from '../src/chat-thread-flow-dispatch.js';
+import { createChatGetItDoneState } from '../src/chat-get-it-done.js';
 import { clearRuntimeData, deleteWorkspaceDb, openWorkspaceDb } from '../src/db.js';
 
 // ---------------------------------------------------------------------------
@@ -103,8 +104,16 @@ function createStore(overrides = {}) {
     containsInlineImageUploadToken: vi.fn().mockReturnValue(false),
     _fireMentionTriggers: vi.fn(),
     getSenderName: vi.fn((npub) => npub ? `Name ${npub}` : ''),
+    getSenderAvatar: vi.fn(() => null),
+    getInitials: vi.fn((name) => String(name || 'NA').slice(0, 2).toUpperCase()),
+    findPeopleSuggestions: vi.fn(() => []),
+    scopesMap: new Map(),
+    scopePickerFlatFor: vi.fn(() => []),
+    getScopeBreadcrumb: vi.fn((scopeId) => scopeId ? `Breadcrumb ${scopeId}` : ''),
+    scopeLevelLabel: vi.fn((level) => level || ''),
     openRecordStatusModal: vi.fn(),
     workspaceOwnerNpub: 'npub1owner',
+    ...createChatGetItDoneState(),
     ...overrides,
   };
 
@@ -1065,6 +1074,147 @@ describe('chat thread flow dispatch modal state', () => {
     expect(mainFeedStore.chatThreadFlowDispatchMessages.map((message) => message.record_id)).toEqual(expectedTranscript);
     expect(threadParentStore.chatThreadFlowDispatchMessages.map((message) => message.record_id)).toEqual(expectedTranscript);
     expect(threadReplyStore.chatThreadFlowDispatchMessages.map((message) => message.record_id)).toEqual(expectedTranscript);
+  });
+});
+
+describe('chat get it done modal state', () => {
+  it('opens from a chat message with default scope and assignee', async () => {
+    const { fn, store } = bindMethod('openChatGetItDone', {
+      session: { npub: 'npub1me' },
+      defaultAgentNpub: 'npub1agent',
+      selectedChannelId: 'channel-1',
+      channels: [{
+        record_id: 'channel-1',
+        scope_id: 'scope-channel',
+        title: 'General',
+        participant_npubs: ['npub1me', 'npub1agent'],
+      }],
+      messages: [{
+        record_id: 'root-1',
+        channel_id: 'channel-1',
+        parent_message_id: null,
+        body: 'Can you turn this into work?',
+        sender_npub: 'npub1me',
+        updated_at: '2026-05-05T10:00:00.000Z',
+        record_state: 'active',
+      }],
+    });
+
+    await fn('root-1', 'main_feed');
+
+    expect(store.showChatGetItDoneModal).toBe(true);
+    expect(store.chatGetItDoneSource).toMatchObject({
+      channelId: 'channel-1',
+      clickedMessageId: 'root-1',
+      threadRootMessageId: 'root-1',
+      sourceSurface: 'main_feed',
+    });
+    expect(store.chatGetItDoneScopeId).toBe('scope-channel');
+    expect(store.chatGetItDoneAssigneeNpub).toBe('npub1agent');
+  });
+
+  it('uses typeahead helpers for Get it done assignee and scope', async () => {
+    const rememberPeople = vi.fn().mockResolvedValue(undefined);
+    const scope = {
+      record_id: 'scope-selected',
+      title: 'Selected scope',
+      level: 'project',
+      breadcrumb: 'Product / Selected scope',
+    };
+    const store = createStore({
+      chatGetItDoneAssigneeNpub: 'npub1agent',
+      chatGetItDoneAssigneeQuery: 'pet',
+      chatGetItDoneScopeId: 'scope-selected',
+      chatGetItDoneScopeQuery: 'ops',
+      rememberPeople,
+      findPeopleSuggestions: vi.fn(() => [{
+        npub: 'npub1pete',
+        label: 'Pete',
+        subtitle: 'npub1pete',
+        avatarUrl: null,
+      }]),
+      scopesMap: new Map([['scope-selected', scope]]),
+      scopePickerFlatFor: vi.fn(() => [{
+        record_id: 'scope-ops',
+        title: 'Ops',
+        level: 'project',
+        breadcrumb: 'Product / Ops',
+      }]),
+    });
+
+    expect(store.chatGetItDoneAssigneeSuggestions.map((person) => person.npub)).toContain('npub1pete');
+    expect(store.chatGetItDoneScopeLabel).toBe('Scope scope-selected');
+    expect(store.chatGetItDoneScopeSuggestions.map((item) => item.record_id)).toEqual(['scope-ops']);
+
+    await store.selectChatGetItDoneAssignee('npub1pete');
+    store.selectChatGetItDoneScope('scope-ops');
+
+    expect(store.chatGetItDoneAssigneeNpub).toBe('npub1pete');
+    expect(store.chatGetItDoneAssigneeQuery).toBe('');
+    expect(store.showChatGetItDoneAssigneePicker).toBe(false);
+    expect(rememberPeople).toHaveBeenCalledWith(['npub1pete'], 'task-assignee');
+    expect(store.chatGetItDoneScopeId).toBe('scope-ops');
+    expect(store.chatGetItDoneScopeQuery).toBe('');
+    expect(store.showChatGetItDoneScopePicker).toBe(false);
+  });
+
+  it('creates a ready task with chat source and thread excerpt', async () => {
+    const addTask = vi.fn(async () => ({ record_id: 'task-new' }));
+    const navigateTo = vi.fn();
+    const openTaskDetail = vi.fn();
+    const syncRoute = vi.fn();
+    const store = createStore({
+      session: { npub: 'npub1me' },
+      selectedBoardId: 'scope-channel',
+      currentWorkspaceSlug: 'be-free',
+      selectedChannelId: 'channel-1',
+      channels: [{ record_id: 'channel-1', scope_id: 'scope-channel', title: 'General' }],
+      messages: [
+        {
+          record_id: 'root-1',
+          channel_id: 'channel-1',
+          parent_message_id: null,
+          body: 'Please fix the broken button.',
+          sender_npub: 'npub1me',
+          updated_at: '2026-05-05T10:00:00.000Z',
+          record_state: 'active',
+        },
+        {
+          record_id: 'reply-1',
+          channel_id: 'channel-1',
+          parent_message_id: 'root-1',
+          body: 'The Get it done menu item does not create a task.',
+          sender_npub: 'npub1agent',
+          updated_at: '2026-05-05T10:05:00.000Z',
+          record_state: 'active',
+        },
+      ],
+      addTask,
+      navigateTo,
+      openTaskDetail,
+      syncRoute,
+    });
+
+    await store.openChatGetItDone('reply-1', 'thread_reply');
+    store.chatGetItDoneTitle = 'Fix Get it done from chat';
+    store.chatGetItDoneAssigneeNpub = 'npub1agent';
+
+    const result = await store.submitChatGetItDone();
+
+    expect(result).toEqual({ record_id: 'task-new' });
+    expect(addTask).toHaveBeenCalledWith(expect.objectContaining({
+      state: 'ready',
+      scopeId: 'scope-channel',
+      assignedToNpub: 'npub1agent',
+      sourceLinks: [{ type: 'chat', id: 'channel-1#root-1' }],
+    }));
+    const description = addTask.mock.calls[0][0].description;
+    expect(description).toContain('Fix Get it done from chat');
+    expect(description).toContain('/be-free/chat?scopeid=scope-channel&channelid=channel-1&threadid=root-1');
+    expect(description).toContain('Name npub1agent: The Get it done menu item does not create a task.');
+    expect(navigateTo).toHaveBeenCalledWith('tasks', { syncRoute: false });
+    expect(openTaskDetail).toHaveBeenCalledWith('task-new');
+    expect(syncRoute).toHaveBeenCalled();
   });
 });
 

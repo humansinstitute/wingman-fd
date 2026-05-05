@@ -4,14 +4,16 @@ import { resolve } from 'node:path';
 
 const INDEX_PATH = resolve(process.cwd(), 'index.html');
 
-describe('flight deck recent changes template', () => {
-  it('labels the activity panel and filters rows by record type', () => {
+describe('flight deck attention feed template', () => {
+  it('labels the attention panel and renders grouped attention cards', () => {
     const html = readFileSync(INDEX_PATH, 'utf8');
 
-    expect(html).toContain('<h3>Recent Changes</h3>');
-    expect(html).toContain('x-model="$store.chat.statusRecordTypeFilter" aria-label="Recent changes record type"');
-    expect(html).toContain('x-for="option in $store.chat.statusRecordTypeOptions"');
-    expect(html).toContain('x-for="item in $store.chat.filteredStatusRecentChanges"');
+    expect(html).toContain('<h3>Needs Attention</h3>');
+    expect(html).toContain('x-text="$store.chat.attentionFeedSummary"');
+    expect(html).toContain('x-for="group in $store.chat.attentionFeedGroups"');
+    expect(html).toContain('x-for="item in group.items"');
+    expect(html).toContain('@click="$store.chat.openAttentionItem(item)"');
+    expect(html).toContain('@change="$store.chat.refreshStatusRecentChanges({ force: true })"');
   });
 
   it('does not expose the removed calendar surface', () => {
@@ -83,7 +85,12 @@ describe('flight deck recent changes template', () => {
     expect(html).toContain('class="chat-channel-tab-item"');
     expect(html).toContain('class="chat-channel-tab-scroll" role="tablist" aria-label="Chat channels"');
     expect(html).toContain('class="chat-channel-tab"');
+    expect(html).toContain('draggable="true"');
+    expect(html).toContain('@dragstart="$store.chat.startChannelTabDrag(ch.record_id, $event)"');
+    expect(html).toContain('@drop.prevent="$store.chat.dropChannelTab(ch.record_id, $event)"');
     expect(html).toContain('class="chat-channel-menu chat-channel-tab-menu"');
+    expect(html).toContain('class="chat-channel-menu-button"');
+    expect(html).toContain('@click.stop.prevent="$store.chat.openChannelSettings()"');
     expect(html).not.toContain('class="chat-channel-tabs"');
     expect(html).not.toContain('class="sidebar-channels"');
     expect(html).not.toContain('class="sidebar-channel-item"');

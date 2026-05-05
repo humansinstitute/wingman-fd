@@ -53,6 +53,7 @@ function bindMethod(methodName, storeOverrides = {}) {
     removingWorkspace: false,
     error: null,
     channels: [],
+    channelOrder: [],
     selectedChannelId: '',
     selectedChannel: null,
     getShortNpub: (npub) => npub?.slice(0, 8) || '',
@@ -572,12 +573,14 @@ describe('applyWorkspaceSettingsRow', () => {
       group_ids: ['g1'],
       wingman_harness_url: 'https://harness.example.com',
       triggers: [{ id: 't1' }],
+      channel_order: ['chan-b', 'chan-a'],
     });
     expect(store.workspaceSettingsRecordId).toBe('rec1');
     expect(store.workspaceSettingsVersion).toBe(3);
     expect(store.workspaceSettingsGroupIds).toEqual(['g1']);
     expect(store.workspaceHarnessUrl).toBe('https://harness.example.com');
     expect(store.workspaceTriggers).toEqual([{ id: 't1' }]);
+    expect(store.channelOrder).toEqual(['chan-b', 'chan-a']);
     expect(store.wingmanHarnessInput).toBe('https://harness.example.com');
   });
 
@@ -596,6 +599,21 @@ describe('applyWorkspaceSettingsRow', () => {
     fn(null);
     expect(store.workspaceSettingsRecordId).toBe('');
     expect(store.workspaceSettingsVersion).toBe(0);
+  });
+
+  it('reorders loaded channels from the settings row', () => {
+    const { fn, store } = bindMethod('applyWorkspaceSettingsRow', {
+      channels: [
+        { record_id: 'chan-a' },
+        { record_id: 'chan-b' },
+        { record_id: 'chan-c' },
+      ],
+    });
+
+    fn({ channel_order: ['chan-c', 'chan-a'] }, { overwriteInput: false });
+
+    expect(store.channelOrder).toEqual(['chan-c', 'chan-a', 'chan-b']);
+    expect(store.channels.map((channel) => channel.record_id)).toEqual(['chan-c', 'chan-a', 'chan-b']);
   });
 
   it('does not overwrite harness input when dirty', () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -9,6 +9,7 @@ import {
   computeGroupMemberDiff,
   parseGroupMemberQueryNpubs,
   filterChannelsForViewer,
+  channelsManagerMixin,
 } from '../src/channels-manager.js';
 
 const channelsManagerSource = fs.readFileSync(
@@ -369,6 +370,90 @@ describe('channels-manager pure utilities', () => {
     it('returns all channels when viewerNpub is undefined', () => {
       const result = filterChannelsForViewer(channels, undefined, OWNER);
       expect(result).toHaveLength(5);
+    });
+  });
+
+  describe('channel tab ordering', () => {
+    const orderedChannels = [
+      { record_id: 'ch1', title: 'Team Channel', participant_npubs: [] },
+      { record_id: 'ch2', title: 'DM: Pete', participant_npubs: [] },
+      { record_id: 'ch3', title: 'WM21', participant_npubs: [] },
+    ];
+
+    function createStore(overrides = {}) {
+      return {
+        channels: [],
+        channelOrder: [],
+        channelDragSourceId: '',
+        selectedChannelId: '',
+        session: { npub: 'npub1owner' },
+        workspaceOwnerNpub: 'npub1owner',
+        MAIN_FEED_PAGE_SIZE: 20,
+        mainFeedVisibleCount: 20,
+        chatFeedNearTop: false,
+        expandedChatMessageIds: [],
+        truncatedChatMessageIds: [],
+        pendingChatScrollToLatest: false,
+        getChannelParticipants: (channel) => channel.participant_npubs || [],
+        rememberPeople: vi.fn(),
+        closeThread: vi.fn(),
+        startSelectedChannelLiveQuery: vi.fn(),
+        syncRoute: vi.fn(),
+        applyMessages: vi.fn(),
+        updatePageTitle: vi.fn(),
+        saveWorkspaceChannelOrder: vi.fn(),
+        ...overrides,
+      };
+    }
+
+    it('applies saved channel order when channels load', async () => {
+      const store = createStore({ channelOrder: ['ch3', 'ch1'] });
+
+      await channelsManagerMixin.applyChannels.call(store, orderedChannels, { syncRoute: false });
+
+      expect(store.channels.map((channel) => channel.record_id)).toEqual(['ch3', 'ch1', 'ch2']);
+      expect(store.channelOrder).toEqual(['ch3', 'ch1', 'ch2']);
+      expect(store.selectedChannelId).toBe('ch3');
+    });
+
+    it('preserves saved channel order through an empty channel batch', async () => {
+      const store = createStore({ channelOrder: ['ch3', 'ch1'] });
+
+      await channelsManagerMixin.applyChannels.call(store, [], { syncRoute: false });
+
+      expect(store.channelOrder).toEqual(['ch3', 'ch1']);
+      expect(store.channels).toEqual([]);
+    });
+
+    it('persists the new order after a tab drop', async () => {
+      const store = createStore({
+        channels: orderedChannels,
+        channelOrder: ['ch1', 'ch2', 'ch3'],
+        channelDragSourceId: 'ch3',
+      });
+      const event = { preventDefault: vi.fn() };
+
+      await channelsManagerMixin.dropChannelTab.call(store, 'ch1', event);
+
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(store.channelDragSourceId).toBe('');
+      expect(store.channelOrder).toEqual(['ch3', 'ch1', 'ch2']);
+      expect(store.channels.map((channel) => channel.record_id)).toEqual(['ch3', 'ch1', 'ch2']);
+      expect(store.saveWorkspaceChannelOrder).toHaveBeenCalledWith(['ch3', 'ch1', 'ch2']);
+    });
+
+    it('keeps the local order and surfaces sync errors when saving fails', async () => {
+      const store = createStore({
+        channels: orderedChannels,
+        channelOrder: ['ch1', 'ch2', 'ch3'],
+        channelDragSourceId: 'ch3',
+        saveWorkspaceChannelOrder: vi.fn().mockRejectedValue(new Error('missing group keys')),
+      });
+
+      await channelsManagerMixin.dropChannelTab.call(store, 'ch1', { preventDefault: vi.fn() });
+
+      expect(store.channelOrder).toEqual(['ch3', 'ch1', 'ch2']);
+      expect(store.error).toBe('missing group keys');
     });
   });
 });

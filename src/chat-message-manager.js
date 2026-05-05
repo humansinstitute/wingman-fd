@@ -33,10 +33,16 @@ import {
   resolveChatThreadFlowDispatchScope,
   resolveChatThreadFlowDispatchThread,
 } from './chat-thread-flow-dispatch.js';
+import {
+  CHAT_GET_IT_DONE_OUTPUT_TYPES,
+  buildChatGetItDoneTaskDescription,
+  createChatGetItDoneState,
+} from './chat-get-it-done.js';
 import { buildStoredFlowKickoffScopeAssignment } from './task-flow-helpers.js';
 import { UNSCOPED_TASK_BOARD_ID } from './task-board-state.js';
 import { sameListBySignature } from './utils/state-helpers.js';
 import { getRecordWriteFieldsForStore } from './preferred-write-group.js';
+import { buildSectionUrl, parseRouteLocation } from './route-helpers.js';
 
 const chatDerivedCache = new WeakMap();
 
@@ -192,6 +198,126 @@ export const chatMessageManagerMixin = {
     if (!this.chatThreadFlowDispatchSource?.channelId) return false;
     if (this.chatThreadFlowDispatchMessages.length === 0) return false;
     return String(this.chatThreadFlowDispatchPreview || '').trim().length > 0;
+  },
+
+  get chatGetItDoneSourceChannel() {
+    const channelId = this.chatGetItDoneSource?.channelId || null;
+    return this.channels.find((channel) => channel.record_id === channelId) ?? null;
+  },
+
+  get chatGetItDoneOutputTypes() {
+    return CHAT_GET_IT_DONE_OUTPUT_TYPES;
+  },
+
+  get chatGetItDoneAssigneeOptions() {
+    const seen = new Set();
+    const add = (options, npub, role) => {
+      const clean = String(npub || '').trim();
+      if (!clean || seen.has(clean)) return;
+      seen.add(clean);
+      options.push({
+        npub: clean,
+        label: this.getSenderName?.(clean) || clean,
+        role,
+      });
+    };
+    const options = [];
+    add(options, this.chatGetItDoneAssigneeNpub, 'Default');
+    add(options, this.defaultAgentNpub, 'Default agent');
+    add(options, this.botNpub, 'Agent');
+    const channel = this.chatGetItDoneSourceChannel || this.selectedChannel;
+    for (const npub of (Array.isArray(channel?.participant_npubs) ? channel.participant_npubs : [])) {
+      add(options, npub, 'Participant');
+    }
+    for (const group of (this.currentWorkspaceGroups || [])) {
+      for (const npub of (Array.isArray(group?.member_npubs) ? group.member_npubs : [])) {
+        add(options, npub, 'Workspace');
+      }
+    }
+    return options;
+  },
+
+  get chatGetItDoneAssigneeLabel() {
+    const npub = String(this.chatGetItDoneAssigneeNpub || '').trim();
+    if (!npub) return 'Unassigned';
+    return this.getSenderName?.(npub) || npub;
+  },
+
+  get chatGetItDoneAssigneeSuggestions() {
+    const selected = String(this.chatGetItDoneAssigneeNpub || '').trim();
+    const query = String(this.chatGetItDoneAssigneeQuery || '').trim();
+    const selectedSet = new Set(selected ? [selected] : []);
+    const seen = new Set();
+    const options = this.chatGetItDoneAssigneeOptions
+      .filter((option) => !selectedSet.has(option.npub))
+      .map((option) => ({
+        npub: option.npub,
+        label: option.label,
+        subtitle: option.role || option.npub,
+        avatarUrl: this.getSenderAvatar?.(option.npub) || null,
+      }));
+    const addUnique = (items, item) => {
+      const npub = String(item?.npub || '').trim();
+      if (!npub || selectedSet.has(npub) || seen.has(npub)) return;
+      seen.add(npub);
+      items.push({ ...item, npub });
+    };
+
+    if (!query) {
+      const defaults = [];
+      for (const option of options) addUnique(defaults, option);
+      return defaults.slice(0, 8);
+    }
+
+    const needle = query.toLowerCase();
+    const matches = [];
+    for (const person of (typeof this.findPeopleSuggestions === 'function'
+      ? this.findPeopleSuggestions(query, selected ? [selected] : [])
+      : [])) {
+      addUnique(matches, person);
+    }
+    for (const option of options) {
+      if (
+        String(option.npub || '').toLowerCase().includes(needle)
+        || String(option.label || '').toLowerCase().includes(needle)
+        || String(option.subtitle || '').toLowerCase().includes(needle)
+      ) {
+        addUnique(matches, option);
+      }
+    }
+    return matches.slice(0, 8);
+  },
+
+  get chatGetItDoneScopeSelection() {
+    const scopeId = String(this.chatGetItDoneScopeId || '').trim();
+    return scopeId ? this.scopesMap?.get(scopeId) || null : null;
+  },
+
+  get chatGetItDoneScopeLabel() {
+    const scopeId = String(this.chatGetItDoneScopeId || '').trim();
+    if (!scopeId) return 'Current workspace';
+    return this.getTaskBoardOptionLabel?.(scopeId)
+      || this.getScopeBreadcrumb?.(scopeId)
+      || this.chatGetItDoneScopeSelection?.title
+      || scopeId;
+  },
+
+  get chatGetItDoneScopeSuggestions() {
+    const query = String(this.chatGetItDoneScopeQuery || '').trim();
+    const selected = String(this.chatGetItDoneScopeId || '').trim();
+    const items = typeof this.scopePickerFlatFor === 'function'
+      ? this.scopePickerFlatFor(query)
+      : [];
+    return items
+      .filter((item) => item?.record_id !== selected)
+      .slice(0, 20);
+  },
+
+  get chatGetItDoneCanSubmit() {
+    if (this.chatGetItDoneSubmitting) return false;
+    if (!this.chatGetItDoneSource?.channelId) return false;
+    if (this.chatGetItDoneMessages.length === 0) return false;
+    return String(this.chatGetItDoneTitle || '').trim().length > 0;
   },
 
   // --- scroll anchoring ---
@@ -843,6 +969,213 @@ export const chatMessageManagerMixin = {
       this.error = this.chatThreadFlowDispatchError;
     } finally {
       this.chatThreadFlowDispatchLoading = false;
+    }
+  },
+
+  resolveChatGetItDoneDefaultScope(resolved = null) {
+    const channelScopeId = resolved?.sourceChannel?.scope_id
+      || this.selectedChannel?.scope_id
+      || null;
+    if (channelScopeId) return channelScopeId;
+    const selectedBoardId = String(this.selectedBoardId || '').trim();
+    if (selectedBoardId && selectedBoardId !== UNSCOPED_TASK_BOARD_ID && selectedBoardId !== '__all__') {
+      return selectedBoardId;
+    }
+    return null;
+  },
+
+  resolveChatGetItDoneDefaultAssignee(resolved = null) {
+    const viewer = String(this.session?.npub || '').trim();
+    const channel = resolved?.sourceChannel || this.selectedChannel || null;
+    const participants = (Array.isArray(channel?.participant_npubs) ? channel.participant_npubs : [])
+      .map((npub) => String(npub || '').trim())
+      .filter(Boolean);
+    const otherParticipants = participants.filter((npub) => npub !== viewer);
+    if (otherParticipants.length === 1) return otherParticipants[0];
+
+    const threadMessages = Array.isArray(resolved?.threadMessages) ? resolved.threadMessages : [];
+    const latestOtherSender = [...threadMessages]
+      .reverse()
+      .map((message) => String(message?.sender_npub || '').trim())
+      .find((npub) => npub && npub !== viewer);
+    if (latestOtherSender) return latestOtherSender;
+
+    return String(this.defaultAgentNpub || this.botNpub || '').trim() || null;
+  },
+
+  buildChatGetItDoneSourceUrl(source = this.chatGetItDoneSource) {
+    if (!source?.channelId) return '';
+    const currentRoute = typeof window !== 'undefined'
+      ? parseRouteLocation(window.location.href)
+      : { workspaceSlug: this.currentWorkspaceSlug || null, params: {} };
+    return buildSectionUrl({
+      workspaceSlug: this.currentWorkspaceSlug || currentRoute.workspaceSlug || null,
+      section: 'chat',
+      scopeid: this.selectedBoardId || null,
+      params: {
+        workspacekey: this.currentWorkspaceKey || currentRoute.params?.workspacekey || null,
+        channelid: source.channelId,
+        threadid: source.threadRootMessageId,
+      },
+    });
+  },
+
+  async openChatGetItDone(recordId, sourceSurface = 'main_feed') {
+    this.error = null;
+    this.closeMessageActionsMenu();
+    Object.assign(this, createChatGetItDoneState());
+    this.showChatGetItDoneModal = true;
+    this.chatGetItDoneOpenedAt = Date.now();
+
+    try {
+      const resolved = this.resolveDispatchThread(recordId);
+      if (!resolved) {
+        throw new Error('Unable to resolve the selected chat thread.');
+      }
+      const sourceChannel = resolved.sourceChannel || this.selectedChannel;
+      if (!sourceChannel?.record_id) {
+        throw new Error('Unable to resolve the source channel for this thread.');
+      }
+
+      this.chatGetItDoneSource = {
+        channelId: sourceChannel.record_id,
+        clickedMessageId: resolved.clickedMessage.record_id,
+        threadRootMessageId: resolved.threadRootMessage.record_id,
+        sourceSurface,
+        createdAt: new Date().toISOString(),
+      };
+      this.chatGetItDoneMessages = resolved.threadMessages;
+      this.chatGetItDoneScopeId = this.resolveChatGetItDoneDefaultScope(resolved);
+      this.chatGetItDoneAssigneeNpub = this.resolveChatGetItDoneDefaultAssignee(resolved);
+      this.chatGetItDoneTitle = '';
+      this.chatGetItDoneOutputType = 'chat_response';
+      this.chatGetItDoneInstructions = '';
+      this.chatGetItDoneError = null;
+    } catch (error) {
+      this.chatGetItDoneError = error?.message || 'Unable to prepare this chat thread.';
+      this.error = this.chatGetItDoneError;
+    }
+  },
+
+  closeChatGetItDone() {
+    Object.assign(this, createChatGetItDoneState());
+  },
+
+  handleChatGetItDoneOverlayClick() {
+    const openedAt = Number(this.chatGetItDoneOpenedAt || 0);
+    if (openedAt > 0 && (Date.now() - openedAt) < 250) return;
+    this.closeChatGetItDone();
+  },
+
+  openChatGetItDoneAssigneePicker() {
+    this.showChatGetItDoneAssigneePicker = true;
+  },
+
+  closeChatGetItDoneAssigneePicker() {
+    this.showChatGetItDoneAssigneePicker = false;
+    this.chatGetItDoneAssigneeQuery = '';
+  },
+
+  handleChatGetItDoneAssigneeInput(value) {
+    this.chatGetItDoneAssigneeQuery = value;
+    this.showChatGetItDoneAssigneePicker = true;
+    if (String(value || '').startsWith('npub1') && String(value || '').length >= 20) {
+      this.resolveChatProfile?.(value);
+    }
+  },
+
+  async selectChatGetItDoneAssignee(npub) {
+    const nextNpub = String(npub || '').trim();
+    this.chatGetItDoneAssigneeNpub = nextNpub || null;
+    this.chatGetItDoneAssigneeQuery = '';
+    this.showChatGetItDoneAssigneePicker = false;
+    if (nextNpub) {
+      await this.rememberPeople?.([nextNpub], 'task-assignee');
+    }
+  },
+
+  async clearChatGetItDoneAssignee() {
+    await this.selectChatGetItDoneAssignee(null);
+  },
+
+  openChatGetItDoneScopePicker() {
+    this.showChatGetItDoneScopePicker = true;
+  },
+
+  closeChatGetItDoneScopePicker() {
+    this.showChatGetItDoneScopePicker = false;
+    this.chatGetItDoneScopeQuery = '';
+  },
+
+  handleChatGetItDoneScopeInput(value) {
+    this.chatGetItDoneScopeQuery = value;
+    this.showChatGetItDoneScopePicker = true;
+  },
+
+  selectChatGetItDoneScope(scopeId) {
+    const nextScopeId = String(scopeId || '').trim();
+    this.chatGetItDoneScopeId = nextScopeId || null;
+    this.chatGetItDoneScopeQuery = '';
+    this.showChatGetItDoneScopePicker = false;
+  },
+
+  clearChatGetItDoneScope() {
+    this.selectChatGetItDoneScope(null);
+  },
+
+  async submitChatGetItDone() {
+    this.error = null;
+    this.chatGetItDoneError = null;
+    if (!this.chatGetItDoneCanSubmit) {
+      this.chatGetItDoneError = 'Add a short task title before creating the task.';
+      this.error = this.chatGetItDoneError;
+      return null;
+    }
+
+    const source = this.chatGetItDoneSource;
+    const sourceLink = { type: 'chat', id: `${source.channelId}#${source.threadRootMessageId}` };
+    const sourceLinks = [sourceLink];
+    const deliverableLinks = [];
+    const scopeId = this.chatGetItDoneScopeId || this.resolveChatGetItDoneDefaultScope();
+    this.chatGetItDoneSubmitting = true;
+    try {
+      if (this.chatGetItDoneOutputType === 'doc' && typeof this.createDocument === 'function') {
+        const doc = await this.createDocument(this.chatGetItDoneTitle, { scopeId, sourceLinks });
+        if (doc?.record_id) deliverableLinks.push({ type: 'doc', id: doc.record_id, order: 1 });
+      }
+
+      const description = buildChatGetItDoneTaskDescription({
+        prompt: this.chatGetItDoneTitle,
+        outputType: this.chatGetItDoneOutputType,
+        extraInstructions: this.chatGetItDoneInstructions,
+        sourceUrl: this.buildChatGetItDoneSourceUrl(source),
+        messages: this.chatGetItDoneMessages,
+        senderLabelResolver: (message) => this.getSenderName?.(message?.sender_npub) || message?.sender_npub || 'Unknown sender',
+      });
+
+      this.newTaskTitle = String(this.chatGetItDoneTitle || '').trim();
+      const createdTask = await this.addTask?.({
+        description,
+        state: 'ready',
+        scopeId,
+        assignedToNpub: this.chatGetItDoneAssigneeNpub || null,
+        sourceLinks,
+        deliverableLinks,
+      });
+      if (!createdTask?.record_id) {
+        throw new Error('Failed to create the ready task from this chat thread.');
+      }
+      this.closeChatGetItDone();
+      this.navigateTo?.('tasks', { syncRoute: false });
+      this.openTaskDetail?.(createdTask.record_id);
+      this.syncRoute?.();
+      return createdTask;
+    } catch (error) {
+      this.chatGetItDoneError = error?.message || 'Failed to create the ready task from this chat thread.';
+      this.error = this.chatGetItDoneError;
+      return null;
+    } finally {
+      this.chatGetItDoneSubmitting = false;
     }
   },
 

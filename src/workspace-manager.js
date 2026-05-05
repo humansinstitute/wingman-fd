@@ -59,6 +59,7 @@ import {
 } from './crypto/group-keys.js';
 import { personalEncryptForNpub } from './auth/nostr.js';
 import { outboundWorkspaceSettings, normalizeHarnessUrl } from './translators/settings.js';
+import { normalizeChannelOrder, sortChannelsByOrder } from './channel-order.js';
 import { buildAppSchemaManifestRequest, getFlightDeckSchemaBundle } from './translators/app-schema.js';
 import { buildStoragePrepareBody } from './storage-payloads.js';
 import { buildSuperBasedConnectionToken } from './superbased-token.js';
@@ -452,6 +453,15 @@ export const workspaceManagerMixin = {
     this.workspaceSettingsGroupIds = Array.isArray(row?.group_ids) ? [...row.group_ids] : [];
     this.workspaceHarnessUrl = String(row?.wingman_harness_url || '').trim();
     this.workspaceTriggers = Array.isArray(row?.triggers) ? [...row.triggers] : [];
+    const rowChannelOrder = Array.isArray(row?.channel_order)
+      ? row.channel_order.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    this.channelOrder = Array.isArray(this.channels) && this.channels.length > 0
+      ? normalizeChannelOrder(rowChannelOrder, this.channels)
+      : rowChannelOrder;
+    if (Array.isArray(this.channels) && this.channels.length > 0) {
+      this.channels = sortChannelsByOrder(this.channels, this.channelOrder);
+    }
     if (overwriteInput || !this.wingmanHarnessDirty) {
       this.wingmanHarnessInput = this.workspaceHarnessUrl;
       this.wingmanHarnessDirty = false;
@@ -760,6 +770,94 @@ export const workspaceManagerMixin = {
     }
     await this.refreshSyncStatus();
     this.ensureBackgroundSync(true);
+  },
+
+  async saveWorkspaceChannelOrder(order = []) {
+    const workspaceOwnerNpub = this.workspaceOwnerNpub;
+    if (!workspaceOwnerNpub || !this.session?.npub) return null;
+
+    const normalizedOrder = normalizeChannelOrder(order, this.channels || []);
+    this.channelOrder = normalizedOrder;
+    this.channels = sortChannelsByOrder(this.channels || [], normalizedOrder);
+
+    const existing = await getWorkspaceSettings(workspaceOwnerNpub);
+    const now = new Date().toISOString();
+    const nextVersion = Math.max(
+      1,
+      Number(existing?.version || 0),
+      Number(this.workspaceSettingsVersion || 0),
+    ) + 1;
+    const recordId = existing?.record_id || this.workspaceSettingsRecordId || workspaceSettingsRecordId(workspaceOwnerNpub);
+    const workspaceName = existing?.workspace_name ?? String(this.workspaceProfileNameInput || '').trim();
+    const workspaceDescription = existing?.workspace_description ?? String(this.workspaceProfileDescriptionInput || '').trim();
+    const workspaceAvatarUrl = (existing?.workspace_avatar_url ?? String(this.workspaceProfileAvatarInput || '').trim()) || null;
+    const harnessUrl = existing?.wingman_harness_url ?? this.workspaceHarnessUrl ?? '';
+    const triggers = Array.isArray(existing?.triggers) ? existing.triggers : toRaw(this.workspaceTriggers || []);
+    const writeGroupRef = this.getWorkspaceSettingsGroupRef()
+      || this.getWorkspaceAdminGroupRef()
+      || this.workspaceSettingsGroupIds?.[0]
+      || null;
+    if (!writeGroupRef) {
+      this.error = 'Workspace settings group is not configured yet.';
+      return null;
+    }
+
+    const localRow = {
+      workspace_owner_npub: workspaceOwnerNpub,
+      record_id: recordId,
+      owner_npub: workspaceOwnerNpub,
+      workspace_name: workspaceName,
+      workspace_description: workspaceDescription,
+      workspace_avatar_url: workspaceAvatarUrl,
+      wingman_harness_url: harnessUrl,
+      triggers,
+      channel_order: normalizedOrder,
+      group_ids: [writeGroupRef],
+      sync_status: 'pending',
+      record_state: 'active',
+      version: nextVersion,
+      updated_at: now,
+    };
+
+    await upsertWorkspaceSettings(localRow);
+    this.applyWorkspaceSettingsRow(localRow, { overwriteInput: false });
+
+    const writeFields = await getRecordWriteFieldsForStore(this, localRow, {
+      label: 'Workspace channel order write',
+      writeGroupRef,
+    });
+    const envelope = await outboundWorkspaceSettings({
+      record_id: recordId,
+      owner_npub: workspaceOwnerNpub,
+      workspace_owner_npub: workspaceOwnerNpub,
+      workspace_name: workspaceName,
+      workspace_description: workspaceDescription,
+      workspace_avatar_url: workspaceAvatarUrl,
+      wingman_harness_url: harnessUrl,
+      triggers,
+      channel_order: normalizedOrder,
+      group_ids: writeFields.group_ids,
+      version: nextVersion,
+      previous_version: Math.max(0, nextVersion - 1),
+      signature_npub: this.session.npub,
+      write_group_ref: writeFields.write_group_ref,
+    });
+    await addPendingWrite({
+      record_id: recordId,
+      record_family_hash: envelope.record_family_hash,
+      envelope,
+    });
+
+    try {
+      await this.flushAndBackgroundSync();
+    } catch (syncError) {
+      flightDeckLog('warn', 'settings', 'channel order sync failed, will retry', {
+        error: syncError?.message || String(syncError),
+      });
+    }
+    await this.refreshSyncStatus?.();
+    this.ensureBackgroundSync?.(true);
+    return localRow;
   },
 
   // --- workspace CRUD ---

@@ -102,4 +102,27 @@ describe('record link UI/context helpers', () => {
     expect(store.openReportModalById).toHaveBeenCalledWith('report-1');
     expect(store.syncRoute).toHaveBeenCalledTimes(1);
   });
+
+  it('routes compound chat source links to the source thread', async () => {
+    const store = {
+      navigateTo: vi.fn(),
+      selectChannel: vi.fn(async () => {}),
+      openThread: vi.fn(),
+      syncRoute: vi.fn(),
+      startWorkspaceLiveQueries: vi.fn(),
+      mobileNavOpen: true,
+    };
+
+    await taskBoardStateMixin.navigateReference.call(store, {
+      type: 'chat',
+      id: 'channel-1#root-1',
+    });
+
+    expect(store.navigateTo).toHaveBeenCalledWith('chat', { syncRoute: false });
+    expect(store.selectChannel).toHaveBeenCalledWith('channel-1', { syncRoute: false });
+    expect(store.openThread).toHaveBeenCalledWith('root-1', { scrollToLatest: false, syncRoute: false });
+    expect(store.focusMessageId).toBe('root-1');
+    expect(store.mobileNavOpen).toBe(false);
+    expect(store.syncRoute).toHaveBeenCalled();
+  });
 });

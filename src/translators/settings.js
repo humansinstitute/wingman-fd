@@ -26,6 +26,9 @@ export async function inboundWorkspaceSettings(record) {
   const workspaceName = String(data.workspace_name || '').trim();
   const workspaceDescription = String(data.workspace_description || '').trim();
   const workspaceAvatarUrl = String(data.workspace_avatar_url || '').trim();
+  const channelOrder = Array.isArray(data.channel_order)
+    ? data.channel_order.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
 
   return {
     workspace_owner_npub: workspaceOwnerNpub,
@@ -36,6 +39,7 @@ export async function inboundWorkspaceSettings(record) {
     workspace_avatar_url: workspaceAvatarUrl || null,
     wingman_harness_url: normalizeHarnessUrl(data.wingman_harness_url),
     triggers: Array.isArray(data.triggers) ? data.triggers : [],
+    channel_order: channelOrder,
     group_ids: (record.group_payloads || []).map((groupPayload) => groupPayload.group_id || groupPayload.group_npub),
     sync_status: 'synced',
     record_state: data.record_state ?? 'active',
@@ -53,6 +57,7 @@ export async function outboundWorkspaceSettings({
   workspace_avatar_url = null,
   wingman_harness_url = '',
   triggers = [],
+  channel_order = [],
   group_ids = [],
   version = 1,
   previous_version = 0,
@@ -72,6 +77,9 @@ export async function outboundWorkspaceSettings({
       workspace_avatar_url: workspace_avatar_url == null ? null : (String(workspace_avatar_url || '').trim() || null),
       wingman_harness_url: normalizeHarnessUrl(wingman_harness_url),
       triggers: Array.isArray(triggers) ? triggers : [],
+      channel_order: Array.isArray(channel_order)
+        ? channel_order.map((id) => String(id || '').trim()).filter(Boolean)
+        : [],
       record_state,
     },
   };

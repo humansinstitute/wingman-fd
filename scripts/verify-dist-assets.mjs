@@ -25,6 +25,22 @@ if (!existsSync(indexPath)) {
     fail('dist/index.html does not reference any /assets/ files.');
   }
 
+  const requiredHtmlSnippets = [
+    {
+      label: 'chat Get it done action',
+      snippet: 'data-chat-get-it-done="true"',
+    },
+    {
+      label: 'chat Get it done modal',
+      snippet: 'data-testid="chat-get-it-done-modal"',
+    },
+  ];
+  for (const { label, snippet } of requiredHtmlSnippets) {
+    if (!html.includes(snippet)) {
+      fail(`dist/index.html is missing ${label}.`);
+    }
+  }
+
   for (const assetRef of assetRefs) {
     const assetPath = path.join(distDir, 'assets', assetRef);
     if (!existsSync(assetPath)) {
