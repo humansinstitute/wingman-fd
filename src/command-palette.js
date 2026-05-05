@@ -40,6 +40,13 @@ const COMMAND_GROUP_ORDER = Object.freeze([
 const MAX_GROUP_RESULTS = 8;
 const QUICK_DOC_SCOPE_STORAGE_KEY = 'flightdeck:quick-doc-default-scope-id';
 const NEW_WORK_SCOPE_STORAGE_KEY = 'flightdeck:new-work-default-scope-id';
+const COMMAND_PALETTE_ICON_SVG = {
+  flightdeck: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.07 4.93A10 10 0 0 0 4.93 19.07"></path><path d="M4.93 4.93a10 10 0 0 1 14.14 14.14"></path><path d="M8.46 8.46a5 5 0 0 1 7.08 0"></path><path d="M15.54 15.54a5 5 0 0 1-7.08 0"></path><circle cx="12" cy="12" r="2"></circle></svg>',
+  bot: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>',
+  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M8 12h8"></path><path d="M12 8v8"></path></svg>',
+  doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg>',
+  default: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"></path></svg>',
+};
 
 function readStoredScopeId(key) {
   if (typeof window === 'undefined' || !window.localStorage) return '';
@@ -230,6 +237,10 @@ export const commandPaletteMixin = {
         if (query) return sortByFreshness(left, right);
         return 0;
       });
+  },
+
+  getCommandPaletteIconSvg(icon) {
+    return COMMAND_PALETTE_ICON_SVG[icon] || COMMAND_PALETTE_ICON_SVG.default;
   },
 
   get commandPaletteGroups() {

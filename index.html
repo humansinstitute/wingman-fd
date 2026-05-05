@@ -428,6 +428,7 @@
                       @click="$store.chat.executeCommandPaletteItem(item)"
                     >
                       <span class="command-palette-result-icon" :data-icon="item.icon || item.group" aria-hidden="true">
+                        <span class="command-palette-result-icon-svg" x-html="$store.chat.getCommandPaletteIconSvg(item.icon || item.group)"></span>
                         <span class="command-palette-result-icon-key" x-show="item.shortcutKey" x-text="item.shortcutKey"></span>
                       </span>
                       <span class="command-palette-result-main">

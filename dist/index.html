@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-tKzLkp9Q.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-C6gxD1As.css">
+  <script type="module" crossorigin src="/assets/index-oDjg6atP.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CSeJ7MPF.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -430,6 +430,7 @@
                       @click="$store.chat.executeCommandPaletteItem(item)"
                     >
                       <span class="command-palette-result-icon" :data-icon="item.icon || item.group" aria-hidden="true">
+                        <span class="command-palette-result-icon-svg" x-html="$store.chat.getCommandPaletteIconSvg(item.icon || item.group)"></span>
                         <span class="command-palette-result-icon-key" x-show="item.shortcutKey" x-text="item.shortcutKey"></span>
                       </span>
                       <span class="command-palette-result-main">

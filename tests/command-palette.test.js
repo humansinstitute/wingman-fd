@@ -94,8 +94,18 @@ describe('command palette launchers', () => {
   it('renders quick launch items as a quadrant grid with icon shortcut labels', () => {
     expect(indexSource).toContain('command-palette-results-quick');
     expect(indexSource).toContain('command-palette-group-quick');
+    expect(indexSource).toContain('command-palette-result-icon-svg');
+    expect(indexSource).toContain('getCommandPaletteIconSvg(item.icon || item.group)');
     expect(indexSource).toContain('command-palette-result-icon-key');
     expect(indexSource).not.toContain('command-palette-result-key');
+  });
+
+  it('uses SVG icons for command palette items', () => {
+    const store = createStore();
+
+    expect(store.getCommandPaletteIconSvg('bot')).toContain('<svg');
+    expect(store.getCommandPaletteIconSvg('bot')).toContain('<rect');
+    expect(store.getCommandPaletteIconSvg('missing')).toContain('<path d="M9 18l6-6-6-6">');
   });
 
   it('renders a two-line New Work description field with image paste handling', () => {
