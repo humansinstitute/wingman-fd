@@ -8,6 +8,14 @@ const repoRoot = path.resolve(__dirname, '..');
 const schemaDir = path.resolve(repoRoot, '../sb-publisher/schemas/flightdeck');
 const outFile = path.resolve(repoRoot, 'src/generated/flightdeck-schema-bundle.js');
 
+if (!fs.existsSync(schemaDir)) {
+  if (fs.existsSync(outFile)) {
+    console.log(`Schema source ${schemaDir} not found; using existing ${path.relative(repoRoot, outFile)}`);
+    process.exit(0);
+  }
+  throw new Error(`Schema source ${schemaDir} not found and ${path.relative(repoRoot, outFile)} does not exist`);
+}
+
 function sortValue(value) {
   if (Array.isArray(value)) return value.map(sortValue);
   if (!value || typeof value !== 'object') return value;
