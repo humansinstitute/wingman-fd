@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-CgRtKs7R.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DOt2Pwcu.css">
+  <script type="module" crossorigin src="/assets/index-B2gKZSik.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-fh_HHMVW.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -1454,11 +1454,22 @@
                 <div class="task-detail-main">
                   <!-- Title -->
                   <div class="task-detail-record-header">
-                    <h1
-                      class="task-detail-title-display"
-                      x-show="!$store.chat.isTaskDetailEditing()"
-                      x-text="$store.chat.editingTask.title || 'Untitled task'"
-                    ></h1>
+                    <div class="task-detail-title-row" x-show="!$store.chat.isTaskDetailEditing()">
+                      <h1
+                        class="task-detail-title-display"
+                        x-text="$store.chat.editingTask.title || 'Untitled task'"
+                      ></h1>
+                      <template x-if="$store.chat.editingTask.assigned_to_npub">
+                        <div class="task-detail-assignee-avatar" :title="$store.chat.getTaskAssigneeLabel($store.chat.editingTask)">
+                          <template x-if="$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)">
+                            <img :src="$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)" alt="" />
+                          </template>
+                          <template x-if="!$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)">
+                            <span x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.editingTask.assigned_to_npub))"></span>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
                     <div class="task-detail-meta-row" x-show="!$store.chat.isTaskDetailEditing()">
                       <span class="task-detail-meta-pill" :class="`task-detail-meta-state state-${$store.chat.editingTask.state || 'new'}`">
                         <span x-text="$store.chat.formatState($store.chat.editingTask.state || 'new')"></span>
@@ -1545,7 +1556,7 @@
                     </div>
                   </div>
 
-                  <div class="task-field task-field-wide" x-show="$store.chat.isTaskDetailEditing() || $store.chat.editingTask.assigned_to_npub">
+                  <div class="task-field task-field-wide" x-show="$store.chat.isTaskDetailEditing()">
                     <label class="task-field-label">Assigned</label>
                     <template x-if="$store.chat.editingTask.assigned_to_npub">
                       <div class="new-channel-resolved-profile task-assignee-selected">

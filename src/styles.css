@@ -8176,6 +8176,13 @@ button:disabled {
   padding-bottom: 0.65rem;
 }
 
+.task-detail-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1rem;
+}
+
 .task-detail-title-display {
   margin: 0;
   color: #020617;
@@ -8183,6 +8190,28 @@ button:disabled {
   line-height: 1.12;
   font-weight: 750;
   letter-spacing: 0;
+}
+
+.task-detail-assignee-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #334155;
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 750;
+  flex-shrink: 0;
+}
+
+.task-detail-assignee-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .task-detail-meta-row {

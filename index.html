@@ -1452,11 +1452,22 @@
                 <div class="task-detail-main">
                   <!-- Title -->
                   <div class="task-detail-record-header">
-                    <h1
-                      class="task-detail-title-display"
-                      x-show="!$store.chat.isTaskDetailEditing()"
-                      x-text="$store.chat.editingTask.title || 'Untitled task'"
-                    ></h1>
+                    <div class="task-detail-title-row" x-show="!$store.chat.isTaskDetailEditing()">
+                      <h1
+                        class="task-detail-title-display"
+                        x-text="$store.chat.editingTask.title || 'Untitled task'"
+                      ></h1>
+                      <template x-if="$store.chat.editingTask.assigned_to_npub">
+                        <div class="task-detail-assignee-avatar" :title="$store.chat.getTaskAssigneeLabel($store.chat.editingTask)">
+                          <template x-if="$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)">
+                            <img :src="$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)" alt="" />
+                          </template>
+                          <template x-if="!$store.chat.getSenderAvatar($store.chat.editingTask.assigned_to_npub)">
+                            <span x-text="$store.chat.getInitials($store.chat.getSenderName($store.chat.editingTask.assigned_to_npub))"></span>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
                     <div class="task-detail-meta-row" x-show="!$store.chat.isTaskDetailEditing()">
                       <span class="task-detail-meta-pill" :class="`task-detail-meta-state state-${$store.chat.editingTask.state || 'new'}`">
                         <span x-text="$store.chat.formatState($store.chat.editingTask.state || 'new')"></span>
@@ -1543,7 +1554,7 @@
                     </div>
                   </div>
 
-                  <div class="task-field task-field-wide" x-show="$store.chat.isTaskDetailEditing() || $store.chat.editingTask.assigned_to_npub">
+                  <div class="task-field task-field-wide" x-show="$store.chat.isTaskDetailEditing()">
                     <label class="task-field-label">Assigned</label>
                     <template x-if="$store.chat.editingTask.assigned_to_npub">
                       <div class="new-channel-resolved-profile task-assignee-selected">
