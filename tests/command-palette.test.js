@@ -146,6 +146,34 @@ describe('command palette launchers', () => {
     expect(store.openCommandPalette).toHaveBeenCalledTimes(1);
   });
 
+  it('supports macOS Option+K when the browser reports a dead-key character', () => {
+    let handler = null;
+    const preventDefault = vi.fn();
+    stubWindow({
+      addEventListener: vi.fn((eventName, callback) => {
+        if (eventName === 'keydown') handler = callback;
+      }),
+    });
+    const store = createStore();
+    store.openCommandPalette = vi.fn();
+
+    store.initCommandPaletteShortcuts();
+    handler({
+      key: 'Dead',
+      code: 'KeyK',
+      metaKey: false,
+      ctrlKey: false,
+      altKey: true,
+      shiftKey: false,
+      defaultPrevented: false,
+      target: { closest: () => null },
+      preventDefault,
+    });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(store.openCommandPalette).toHaveBeenCalledTimes(1);
+  });
+
   it('does not steal fallback shortcuts from editable fields', () => {
     let handler = null;
     stubWindow({

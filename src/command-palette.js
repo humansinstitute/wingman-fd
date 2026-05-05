@@ -134,7 +134,8 @@ function isEditableShortcutTarget(target) {
 }
 
 function isCommandPaletteOpenShortcut(event, key) {
-  if (key !== 'k' || event.shiftKey) return false;
+  const isPhysicalK = String(event.code || '') === 'KeyK';
+  if ((!isPhysicalK && key !== 'k') || event.shiftKey) return false;
   const targetIsEditable = isEditableShortcutTarget(event.target);
   if (event.metaKey && !event.ctrlKey && !event.altKey) return true;
   if (!targetIsEditable && event.altKey && !event.metaKey && !event.ctrlKey) return true;
