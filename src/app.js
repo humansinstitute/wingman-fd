@@ -3510,7 +3510,7 @@ export function initApp() {
         this.editingTask = toRaw(task);
         this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
         this.taskDetailMode = 'edit';
-        this.taskDescriptionEditing = !this.editingTask?.description;
+        this.taskDescriptionEditing = true;
         this.error = '';
         return true;
       } catch (error) {
