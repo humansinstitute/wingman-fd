@@ -177,6 +177,8 @@ export function buildFlowKickoffTaskRecord({
     predecessor_task_ids: null,
     ...flowReferencePatch,
     flow_step: null,
+    source_links: flow?.record_id ? [{ type: 'flow', id: flow.record_id }] : [],
+    deliverable_links: [],
     scope_id: normalizeNullableId(normalizedScopeAssignment.scope_id),
     scope_l1_id: normalizeNullableId(normalizedScopeAssignment.scope_l1_id),
     scope_l2_id: normalizeNullableId(normalizedScopeAssignment.scope_l2_id),

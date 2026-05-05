@@ -1,18 +1,40 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { acquireRecordCheckoutMock, releaseRecordCheckoutMock } = vi.hoisted(() => ({
+const {
+  acquireRecordCheckoutMock,
+  completeStorageObjectMock,
+  downloadStorageObjectMock,
+  prepareStorageObjectMock,
+  releaseRecordCheckoutMock,
+  uploadStorageObjectMock,
+} = vi.hoisted(() => ({
   acquireRecordCheckoutMock: vi.fn(),
+  completeStorageObjectMock: vi.fn(),
+  downloadStorageObjectMock: vi.fn(),
+  prepareStorageObjectMock: vi.fn(),
   releaseRecordCheckoutMock: vi.fn(),
+  uploadStorageObjectMock: vi.fn(),
 }));
 
 vi.mock('../src/api.js', () => ({
   acquireRecordCheckout: acquireRecordCheckoutMock,
+  completeStorageObject: completeStorageObjectMock,
+  downloadStorageObject: downloadStorageObjectMock,
   fetchRecordHistory: vi.fn(),
+  prepareStorageObject: prepareStorageObjectMock,
   releaseRecordCheckout: releaseRecordCheckoutMock,
+  uploadStorageObject: uploadStorageObjectMock,
 }));
 
-import { docsManagerMixin } from '../src/docs-manager.js';
+import {
+  docsManagerMixin,
+  mergeDocumentSaveReferences,
+} from '../src/docs-manager.js';
 import { isCheckoutHeld } from '../src/lock-managed-records.js';
+import {
+  DOCUMENT_CONTENT_STORAGE_FORMAT,
+  DOCUMENT_CONTENT_STORAGE_MIME,
+} from '../src/translators/docs.js';
 import {
   cacheGroupKey,
   clearCryptoContext,
@@ -58,6 +80,29 @@ function createStore(overrides = {}) {
 
   return store;
 }
+
+describe('docsManagerMixin record link save references', () => {
+  it('preserves existing generic references when autosave adds parsed mentions', () => {
+    const references = mergeDocumentSaveReferences({
+      record_id: 'doc-1',
+      source_links: [{ type: 'task', id: 'task-source' }],
+      references: [
+        { type: 'scope', id: 'scope-existing' },
+        { type: 'task', id: 'task-source' },
+      ],
+      deliverable_links: [{ type: 'doc', id: 'doc-output' }],
+    }, [
+      { type: 'task', id: 'task-mentioned' },
+      { type: 'scope', id: 'scope-existing' },
+      { type: 'doc', id: 'doc-output' },
+    ]);
+
+    expect(references).toEqual([
+      { type: 'scope', id: 'scope-existing' },
+      { type: 'task', id: 'task-mentioned' },
+    ]);
+  });
+});
 
 describe('docsManagerMixin.getMissingDocGroupRefs', () => {
   beforeEach(() => {
@@ -685,6 +730,50 @@ describe('docsManagerMixin checkout orchestration', () => {
 describe('docsManagerMixin canonical row normalization', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('uploads oversized document content for envelope storage', async () => {
+    prepareStorageObjectMock.mockResolvedValue({ object_id: 'storage-doc-1', upload_url: '' });
+    uploadStorageObjectMock.mockResolvedValue({});
+    completeStorageObjectMock.mockResolvedValue({});
+
+    const store = createStore({
+      workspaceOwnerNpub: 'npub1workspace',
+      _resolveDocGroupRef: (value) => String(value || '').trim() || null,
+    });
+    const contentModel = {
+      content: 'Transcript line\n'.repeat(6000),
+      content_format: 'block_document_v1',
+      content_blocks: [{ id: 'blk-1', type: 'markdown', text: 'Transcript line'.repeat(6000), attrs: {} }],
+    };
+
+    const payload = await store.prepareDocumentContentForEnvelope({
+      record_id: 'doc-large',
+      owner_npub: 'npub1workspace',
+      title: 'Transcript',
+      write_group_ref: 'group-1',
+      shares: [],
+    }, contentModel, ['group-1']);
+
+    expect(prepareStorageObjectMock).toHaveBeenCalledWith(expect.objectContaining({
+      owner_npub: 'npub1workspace',
+      owner_group_id: 'group-1',
+      access_group_ids: ['group-1'],
+      content_type: DOCUMENT_CONTENT_STORAGE_MIME,
+    }));
+    expect(uploadStorageObjectMock).toHaveBeenCalledWith(
+      expect.objectContaining({ object_id: 'storage-doc-1' }),
+      expect.any(Uint8Array),
+      DOCUMENT_CONTENT_STORAGE_MIME,
+    );
+    expect(completeStorageObjectMock).toHaveBeenCalledWith('storage-doc-1', expect.objectContaining({
+      size_bytes: expect.any(Number),
+      sha256_hex: expect.stringMatching(/^[a-f0-9]{64}$/),
+    }));
+    expect(payload.content_storage_object_id).toBe('storage-doc-1');
+    expect(payload.content_storage_format).toBe(DOCUMENT_CONTENT_STORAGE_FORMAT);
+    expect(payload.content).toHaveLength(8192);
+    expect(payload.content_blocks).toEqual([]);
   });
 
   it('preserves non-writable delivery groups in canonical document rows', () => {

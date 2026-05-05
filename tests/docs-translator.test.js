@@ -10,12 +10,18 @@ vi.mock('../src/translators/record-crypto.js', () => ({
       write: canWriteByGroup instanceof Map ? canWriteByGroup.get(group_npub) === true : true,
     }))),
 }));
+vi.mock('../src/api.js', () => ({
+  downloadStorageObject: vi.fn(),
+}));
 import {
   inboundDocument,
   outboundDocument,
   inboundDirectory,
   outboundDirectory,
+  DOCUMENT_CONTENT_STORAGE_FORMAT,
+  DOCUMENT_CONTENT_STORAGE_MIME,
 } from '../src/translators/docs.js';
+import { downloadStorageObject } from '../src/api.js';
 import { recordFamilyHash } from '../src/translators/chat.js';
 import { APP_NPUB } from '../src/app-identity.js';
 
@@ -111,6 +117,106 @@ describe('docs translator', () => {
     expect(inner.data.shares).toHaveLength(2);
     expect(inner.data.shares[0].inherited).toBe(true);
     expect(inner.data.shares[0].inherited_from_directory_id).toBe('dir-1');
+  });
+
+  it('round-trips document source, reference, and deliverable links', async () => {
+    const sourceLinks = [{ type: 'task', id: 'source-task' }];
+    const references = [{ type: 'scope', id: 'scope-1' }];
+    const deliverableLinks = [{ type: 'doc', id: 'deliverable-doc', order: 1 }];
+
+    const envelope = await outboundDocument({
+      record_id: 'doc-links',
+      owner_npub: 'npub_owner',
+      title: 'Linked doc',
+      content: 'See @[Scope](mention:scope:scope-1)',
+      content_blocks: [{ id: 'blk-1', type: 'markdown', text: 'body', attrs: {} }],
+      source_links: sourceLinks,
+      references,
+      deliverable_links: deliverableLinks,
+    });
+    const inner = JSON.parse(envelope.owner_payload.ciphertext);
+    expect(inner.data.source_links).toEqual(sourceLinks);
+    expect(inner.data.references).toEqual(references);
+    expect(inner.data.deliverable_links).toEqual(deliverableLinks);
+
+    const row = await inboundDocument({
+      record_id: 'doc-links',
+      owner_npub: 'npub_owner',
+      owner_payload: envelope.owner_payload,
+      group_payloads: [],
+    });
+    expect(row.source_links).toEqual(sourceLinks);
+    expect(row.references).toEqual(references);
+    expect(row.deliverable_links).toEqual(deliverableLinks);
+  });
+
+  it('materializes storage-backed document content', async () => {
+    downloadStorageObject.mockResolvedValue(new TextEncoder().encode(JSON.stringify({
+      format: DOCUMENT_CONTENT_STORAGE_FORMAT,
+      content_model: {
+        content: '# Transcript\n\nLong body',
+        content_format: 'block_document_v1',
+        content_blocks: [{ id: 'blk-transcript', type: 'markdown', text: '# Transcript\n\nLong body', attrs: {} }],
+      },
+    })));
+
+    const row = await inboundDocument({
+      record_id: 'doc-storage',
+      owner_npub: 'npub_owner',
+      version: 1,
+      updated_at: '2026-03-12T00:00:00Z',
+      owner_payload: {
+        ciphertext: JSON.stringify({
+          app_namespace: 'coworker',
+          collection_space: 'document',
+          schema_version: 1,
+          record_id: 'doc-storage',
+          data: {
+            title: 'Transcript',
+            content: '# Transcript',
+            content_format: 'block_document_v1',
+            content_blocks: [],
+            content_storage_object_id: 'storage-doc-1',
+            content_storage_format: DOCUMENT_CONTENT_STORAGE_FORMAT,
+            content_storage_content_type: DOCUMENT_CONTENT_STORAGE_MIME,
+            content_size_bytes: 123,
+            content_sha256_hex: 'abc123',
+            parent_directory_id: null,
+            shares: [],
+          },
+        }),
+      },
+      group_payloads: [],
+    });
+
+    expect(downloadStorageObject).toHaveBeenCalledWith('storage-doc-1');
+    expect(row.content).toBe('# Transcript\n\nLong body');
+    expect(row.content_blocks[0].id).toBe('blk-transcript');
+    expect(row.content_storage_status).toBe('loaded');
+    expect(row.content_storage_object_id).toBe('storage-doc-1');
+  });
+
+  it('builds a storage-backed document envelope without embedding the full body', async () => {
+    const envelope = await outboundDocument({
+      record_id: 'doc-storage',
+      owner_npub: 'npub_owner',
+      title: 'Transcript',
+      content: '# Transcript',
+      content_blocks: [],
+      content_storage_object_id: 'storage-doc-1',
+      content_storage_format: DOCUMENT_CONTENT_STORAGE_FORMAT,
+      content_storage_content_type: DOCUMENT_CONTENT_STORAGE_MIME,
+      content_size_bytes: 123,
+      content_sha256_hex: 'abc123',
+      group_ids: [],
+      shares: [],
+    });
+
+    const inner = JSON.parse(envelope.owner_payload.ciphertext);
+    expect(inner.data.content).toBe('# Transcript');
+    expect(inner.data.content_blocks).toEqual([]);
+    expect(inner.data.content_storage_object_id).toBe('storage-doc-1');
+    expect(inner.data.content_storage_content_type).toBe(DOCUMENT_CONTENT_STORAGE_MIME);
   });
 
   it('materializes a directory record into a local row', async () => {

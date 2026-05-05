@@ -106,6 +106,60 @@ describe('workspace API host binding', () => {
     expect(result.requestUrl).toBe('https://sb.example/api/v4/workspaces/npub1workspace/apps');
   });
 
+  it('publishes workspace app schema manifests on the configured backend', async () => {
+    const schemaBody = {
+      schema_hash: 'hash-1',
+      schema_version: 1,
+      record_families: [{ record_family_hash: 'npub1app:task', schema_version: 1 }],
+      owner_payload: { ciphertext: 'owner-ciphertext' },
+      group_payloads: [{ group_npub: 'npub1group', ciphertext: 'group-ciphertext', write: false }],
+    };
+    const fetchMock = vi.fn(async (requestUrl) => {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ ok: true, requestUrl }),
+        text: async () => JSON.stringify({ ok: true, requestUrl }),
+      };
+    });
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+    const result = await api.publishWorkspaceAppSchema('npub1workspace', 'npub1app', schemaBody);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://sb.example/api/v4/workspaces/npub1workspace/apps/npub1app/schemas');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify(schemaBody),
+    });
+    expect(result.requestUrl).toBe('https://sb.example/api/v4/workspaces/npub1workspace/apps/npub1app/schemas');
+  });
+
+  it('fetches workspace app schemas in one request from the configured backend', async () => {
+    const fetchMock = vi.fn(async (requestUrl) => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ schemas: [], requestUrl }),
+        text: async () => JSON.stringify({ schemas: [], requestUrl }),
+      };
+    });
+    globalThis.fetch = fetchMock;
+
+    const api = await import('../src/api.js');
+    api.setBaseUrl('https://sb.example');
+    const result = await api.fetchWorkspaceAppSchemas('npub1workspace', {
+      app_npub: 'npub1app',
+      latest: false,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://sb.example/api/v4/workspaces/npub1workspace/app-schemas?app_npub=npub1app&latest=false');
+    expect(result.requestUrl).toBe('https://sb.example/api/v4/workspaces/npub1workspace/app-schemas?app_npub=npub1app&latest=false');
+  });
+
   it('uses the configured backend for storage prepare requests', async () => {
     const fetchMock = vi.fn(async (requestUrl) => {
       return {

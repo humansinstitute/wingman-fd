@@ -279,6 +279,26 @@ export async function registerWorkspaceApp(workspaceOwnerNpub, { app_npub, app_n
   return json(resp, { requestUrl, method: 'POST' });
 }
 
+export async function publishWorkspaceAppSchema(workspaceOwnerNpub, appNpub, body) {
+  const requestPath = `/api/v4/workspaces/${encodeURIComponent(workspaceOwnerNpub)}/apps/${encodeURIComponent(appNpub)}/schemas`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetchWithFallbacks(requestPath, {
+    method: 'POST',
+    body,
+  });
+  return json(resp, { requestUrl, method: 'POST' });
+}
+
+export async function fetchWorkspaceAppSchemas(workspaceOwnerNpub, { app_npub, latest = true } = {}) {
+  const params = new URLSearchParams();
+  if (app_npub) params.set('app_npub', app_npub);
+  if (latest !== undefined) params.set('latest', latest ? 'true' : 'false');
+  const requestPath = `/api/v4/workspaces/${encodeURIComponent(workspaceOwnerNpub)}/app-schemas${params.size ? `?${params}` : ''}`;
+  const requestUrl = url(requestPath);
+  const resp = await signedFetchWithFallbacks(requestPath, {});
+  return json(resp, { requestUrl, method: 'GET' });
+}
+
 export async function registerWorkspaceKey({ workspace_owner_npub, ws_key_npub }) {
   const requestPath = '/api/v4/user/workspace-keys';
   const requestUrl = url(requestPath);

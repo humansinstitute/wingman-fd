@@ -15,6 +15,7 @@ vi.mock('../src/translators/record-crypto.js', () => ({
 }));
 
 import { APP_NPUB } from '../src/app-identity.js';
+import { FLIGHT_DECK_SCHEMA_BUNDLE } from '../src/generated/flightdeck-schema-bundle.js';
 import { SYNC_FAMILY_OPTIONS } from '../src/sync-families.js';
 import { outboundApproval } from '../src/translators/approvals.js';
 import { outboundAudioNote } from '../src/translators/audio-notes.js';
@@ -81,6 +82,19 @@ describe('published Flight Deck schema manifests', () => {
   it('sync-family registry matches published schema set', () => {
     const registryIds = SYNC_FAMILY_OPTIONS.map((f) => f.id).sort();
     expect(registryIds).toEqual(expectedFamilies);
+  });
+
+  it('app schema bundle includes every published schema manifest for Tower discovery', () => {
+    const manifestFamilies = fs.readdirSync(schemaDir)
+      .filter((file) => file.endsWith('-v1.json'))
+      .map((file) => file.replace(/-v1\.json$/, ''))
+      .sort();
+    const bundleFamilies = FLIGHT_DECK_SCHEMA_BUNDLE.schemas
+      .map((schema) => schema.collection_space)
+      .sort();
+
+    expect(FLIGHT_DECK_SCHEMA_BUNDLE.schema_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(bundleFamilies).toEqual(manifestFamilies);
   });
 
   it('validate real outbound Flight Deck payloads', async () => {

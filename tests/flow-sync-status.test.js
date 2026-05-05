@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { syncManagerMixin } from '../src/sync-manager.js';
 
 vi.mock('../src/api.js', () => ({
+  downloadStorageObject: vi.fn(),
   fetchRecordHistory: vi.fn(),
   syncRecords: vi.fn(),
 }));

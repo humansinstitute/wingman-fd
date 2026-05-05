@@ -130,8 +130,8 @@
           type="button"
           class="brand-lockup brand-lockup-button"
           :class="{ 'brand-lockup-clickable': $store.chat.isLoggedIn }"
-          @click="if ($store.chat.isLoggedIn) $store.chat.navigateTo('status')"
-          :aria-label="$store.chat.isLoggedIn ? 'Go to Flight Deck' : 'Wingman'"
+          @click="if ($store.chat.isLoggedIn) $store.chat.openCommandPalette()"
+          :aria-label="$store.chat.isLoggedIn ? 'Open command palette' : 'Wingman'"
         >
           <img class="brand-logo" src="/wingman-logo.png" alt="Wingman logo" />
           <div class="brand-copy">
@@ -369,6 +369,114 @@
           <pre class="agent-config-json"><code x-text="$store.chat.agentConnectJson"></code></pre>
         </div>
       </div>
+    </div>
+
+    <div
+      class="command-palette-overlay"
+      x-show="$store.chat.showCommandPalette"
+      x-cloak
+      @click.self="$store.chat.closeCommandPalette()"
+      @keydown.escape.window="$store.chat.closeCommandPalette()"
+    >
+      <section
+        class="command-palette"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        @keydown.arrow-down.prevent="$store.chat.moveCommandPaletteSelection(1)"
+        @keydown.arrow-up.prevent="$store.chat.moveCommandPaletteSelection(-1)"
+        @keydown.enter.prevent="$store.chat.selectCommandPaletteActiveItem()"
+      >
+        <div class="command-palette-search">
+          <input
+            type="search"
+            data-command-palette-input
+            x-model="$store.chat.commandPaletteQuery"
+            @input="$store.chat.commandPaletteActiveId = ''"
+            placeholder="Search Flight Deck or press 1-4"
+            aria-label="Search Flight Deck"
+            autocomplete="off"
+          />
+          <span class="command-palette-shortcut">⌘K</span>
+        </div>
+        <p class="command-palette-scope" x-show="$store.chat.selectedBoardScope">
+          <span>Active scope</span>
+          <strong x-text="$store.chat.commandPaletteCurrentScopeLabel"></strong>
+        </p>
+        <p class="command-palette-empty" x-show="!$store.chat.commandPaletteLoading && $store.chat.commandPaletteFlatResults.length === 0">
+          No matching scopes, records, or commands.
+        </p>
+        <p class="command-palette-empty" x-show="$store.chat.commandPaletteLoading">
+          Indexing local records...
+        </p>
+        <div class="command-palette-results" x-show="$store.chat.commandPaletteFlatResults.length > 0">
+          <template x-for="group in $store.chat.commandPaletteGroups" :key="group.id">
+            <section class="command-palette-group">
+              <h3 x-text="group.label"></h3>
+              <ul>
+                <template x-for="item in group.items" :key="item.id">
+                  <li>
+                    <button
+                      type="button"
+                      class="command-palette-result"
+                      :class="{ 'command-palette-result-active': $store.chat.commandPaletteActiveItem?.id === item.id }"
+                      @mouseenter="$store.chat.commandPaletteActiveId = item.id"
+                      @click="$store.chat.executeCommandPaletteItem(item)"
+                    >
+                      <span class="command-palette-result-key" x-show="item.shortcutKey" x-text="item.shortcutKey"></span>
+                      <span class="command-palette-result-icon" :data-icon="item.icon || item.group" aria-hidden="true"></span>
+                      <span class="command-palette-result-main">
+                        <span class="command-palette-result-title" x-text="item.title"></span>
+                        <span class="command-palette-result-subtitle" x-text="item.subtitle"></span>
+                      </span>
+                      <span class="command-palette-result-type" x-text="item.groupLabel"></span>
+                    </button>
+                  </li>
+                </template>
+              </ul>
+            </section>
+          </template>
+        </div>
+      </section>
+    </div>
+
+    <div
+      class="command-palette-overlay"
+      x-show="$store.chat.showCommandPaletteNewWorkModal"
+      x-cloak
+      @click.self="$store.chat.closeCommandPaletteNewWorkModal()"
+      @keydown.escape.window="$store.chat.closeCommandPaletteNewWorkModal()"
+    >
+      <section class="command-palette command-palette-new-work" role="dialog" aria-modal="true" aria-label="New work">
+        <form @submit.prevent="$store.chat.createCommandPaletteNewWork()">
+          <div class="command-palette-search">
+            <input
+              type="text"
+              data-command-palette-new-work-input
+              x-model="$store.chat.commandPaletteNewWorkTitle"
+              placeholder="What needs doing?"
+              aria-label="New work title"
+              autocomplete="off"
+              required
+            />
+          </div>
+          <div class="command-palette-form-body">
+            <label>
+              <span>Scope</span>
+              <select x-model="$store.chat.commandPaletteNewWorkScopeId">
+                <option value="">Current board</option>
+                <template x-for="scope in $store.chat.scopes.filter((item) => item.record_state !== 'deleted')" :key="`new-work-scope-${scope.record_id}`">
+                  <option :value="scope.record_id" x-text="$store.chat.getScopeBreadcrumb(scope.record_id) || scope.title || scope.record_id"></option>
+                </template>
+              </select>
+            </label>
+          </div>
+          <div class="command-palette-form-actions">
+            <button type="button" class="btn-cancel" @click="$store.chat.closeCommandPaletteNewWorkModal()">Cancel</button>
+            <button type="submit" class="btn-confirm">Create task</button>
+          </div>
+        </form>
+      </section>
     </div>
 
     <div class="app-layout" x-show="$store.chat.isLoggedIn">
@@ -957,6 +1065,7 @@
             <input
               class="task-create-input"
               type="text"
+              data-new-task-input
               x-model="$store.chat.newTaskTitle"
               placeholder="Add a task..."
               required
@@ -1672,19 +1781,24 @@
                     </div>
                   </template>
 
-                  <!-- References -->
-                  <template x-if="($store.chat.editingTask.references || []).length > 0">
+                  <!-- Record links -->
+                  <template x-if="$store.chat.getVisibleRecordLinkSections($store.chat.editingTask).length > 0">
                     <div class="task-references-section">
-                      <label class="task-field-label">References</label>
-                      <div class="task-references-list">
-                        <template x-for="ref in $store.chat.editingTask.references" :key="`ref-${ref.type}-${ref.id}`">
-                          <button type="button" class="task-reference-chip"
-                            @click="$store.chat.navigateReference(ref)">
-                            <span class="task-reference-type" x-text="ref.type"></span>
-                            <span x-text="$store.chat.resolveReferenceLabel(ref)"></span>
-                          </button>
-                        </template>
-                      </div>
+                      <template x-for="section in $store.chat.getVisibleRecordLinkSections($store.chat.editingTask)" :key="`task-link-section-${section.kind}`">
+                        <div class="record-link-section" :class="`record-link-section-${section.kind}`">
+                          <label class="task-field-label" x-text="section.label"></label>
+                          <div class="task-references-list">
+                            <template x-for="ref in section.links" :key="`${section.kind}-${ref.type}-${ref.id}`">
+                              <button type="button" class="task-reference-chip record-link-chip"
+                                :class="`record-link-chip-${section.kind}`"
+                                @click="$store.chat.navigateReference(ref)">
+                                <span class="task-reference-type" x-text="$store.chat.getRecordLinkTypeLabel(ref)"></span>
+                                <span x-text="$store.chat.resolveReferenceLabel(ref)"></span>
+                              </button>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
                     </div>
                   </template>
                 </div>
@@ -2486,6 +2600,29 @@
                     @click="$store.chat.openDocScopeModal()"
                   ><span class="doc-scope-pill doc-scope-pill-title doc-scope-pill-unscoped">Unscoped</span></button>
                 </div>
+
+                <template x-if="$store.chat.getVisibleRecordLinkSections($store.chat.selectedDocument).length > 0">
+                  <div class="doc-record-links">
+                    <template x-for="section in $store.chat.getVisibleRecordLinkSections($store.chat.selectedDocument)" :key="`doc-link-section-${section.kind}`">
+                      <div class="record-link-section" :class="`record-link-section-${section.kind}`">
+                        <span class="doc-record-link-heading" x-text="section.label"></span>
+                        <div class="task-references-list">
+                          <template x-for="ref in section.links" :key="`${section.kind}-${ref.type}-${ref.id}`">
+                            <button
+                              type="button"
+                              class="task-reference-chip record-link-chip"
+                              :class="`record-link-chip-${section.kind}`"
+                              @click="$store.chat.navigateReference(ref)"
+                            >
+                              <span class="task-reference-type" x-text="$store.chat.getRecordLinkTypeLabel(ref)"></span>
+                              <span x-text="$store.chat.resolveReferenceLabel(ref)"></span>
+                            </button>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
 
                 <div class="doc-content-block">
                   <template x-if="$store.chat.docEditorMode !== 'source'">
@@ -4860,6 +4997,17 @@
                 </li>
               </template>
             </ul>
+            <label class="settings-field-label" for="quick-doc-scope-input">Quick Doc scope</label>
+            <select
+              id="quick-doc-scope-input"
+              x-model="$store.chat.commandPaletteQuickDocScopeId"
+              @change="$store.chat.persistCommandPaletteQuickDocScopeId($event.target.value)"
+            >
+              <option value="">Current scope</option>
+              <template x-for="scope in $store.chat.scopes.filter((item) => item.record_state !== 'deleted')" :key="`quick-doc-scope-${scope.record_id}`">
+                <option :value="scope.record_id" x-text="$store.chat.getScopeBreadcrumb(scope.record_id) || scope.title || scope.record_id"></option>
+              </template>
+            </select>
           </section>
 
           <section class="settings-panel">

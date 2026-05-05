@@ -1,6 +1,11 @@
 import { APP_NPUB, recordFamilyNamespace } from '../app-identity.js';
 import { buildGroupPayloads, decryptRecordPayload, encryptOwnerPayload } from './record-crypto.js';
 import { buildWriteGroupFields, buildGroupRefMap, normalizeGroupRef, extractGroupIds, normalizeShareGroupRefs } from './group-refs.js';
+import {
+  buildRecordLinkPayload,
+  normalizeRecordLinkFields,
+  parseRecordReferencesFromText,
+} from '../record-links.js';
 
 export function recordFamilyHash(collectionSpace) {
   return `${recordFamilyNamespace()}:${collectionSpace}`;
@@ -13,6 +18,8 @@ export async function inboundTask(record) {
   const data = payload.data ?? payload;
   const gp = record.group_payloads || [];
   const groupRefMap = buildGroupRefMap(gp);
+
+  const recordLinks = normalizeRecordLinkFields(data);
 
   return {
     record_id:      record.record_id,
@@ -37,7 +44,7 @@ export async function inboundTask(record) {
     flow_id:        data.flow_id ?? null,
     flow_run_id:    data.flow_run_id ?? null,
     flow_step:      data.flow_step ?? null,
-    references:     Array.isArray(data.references) ? data.references : [],
+    ...recordLinks,
     shares:         normalizeShareGroupRefs(data.shares, gp),
     group_ids:      extractGroupIds(gp),
     sync_status:    'synced',
@@ -73,7 +80,9 @@ export async function outboundTask({
   scope_l4_id = null,
   scope_l5_id = null,
   scope_policy_group_ids = null,
+  source_links = [],
   references = [],
+  deliverable_links = [],
   shares = [],
   group_ids = [],
   version = 1,
@@ -82,6 +91,7 @@ export async function outboundTask({
   write_group_ref = null,
   record_state = 'active',
 }) {
+  const recordLinks = buildRecordLinkPayload({ source_links, references, deliverable_links });
   const innerPayload = {
     app_namespace: APP_NPUB,
     collection_space: 'task',
@@ -108,7 +118,7 @@ export async function outboundTask({
       scope_l4_id,
       scope_l5_id,
       scope_policy_group_ids,
-      references,
+      ...recordLinks,
       shares,
       record_state,
     },
@@ -168,24 +178,8 @@ export function parseTags(tagsString) {
   return tagsString.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
 }
 
-const MENTION_TOKEN_RE = /@\[.*?\]\(mention:(\w+):([^)]+)\)/g;
-
 export function parseReferencesFromDescription(description) {
-  if (!description) return [];
-  const seen = new Set();
-  const refs = [];
-  let match;
-  const re = new RegExp(MENTION_TOKEN_RE.source, 'g');
-  while ((match = re.exec(description)) !== null) {
-    const type = match[1];
-    const id = match[2];
-    if (type === 'person') continue;
-    const key = `${type}:${id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    refs.push({ type, id });
-  }
-  return refs;
+  return parseRecordReferencesFromText(description);
 }
 
 // --- flow reference linkage ---

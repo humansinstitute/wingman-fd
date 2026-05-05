@@ -57,6 +57,7 @@ import { filterDocItemsByScope } from './docs-scope-filter.js';
 import { sectionLiveQueryMixin } from './section-live-queries.js';
 import { applySelectedDocumentUpdate } from './document-selection.js';
 import { createChatThreadFlowDispatchState } from './chat-thread-flow-dispatch.js';
+import { commandPaletteMixin, createCommandPaletteState } from './command-palette.js';
 import {
   toRaw,
   normalizeBackendUrl,
@@ -144,6 +145,10 @@ import {
   isTaskUnscoped,
   matchesTaskBoardScope,
 } from './task-board-scopes.js';
+import {
+  buildRecordLinkPayload,
+  mergeRecordLinkLists,
+} from './record-links.js';
 import {
   buildCascadedSubtaskUpdate,
 } from './task-scope-cascade.js';
@@ -415,6 +420,7 @@ export function initApp() {
     approvalPreviewCommentBody: '',
     approvalPreviewAnchorLine: null,
     approvalPreviewExpanded: false,
+    ...createCommandPaletteState(),
     recordVersionModalOpen: false,
     recordVersionFamilyId: '',
     recordVersionRecordId: '',
@@ -1296,6 +1302,7 @@ export function initApp() {
 
     async init() {
       this.startExtensionSignerWatch();
+      this.initCommandPaletteShortcuts();
       this.initRouteSync();
       this.routeSyncPaused = true; // pause until applyRouteFromLocation restores the URL
       this.initDocCommentConnector();
@@ -3192,7 +3199,9 @@ export function initApp() {
         flow_id: flowLinkage.flow_id,
         flow_run_id: flowLinkage.flow_run_id,
         flow_step: flowLinkage.flow_step,
+        source_links: [],
         references: flowLinkage.references,
+        deliverable_links: [],
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -3428,7 +3437,9 @@ export function initApp() {
         scheduled_for: null,
         tags: '',
         predecessor_task_ids: null,
+        source_links: [{ type: 'task', id: parentId }],
         references: [],
+        deliverable_links: [],
         sync_status: 'pending',
         record_state: 'active',
         version: 1,
@@ -3557,10 +3568,16 @@ export function initApp() {
 
       const nextVersion = (task.version ?? 1) + 1;
       const descRefs = parseReferencesFromDescription(this.editingTask.description);
+      const existingRecordLinks = buildRecordLinkPayload({
+        source_links: this.editingTask.source_links ?? task.source_links ?? [],
+        references: this.editingTask.references ?? task.references ?? [],
+        deliverable_links: this.editingTask.deliverable_links ?? task.deliverable_links ?? [],
+      });
+      const baseReferences = mergeRecordLinkLists(existingRecordLinks.references, descRefs);
       const flowLinkage = resolveFlowLinkage({
         title: this.editingTask.title,
         description: this.editingTask.description,
-        references: descRefs,
+        references: baseReferences,
         flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
       });
       const predecessorTaskIds = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
@@ -3587,7 +3604,9 @@ export function initApp() {
         flow_id: flowLinkage.flow_id ?? task.flow_id ?? null,
         flow_run_id: flowLinkage.flow_run_id ?? task.flow_run_id ?? null,
         flow_step: flowLinkage.flow_step ?? task.flow_step ?? null,
+        source_links: existingRecordLinks.source_links,
         references: flowLinkage.references,
+        deliverable_links: existingRecordLinks.deliverable_links,
       });
       const scopePolicyPatch = draft.scope_id
         ? (() => {
@@ -5353,6 +5372,7 @@ export function initApp() {
     flowsManagerMixin,
     personsManagerMixin,
     opportunitiesManagerMixin,
+    commandPaletteMixin,
   );
 
   Alpine.store('chat', storeObj);

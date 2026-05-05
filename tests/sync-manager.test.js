@@ -17,6 +17,7 @@ vi.mock('../src/crypto/group-keys.js', () => ({
 }));
 
 vi.mock('../src/api.js', () => ({
+  downloadStorageObject: vi.fn(),
   fetchRecordHistory: vi.fn(),
   syncRecords: vi.fn(),
 }));

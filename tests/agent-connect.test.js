@@ -27,7 +27,14 @@ describe('buildAgentConnectPackage', () => {
     expect(pkg.workspace.owner_npub).toBe('npub1owner');
     expect(pkg.workspace.owner_pubkey).toBe('a'.repeat(64));
     expect(pkg.app.app_npub).toMatch(/^npub1/);
+    expect(pkg.record_link_model.agent_context_priority).toEqual([
+      'record',
+      'source_links',
+      'deliverable_links',
+      'references',
+    ]);
     expect(pkg.connection_token).toBeTruthy();
+    expect(pkg.notes).toContain('For record context, treat source_links and deliverable_links as higher-signal than generic references.');
     expect(pkg.notes).toContain('Use Wingman Yoke when it is available in the target environment.');
   });
 

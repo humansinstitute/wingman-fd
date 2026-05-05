@@ -690,7 +690,11 @@ export const opportunitiesManagerMixin = {
       flow_id: flowLinkage.flow_id,
       flow_run_id: flowLinkage.flow_run_id,
       flow_step: flowLinkage.flow_step,
+      source_links: this.editingOpportunity?.record_id
+        ? [{ type: 'opportunity', id: this.editingOpportunity.record_id }]
+        : [],
       references: flowLinkage.references,
+      deliverable_links: [],
       sync_status: 'pending',
       record_state: 'active',
       version: 1,

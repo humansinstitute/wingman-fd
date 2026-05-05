@@ -471,11 +471,12 @@ export const chatMessageManagerMixin = {
 
   // --- send / create / delete ---
 
-  async createBotDm() {
+  async createBotDm(targetNpubInput = null) {
     this.error = null;
     const ownerNpub = this.workspaceOwnerNpub;
     const memberNpub = this.session?.npub;
-    if (!ownerNpub || !memberNpub || !this.botNpub) {
+    const targetNpub = String(targetNpubInput || this.botNpub || '').trim();
+    if (!ownerNpub || !memberNpub || !targetNpub) {
       this.error = 'Sign in and set bot npub first';
       return;
     }
@@ -485,10 +486,11 @@ export const chatMessageManagerMixin = {
     }
 
     try {
-      const name = `DM: ${memberNpub.slice(0, 12)}… + bot`;
-      const group = await this.createEncryptedGroup(name, [this.botNpub]);
+      const targetLabel = this.getSenderName?.(targetNpub) || 'bot';
+      const name = `DM: ${memberNpub.slice(0, 12)}… + ${targetLabel}`;
+      const group = await this.createEncryptedGroup(name, [targetNpub]);
       const groupId = group.group_id;
-      await this.rememberPeople([memberNpub, this.botNpub], 'chat');
+      await this.rememberPeople([memberNpub, targetNpub], 'chat');
 
       const channelId = crypto.randomUUID();
       const channelRow = {
@@ -496,7 +498,7 @@ export const chatMessageManagerMixin = {
         owner_npub: ownerNpub,
         title: name,
         group_ids: [groupId],
-        participant_npubs: [memberNpub, this.botNpub],
+        participant_npubs: [memberNpub, targetNpub],
         record_state: 'active',
         version: 1,
         updated_at: new Date().toISOString(),
@@ -509,7 +511,7 @@ export const chatMessageManagerMixin = {
         owner_npub: ownerNpub,
         title: name,
         group_ids: [groupId],
-        participant_npubs: [memberNpub, this.botNpub],
+        participant_npubs: [memberNpub, targetNpub],
         record_state: 'active',
         signature_npub: this.signingNpub,
         write_group_ref: groupId,

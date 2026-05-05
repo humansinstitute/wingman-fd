@@ -394,4 +394,33 @@ describe('task translator — references round-trip', () => {
     const payload = JSON.parse(envelope.owner_payload.ciphertext);
     expect(payload.data.references).toEqual(refs);
   });
+
+  it('round-trips source and deliverable links alongside references', async () => {
+    const sourceLinks = [{ type: 'task', id: 'source-task' }];
+    const references = [{ type: 'doc', id: 'ref-doc' }];
+    const deliverableLinks = [{ type: 'doc', id: 'out-doc', order: 1 }];
+
+    const envelope = await outboundTask({
+      record_id: 'task-link-model',
+      owner_npub: 'npub_owner',
+      title: 'Linked task',
+      source_links: sourceLinks,
+      references,
+      deliverable_links: deliverableLinks,
+    });
+    const payload = JSON.parse(envelope.owner_payload.ciphertext);
+    expect(payload.data.source_links).toEqual(sourceLinks);
+    expect(payload.data.references).toEqual(references);
+    expect(payload.data.deliverable_links).toEqual(deliverableLinks);
+
+    const row = await inboundTask({
+      record_id: 'task-link-model',
+      owner_npub: 'npub_owner',
+      owner_payload: envelope.owner_payload,
+      group_payloads: [],
+    });
+    expect(row.source_links).toEqual(sourceLinks);
+    expect(row.references).toEqual(references);
+    expect(row.deliverable_links).toEqual(deliverableLinks);
+  });
 });

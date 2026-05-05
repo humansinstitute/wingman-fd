@@ -40,10 +40,18 @@ import {
 } from './task-flow-helpers.js';
 import { toRaw } from './utils/state-helpers.js';
 import { hasGroupKey } from './crypto/group-keys.js';
+import {
+  buildRecordLinkPayload,
+  buildVisibleRecordLinkSections,
+  mergeRecordLinkLists,
+  recordLinkKey,
+} from './record-links.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const MENTION_NAVIGABLE_RECORD_LINK_TYPES = new Set(['doc', 'task', 'scope', 'flow', 'opportunity']);
 
 /** Shallow-compare two arrays of primitives or share objects (avoids JSON.stringify). */
 function sameShallowArray(a, b) {
@@ -83,6 +91,50 @@ function getShareWriteGroupIds(shares = []) {
       ? (share.via_group_id || share.group_id || share.via_group_npub || share.group_npub)
       : (share.group_id || share.group_npub))
     .filter(Boolean);
+}
+
+const REVERSE_SOURCE_COLLECTIONS = Object.freeze([
+  { type: 'task', key: 'tasks' },
+  { type: 'doc', key: 'documents' },
+  { type: 'directory', key: 'directories' },
+  { type: 'flow', key: 'flows' },
+  { type: 'opportunity', key: 'opportunities' },
+  { type: 'report', key: 'reports' },
+  { type: 'schedule', key: 'schedules' },
+]);
+
+function inferRecordLinkType(record, store) {
+  const explicit = String(record?.record_link_type || record?.link_type || record?.type || '').trim().toLowerCase();
+  if (explicit === 'document') return 'doc';
+  if (explicit) return explicit;
+  const recordId = String(record?.record_id || '').trim();
+  if (!recordId || !store) return '';
+  for (const collection of REVERSE_SOURCE_COLLECTIONS) {
+    const rows = Array.isArray(store[collection.key]) ? store[collection.key] : [];
+    if (rows.some((row) => row === record || row?.record_id === recordId)) return collection.type;
+  }
+  return '';
+}
+
+function getReverseSourceDeliverables(record, store) {
+  const sourceType = inferRecordLinkType(record, store);
+  const sourceId = String(record?.record_id || '').trim();
+  if (!sourceType || !sourceId || !store) return [];
+  const sourceKey = `${sourceType}:${sourceId}`;
+  const deliverables = [];
+
+  for (const collection of REVERSE_SOURCE_COLLECTIONS) {
+    const rows = Array.isArray(store[collection.key]) ? store[collection.key] : [];
+    for (const row of rows) {
+      const rowId = String(row?.record_id || '').trim();
+      if (!rowId || rowId === sourceId || row?.record_state === 'deleted') continue;
+      const links = buildRecordLinkPayload(row);
+      if (!links.source_links.some((link) => recordLinkKey(link) === sourceKey)) continue;
+      deliverables.push({ type: collection.type, id: rowId });
+    }
+  }
+
+  return deliverables;
 }
 
 export function selectPreferredWritableGroupRef(input = {}) {
@@ -636,30 +688,90 @@ export const taskBoardStateMixin = {
   resolveReferenceLabel(ref) {
     if (!ref || !ref.type || !ref.id) return ref?.id || 'Unknown';
     if (ref.type === 'task') {
-      const task = this.tasks.find(t => t.record_id === ref.id);
+      const task = (this.tasks || []).find(t => t.record_id === ref.id);
       return task?.title || ref.id.slice(0, 8);
     }
     if (ref.type === 'doc') {
-      const doc = this.documents.find(d => d.record_id === ref.id);
+      const doc = (this.documents || []).find(d => d.record_id === ref.id);
       return doc?.title || ref.id.slice(0, 8);
+    }
+    if (ref.type === 'directory') {
+      const directory = (this.directories || []).find(d => d.record_id === ref.id);
+      return directory?.title || ref.id.slice(0, 8);
+    }
+    if (ref.type === 'report') {
+      const report = (this.reports || []).find(item => item.record_id === ref.id);
+      return report?.title || ref.id.slice(0, 8);
     }
     if (ref.type === 'scope') {
       const scope = this.scopesMap?.get(ref.id);
       return scope?.title || ref.id.slice(0, 8);
     }
     if (ref.type === 'flow') {
-      const flow = this.flows.find(f => f.record_id === ref.id);
+      const flow = (this.flows || []).find(f => f.record_id === ref.id);
       return flow?.title || ref.id.slice(0, 8);
     }
     if (ref.type === 'opportunity') {
-      const opportunity = this.opportunities.find((item) => item.record_id === ref.id);
+      const opportunity = (this.opportunities || []).find((item) => item.record_id === ref.id);
       return opportunity?.title || ref.id.slice(0, 8);
     }
     return ref.id.slice(0, 8);
   },
 
-  navigateReference(ref) {
+  getRecordLinkTypeLabel(ref) {
+    if (!ref?.type) return 'Record';
+    if (ref.type === 'doc') return 'Doc';
+    if (ref.type === 'directory') return 'Folder';
+    return String(ref.type).charAt(0).toUpperCase() + String(ref.type).slice(1);
+  },
+
+  getVisibleRecordLinkSections(record) {
+    const reverseDeliverables = getReverseSourceDeliverables(record, this);
+    const sections = buildVisibleRecordLinkSections(reverseDeliverables.length === 0 ? record : {
+      ...record,
+      deliverable_links: mergeRecordLinkLists(record?.deliverable_links || [], reverseDeliverables),
+    });
+    return sections
+      .map((section) => ({
+        ...section,
+        links: section.links.filter((link) => {
+          const isNavigable = typeof this.isNavigableRecordLink === 'function'
+            ? this.isNavigableRecordLink
+            : taskBoardStateMixin.isNavigableRecordLink;
+          return isNavigable.call(this, link);
+        }),
+      }))
+      .filter((section) => section.links.length > 0);
+  },
+
+  isNavigableRecordLink(ref) {
+    const type = String(ref?.type || '').trim();
+    const id = String(ref?.id || '').trim();
+    if (!type || !id) return false;
+    if (MENTION_NAVIGABLE_RECORD_LINK_TYPES.has(type)) return true;
+    if (type === 'directory') return typeof this.navigateToFolder === 'function';
+    if (type === 'report') return typeof this.openReportModalById === 'function';
+    return false;
+  },
+
+  async navigateReference(ref) {
     if (!ref || !ref.type || !ref.id) return;
+    const isNavigable = typeof this.isNavigableRecordLink === 'function'
+      ? this.isNavigableRecordLink
+      : taskBoardStateMixin.isNavigableRecordLink;
+    if (!isNavigable.call(this, ref)) return;
+    if (ref.type === 'directory') {
+      this.navigateToFolder(ref.id);
+      return;
+    }
+    if (ref.type === 'report') {
+      await this.refreshReports?.();
+      if (typeof this.navigateTo === 'function') this.navigateTo('status', { syncRoute: false });
+      else this.navSection = 'status';
+      this.openReportModalById?.(ref.id);
+      this.syncRoute?.();
+      return;
+    }
     this.handleMentionNavigate(ref.type, ref.id);
   },
 

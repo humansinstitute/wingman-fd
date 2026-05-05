@@ -58,6 +58,7 @@ vi.mock('../src/db.js', () => ({
 }));
 
 vi.mock('../src/api.js', () => ({
+  downloadStorageObject: vi.fn(),
   syncRecords: vi.fn(),
   fetchRecords: vi.fn(async () => ({ records: [] })),
   getBaseUrl: vi.fn(() => 'http://localhost:3100'),

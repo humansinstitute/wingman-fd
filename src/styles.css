@@ -2309,6 +2309,253 @@ button:disabled {
   color: #64748b;
 }
 
+.command-palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(1rem, 7vh, 4rem) 1rem 1rem;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(10px);
+}
+
+.command-palette {
+  width: min(44rem, 100%);
+  max-height: min(44rem, calc(100vh - 2rem));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.32);
+}
+
+.command-palette-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 0.95rem;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.command-palette-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #0f172a;
+  font-size: 1rem;
+  line-height: 1.4;
+  box-shadow: none;
+  padding: 0.15rem 0;
+}
+
+.command-palette-shortcut {
+  border: 1px solid rgba(100, 116, 139, 0.32);
+  background: #f1f5f9;
+  color: #475569;
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.command-palette-scope {
+  margin: 0;
+  padding: 0.55rem 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.command-palette-scope strong {
+  min-width: 0;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-results {
+  overflow: auto;
+  padding: 0.55rem;
+}
+
+.command-palette-group + .command-palette-group {
+  margin-top: 0.55rem;
+}
+
+.command-palette-group h3 {
+  margin: 0 0 0.25rem;
+  padding: 0 0.35rem;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.command-palette-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.command-palette-result {
+  width: 100%;
+  min-height: 3.1rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.58rem 0.65rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-palette-result:hover,
+.command-palette-result-active {
+  background: #e0f2fe;
+  border-color: rgba(14, 116, 144, 0.24);
+}
+
+.command-palette-result-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.13rem;
+}
+
+.command-palette-result-key {
+  width: 1.5rem;
+  height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(100, 116, 139, 0.32);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.command-palette-result-icon {
+  width: 1.7rem;
+  height: 1.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #eef2ff;
+  color: #334155;
+  font-size: 0.98rem;
+}
+
+.command-palette-result-icon::before {
+  content: ">";
+}
+
+.command-palette-result-icon[data-icon="flightdeck"]::before {
+  content: "⌁";
+}
+
+.command-palette-result-icon[data-icon="bot"]::before {
+  content: "🤖";
+}
+
+.command-palette-result-icon[data-icon="plus"]::before {
+  content: "+";
+}
+
+.command-palette-result-icon[data-icon="doc"]::before {
+  content: "□";
+}
+
+.command-palette-result-title,
+.command-palette-result-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-result-title {
+  color: #0f172a;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.command-palette-result-subtitle {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.command-palette-result-type {
+  color: #334155;
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 0.22rem 0.48rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.command-palette-empty {
+  margin: 0;
+  padding: 1rem;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.command-palette-new-work {
+  width: min(34rem, 100%);
+}
+
+.command-palette-form-body {
+  padding: 0.85rem 0.95rem 0.35rem;
+}
+
+.command-palette-form-body label {
+  display: grid;
+  gap: 0.35rem;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.command-palette-form-body select {
+  width: 100%;
+  min-height: 2.35rem;
+  border: 1px solid rgba(100, 116, 139, 0.28);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0.45rem 0.55rem;
+}
+
+.command-palette-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 0.95rem 0.95rem;
+}
+
 .flightdeck-side-column {
   display: flex;
   flex-direction: column;
@@ -8164,6 +8411,27 @@ button:disabled {
   margin-top: 0.5rem;
 }
 
+.record-link-section + .record-link-section {
+  margin-top: 0.55rem;
+}
+
+.doc-record-links {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+}
+
+.doc-record-link-heading {
+  display: block;
+  color: var(--text-muted, #888);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .task-references-list {
   display: flex;
   flex-wrap: wrap;
@@ -8186,6 +8454,19 @@ button:disabled {
 
 .task-reference-chip:hover {
   background: var(--border);
+}
+
+.record-link-chip-source,
+.record-link-chip-deliverable {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface, #1e1e2e));
+  font-weight: 650;
+}
+
+.record-link-chip-deliverable {
+  color: var(--success, #34d399);
+  border-color: color-mix(in srgb, var(--success, #34d399) 45%, var(--border));
+  background: color-mix(in srgb, var(--success, #34d399) 10%, var(--surface, #1e1e2e));
 }
 
 .task-reference-type {

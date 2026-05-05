@@ -20,7 +20,9 @@ import {
 import {
   setBaseUrl,
   createWorkspace,
+  fetchWorkspaceAppSchemas,
   getWorkspaces,
+  publishWorkspaceAppSchema,
   recoverWorkspace,
   updateWorkspace,
   registerWorkspaceApp,
@@ -53,9 +55,11 @@ import {
 import {
   buildWrappedMemberKeys,
   createGroupIdentity,
+  hasGroupKey,
 } from './crypto/group-keys.js';
 import { personalEncryptForNpub } from './auth/nostr.js';
 import { outboundWorkspaceSettings, normalizeHarnessUrl } from './translators/settings.js';
+import { buildAppSchemaManifestRequest, getFlightDeckSchemaBundle } from './translators/app-schema.js';
 import { buildStoragePrepareBody } from './storage-payloads.js';
 import { buildSuperBasedConnectionToken } from './superbased-token.js';
 import { flightDeckLog } from './logging.js';
@@ -815,6 +819,9 @@ export const workspaceManagerMixin = {
       this.registerCurrentWorkspaceApp().catch((error) => {
         console.debug('workspace app registration skipped:', error?.message || error);
       });
+      this.publishCurrentWorkspaceAppSchema().catch((error) => {
+        console.debug('workspace app schema publish skipped:', error?.message || error);
+      });
       await this.refreshWorkspaceSettings();
       this.syncWorkspaceProfileDraft({ force: true });
     } finally {
@@ -834,6 +841,56 @@ export const workspaceManagerMixin = {
       app_npub: APP_NPUB,
       app_name: APP_NAME || 'Flight Deck',
     });
+  },
+
+  getWorkspaceSchemaGroupRefs() {
+    const refs = [
+      this.currentWorkspace?.defaultGroupId,
+      this.currentWorkspace?.defaultGroupNpub,
+      this.getWorkspaceSettingsGroupRef(),
+      this.getWorkspaceAdminGroupRef(),
+      this.memberPrivateGroupRef,
+      ...(this.currentWorkspaceGroups || []).flatMap((group) => [group.group_id, group.group_npub]),
+    ];
+    const seen = new Set();
+    return refs
+      .map((ref) => String(ref || '').trim())
+      .filter((ref) => {
+        if (!ref || seen.has(ref)) return false;
+        seen.add(ref);
+        return hasGroupKey(ref);
+      });
+  },
+
+  async hasCurrentWorkspaceAppSchema(schemaHash) {
+    const workspaceOwnerNpub = String(this.currentWorkspaceOwnerNpub || this.ownerNpub || '').trim();
+    if (!workspaceOwnerNpub || !schemaHash) return false;
+    const response = await fetchWorkspaceAppSchemas(workspaceOwnerNpub, {
+      app_npub: APP_NPUB,
+      latest: false,
+    });
+    return (response.schemas || []).some((schema) =>
+      String(schema?.app_npub || '') === APP_NPUB
+      && String(schema?.schema_hash || '') === schemaHash
+    );
+  },
+
+  async publishCurrentWorkspaceAppSchema() {
+    const workspaceOwnerNpub = String(this.currentWorkspaceOwnerNpub || this.ownerNpub || '').trim();
+    if (!workspaceOwnerNpub || !APP_NPUB || !this.backendUrl) return null;
+    if (typeof this.refreshGroups === 'function') {
+      await this.refreshGroups({ force: true, minIntervalMs: 0 });
+    }
+    if (!this.canAdminWorkspace) return null;
+    const bundle = getFlightDeckSchemaBundle();
+    if (await this.hasCurrentWorkspaceAppSchema(bundle.schema_hash)) return null;
+    const groupIds = this.getWorkspaceSchemaGroupRefs();
+    if (groupIds.length === 0) return null;
+    const body = await buildAppSchemaManifestRequest({
+      owner_npub: workspaceOwnerNpub,
+      group_ids: groupIds,
+    });
+    return publishWorkspaceAppSchema(workspaceOwnerNpub, APP_NPUB, body);
   },
 
   async removeWorkspace(workspaceKeyOrOwner) {

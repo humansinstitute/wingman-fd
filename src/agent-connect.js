@@ -70,9 +70,20 @@ export function buildAgentConnectPackage({
       app_npub: appNpub || null,
       app_pubkey: appPubkeyHexFromNpub(appNpub),
     },
+    record_link_model: {
+      version: 1,
+      types: {
+        source: 'Explicit origin: this record was created because of the linked record.',
+        reference: 'Related context that may be useful.',
+        deliverable: 'Output produced by this record.',
+      },
+      agent_context_priority: ['record', 'source_links', 'deliverable_links', 'references'],
+      routeable_types: ['task', 'doc', 'scope', 'flow', 'opportunity', 'person'],
+    },
     connection_token: effectiveToken,
     notes: [
       'Read llms_url first for agent instructions and workspace semantics.',
+      'For record context, treat source_links and deliverable_links as higher-signal than generic references.',
       'Use Wingman Yoke when it is available in the target environment.',
       'Use the service.open_api/docs URLs to inspect the live SuperBased v4 API.',
       'Use the connection_token to configure another Coworker/agent session against this workspace.',

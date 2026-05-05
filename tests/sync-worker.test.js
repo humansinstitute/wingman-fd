@@ -61,6 +61,7 @@ vi.mock('../src/db.js', () => ({
 }));
 
 vi.mock('../src/api.js', () => ({
+  downloadStorageObject: vi.fn(),
   getBaseUrl: vi.fn(() => 'https://sb4.otherstuff.studio'),
   syncRecords: vi.fn(async ({ records }) => {
     state.syncCalls.push(records.map((record) => record.record_id));

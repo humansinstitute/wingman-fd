@@ -24,13 +24,33 @@ import {
   addPendingWrite,
 } from './db.js';
 import { recordFamilyHash } from './translators/chat.js';
-import { outboundDocument, outboundDirectory } from './translators/docs.js';
+import {
+  DOCUMENT_CONTENT_STORAGE_FORMAT,
+  DOCUMENT_CONTENT_STORAGE_MIME,
+  outboundDocument,
+  outboundDirectory,
+} from './translators/docs.js';
 import { outboundComment } from './translators/comments.js';
 import { toRaw } from './utils/state-helpers.js';
-import { acquireRecordCheckout, fetchRecordHistory, releaseRecordCheckout } from './api.js';
+import {
+  acquireRecordCheckout,
+  completeStorageObject,
+  fetchRecordHistory,
+  prepareStorageObject,
+  releaseRecordCheckout,
+  uploadStorageObject,
+} from './api.js';
 import { inboundDocument } from './translators/docs.js';
 import { renderMarkdownToHtml, hydrateStorageImageMarkup } from './markdown.js';
 import { normalizeGroupIds } from './scope-delivery.js';
+import { buildStoragePrepareBody } from './storage-payloads.js';
+import {
+  buildRecordLinkPayload,
+  mergeRecordLinkLists,
+  normalizeRecordLinkList,
+  parseRecordReferencesFromText,
+  recordLinkKey,
+} from './record-links.js';
 import { hasGroupKey } from './crypto/group-keys.js';
 import {
   getEncryptableRecordGroupRefsForStore,
@@ -53,6 +73,74 @@ import { diffLines } from 'diff';
 // ---------------------------------------------------------------------------
 // Pure utility functions (no `this` dependency)
 // ---------------------------------------------------------------------------
+
+const DOCUMENT_INLINE_PAYLOAD_LIMIT_BYTES = 60_000;
+const DOCUMENT_INLINE_PREVIEW_CHARS = 8_192;
+
+function byteLength(value) {
+  return new TextEncoder().encode(String(value ?? '')).byteLength;
+}
+
+async function sha256HexForBytes(bytes) {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function buildStoredDocumentContent(contentModel) {
+  return {
+    format: DOCUMENT_CONTENT_STORAGE_FORMAT,
+    content_model: contentModel,
+  };
+}
+
+export function mergeDocumentSaveReferences(record = {}, parsedReferences = []) {
+  const links = buildRecordLinkPayload(record || {});
+  const highSignalKeys = new Set([
+    ...links.source_links.map(recordLinkKey),
+    ...links.deliverable_links.map(recordLinkKey),
+  ].filter(Boolean));
+  return mergeRecordLinkLists(links.references, parsedReferences)
+    .filter((link) => !highSignalKeys.has(recordLinkKey(link)));
+}
+
+function buildDocumentStorageFileName(title, recordId) {
+  const safeTitle = String(title || 'document')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'document';
+  const safeRecordId = String(recordId || '').trim().slice(0, 36) || 'record';
+  return `${safeTitle}-${safeRecordId}.document.json`;
+}
+
+function buildInlineDocumentContentPayload(contentModel) {
+  return {
+    content: contentModel.content,
+    content_format: contentModel.content_format,
+    content_blocks: contentModel.content_blocks,
+    content_storage_object_id: null,
+    content_storage_format: null,
+    content_storage_content_type: null,
+    content_size_bytes: null,
+    content_sha256_hex: null,
+  };
+}
+
+function buildStoredDocumentContentPayload(contentModel, storage) {
+  const preview = String(contentModel.content || '').slice(0, DOCUMENT_INLINE_PREVIEW_CHARS);
+  return {
+    content: preview,
+    content_format: contentModel.content_format,
+    content_blocks: [],
+    content_storage_object_id: storage.objectId,
+    content_storage_format: DOCUMENT_CONTENT_STORAGE_FORMAT,
+    content_storage_content_type: DOCUMENT_CONTENT_STORAGE_MIME,
+    content_size_bytes: storage.sizeBytes,
+    content_sha256_hex: storage.sha256Hex,
+  };
+}
 
 export function normalizeDocShare(share, inheritedFromDirectoryId = null) {
   if (!share) return null;
@@ -550,12 +638,97 @@ export const docsManagerMixin = {
       label: 'Document write',
       resolveGroupId: (value) => this._resolveDocGroupRef(value),
     });
+    const contentPayload = await this.prepareDocumentContentForEnvelope(
+      payload,
+      contentModel,
+      encryptableGroupIds,
+      record,
+    );
+    const recordLinks = buildRecordLinkPayload({
+      ...(record || {}),
+      ...(payload || {}),
+    });
     const envelope = await outboundDocument({
       ...payload,
-      ...contentModel,
+      ...contentPayload,
+      ...recordLinks,
       group_ids: encryptableGroupIds,
     });
     return this.attachLockManagedCheckoutToEnvelope(record, envelope, options);
+  },
+
+  async prepareDocumentContentForEnvelope(payload, contentModel, encryptableGroupIds = [], record = null) {
+    const estimatedPayloadBytes = byteLength(JSON.stringify({
+      record_id: payload?.record_id,
+      title: payload?.title,
+      parent_directory_id: payload?.parent_directory_id ?? null,
+      scope_id: payload?.scope_id ?? null,
+      scope_l1_id: payload?.scope_l1_id ?? null,
+      scope_l2_id: payload?.scope_l2_id ?? null,
+      scope_l3_id: payload?.scope_l3_id ?? null,
+      scope_l4_id: payload?.scope_l4_id ?? null,
+      scope_l5_id: payload?.scope_l5_id ?? null,
+      scope_policy_group_ids: payload?.scope_policy_group_ids ?? null,
+      shares: payload?.shares || [],
+      record_state: payload?.record_state || 'active',
+      ...contentModel,
+    }));
+
+    const existingObjectId = String(record?.content_storage_object_id || payload?.content_storage_object_id || '').trim();
+    if (estimatedPayloadBytes < DOCUMENT_INLINE_PAYLOAD_LIMIT_BYTES && !existingObjectId) {
+      return buildInlineDocumentContentPayload(contentModel);
+    }
+
+    const storagePayload = buildStoredDocumentContent(contentModel);
+    const bytes = new TextEncoder().encode(JSON.stringify(storagePayload));
+    const sha256Hex = await sha256HexForBytes(bytes);
+    if (existingObjectId && String(record?.content_sha256_hex || payload?.content_sha256_hex || '').trim() === sha256Hex) {
+      return buildStoredDocumentContentPayload(contentModel, {
+        objectId: existingObjectId,
+        sizeBytes: bytes.byteLength,
+        sha256Hex,
+      });
+    }
+
+    if (estimatedPayloadBytes < DOCUMENT_INLINE_PAYLOAD_LIMIT_BYTES) {
+      return buildInlineDocumentContentPayload(contentModel);
+    }
+
+    const ownerNpub = String(payload?.owner_npub || this.workspaceOwnerNpub || '').trim();
+    if (!ownerNpub) throw new Error('Document storage upload is missing workspace owner.');
+
+    const ownerGroupId = this._resolveDocGroupRef(
+      payload?.write_group_ref
+      || record?.write_group_id
+      || payload?.write_group_id
+      || encryptableGroupIds[0]
+      || null,
+    );
+    const accessGroupIds = normalizeGroupIds(
+      (encryptableGroupIds || [])
+        .map((value) => this._resolveDocGroupRef(value))
+        .filter(Boolean),
+    );
+
+    const prepared = await prepareStorageObject(buildStoragePrepareBody({
+      ownerNpub,
+      ownerGroupId,
+      accessGroupIds,
+      contentType: DOCUMENT_CONTENT_STORAGE_MIME,
+      sizeBytes: bytes.byteLength,
+      fileName: buildDocumentStorageFileName(payload?.title, payload?.record_id),
+    }));
+    await uploadStorageObject(prepared, bytes, DOCUMENT_CONTENT_STORAGE_MIME);
+    await completeStorageObject(prepared.object_id, {
+      size_bytes: bytes.byteLength,
+      sha256_hex: sha256Hex,
+    });
+
+    return buildStoredDocumentContentPayload(contentModel, {
+      objectId: prepared.object_id,
+      sizeBytes: bytes.byteLength,
+      sha256Hex,
+    });
   },
 
   async buildManagedDirectoryEnvelope(payload, record = null, options = {}) {
@@ -1920,6 +2093,9 @@ export const docsManagerMixin = {
       owner_npub: ownerNpub,
       title,
       ...buildDocumentContentModel([]),
+      source_links: normalizeRecordLinkList(options.sourceLinks || [], 'source'),
+      references: [],
+      deliverable_links: normalizeRecordLinkList(options.deliverableLinks || [], 'deliverable'),
       parent_directory_id: parentDirectoryId,
       ...scopedAccess,
       sync_status: 'pending',
@@ -1952,6 +2128,9 @@ export const docsManagerMixin = {
           scope_l4_id: row.scope_l4_id ?? null,
           scope_l5_id: row.scope_l5_id ?? null,
           scope_policy_group_ids: row.scope_policy_group_ids ?? null,
+          source_links: row.source_links ?? [],
+          references: row.references ?? [],
+          deliverable_links: row.deliverable_links ?? [],
           shares: row.shares,
           group_ids: row.group_ids,
           signature_npub: this.signingNpub,
@@ -2083,9 +2262,16 @@ export const docsManagerMixin = {
     const currentSharesSerialized = this.serializeDocShares(this.getEffectiveDocShares(item));
     const editorSharesSerialized = this.serializeDocShares(this.docEditorShares || []);
     const contentModel = buildDocumentContentModel(this.docEditorBlocks);
+    const nextReferences = mergeDocumentSaveReferences(item, parseRecordReferencesFromText(contentModel.content));
+    const nextLinksSerialized = JSON.stringify(buildRecordLinkPayload({
+      ...item,
+      references: nextReferences,
+    }));
+    const currentLinksSerialized = JSON.stringify(buildRecordLinkPayload(item));
     const hasChanges = nextTitle !== (item.title ?? 'Untitled document')
       || (contentModel.content || '') !== (item.content || '')
-      || currentSharesSerialized !== editorSharesSerialized;
+      || currentSharesSerialized !== editorSharesSerialized
+      || nextLinksSerialized !== currentLinksSerialized;
     if (!hasChanges) {
       this.docAutosaveState = 'saved';
       return;
@@ -2102,6 +2288,7 @@ export const docsManagerMixin = {
         ...item,
         title: nextTitle,
         ...contentModel,
+        references: nextReferences,
         shares,
         group_ids: this.getShareGroupIds(shares),
         write_group_id: item.write_group_id || null,
@@ -2140,6 +2327,9 @@ export const docsManagerMixin = {
           scope_l4_id: updated.scope_l4_id ?? null,
           scope_l5_id: updated.scope_l5_id ?? null,
           scope_policy_group_ids: updated.scope_policy_group_ids ?? null,
+          source_links: updated.source_links ?? [],
+          references: updated.references ?? [],
+          deliverable_links: updated.deliverable_links ?? [],
           shares,
           group_ids: updated.group_ids,
           version: nextVersion,

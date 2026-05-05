@@ -10,6 +10,7 @@ import { syncManagerMixin } from '../src/sync-manager.js';
 import { createNip98AuthHeader } from '../src/auth/nostr.js';
 
 vi.mock('../src/api.js', () => ({
+  downloadStorageObject: vi.fn(),
   fetchRecordHistory: vi.fn(),
   syncRecords: vi.fn(),
 }));
