@@ -87,9 +87,10 @@ describe('command palette launchers', () => {
     expect(indexSource).not.toContain('mobile-radar');
   });
 
-  it('renders quick launch items as a quadrant grid without shortcut pills', () => {
+  it('renders quick launch items as a quadrant grid with icon shortcut labels', () => {
     expect(indexSource).toContain('command-palette-results-quick');
     expect(indexSource).toContain('command-palette-group-quick');
+    expect(indexSource).toContain('command-palette-result-icon-key');
     expect(indexSource).not.toContain('command-palette-result-key');
   });
 

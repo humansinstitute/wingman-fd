@@ -2474,6 +2474,7 @@ button:disabled {
 }
 
 .command-palette-result-icon {
+  position: relative;
   width: 1.7rem;
   height: 1.7rem;
   display: inline-flex;
@@ -2513,6 +2514,29 @@ button:disabled {
 
 .command-palette-result-icon[data-icon="doc"]::before {
   content: "□";
+}
+
+.command-palette-result-icon-key {
+  position: absolute;
+  top: -0.45rem;
+  right: -0.45rem;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(100, 116, 139, 0.28);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.12);
+}
+
+.command-palette-result:not(.command-palette-result-active) .command-palette-result-icon-key {
+  opacity: 0.88;
 }
 
 .command-palette-result-title,
