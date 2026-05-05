@@ -3842,6 +3842,52 @@ export function initApp() {
       return `${relationship} • ${scopeLabel}`;
     },
 
+    getTaskScopeId(task) {
+      return task?.scope_id
+        ?? task?.scope_l5_id
+        ?? task?.scope_l4_id
+        ?? task?.scope_l3_id
+        ?? task?.scope_l2_id
+        ?? task?.scope_l1_id
+        ?? null;
+    },
+
+    getTaskScopeLevel(task) {
+      const scopeId = this.getTaskScopeId(task);
+      if (!scopeId) return '';
+      return this.scopesMap.get(scopeId)?.level || '';
+    },
+
+    getTaskScopeLabel(task) {
+      const scopeId = this.getTaskScopeId(task);
+      if (!scopeId) return 'Unscoped';
+      return this.getScopeBreadcrumb(scopeId) || this.scopesMap.get(scopeId)?.title || 'Scoped';
+    },
+
+    getTaskAssigneeLabel(task) {
+      const npub = String(task?.assigned_to_npub || '').trim();
+      if (!npub) return 'Unassigned';
+      return this.getSenderName(npub) || npub;
+    },
+
+    formatTaskPriority(priority) {
+      switch (String(priority || '').toLowerCase()) {
+        case 'rock': return 'Rock';
+        case 'pebble': return 'Pebble';
+        case 'sand': return 'Sand';
+        default: return 'Sand';
+      }
+    },
+
+    formatTaskDueDate(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return 'No due date';
+      const [year, month, day] = raw.split('-').map((part) => Number(part));
+      if (!year || !month || !day) return raw;
+      const date = new Date(year, month - 1, day);
+      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    },
+
     get predecessorTaskSuggestions() {
       if (!this.editingTask) return [];
       return buildPredecessorTaskSuggestions(this.tasks, this.editingTask, this.scopesMap, {

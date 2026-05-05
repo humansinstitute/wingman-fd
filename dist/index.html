@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-wARmkc33.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CSeJ7MPF.css">
+  <script type="module" crossorigin src="/assets/index-CgRtKs7R.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DOt2Pwcu.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -1453,9 +1453,43 @@
               <div class="task-detail-body">
                 <div class="task-detail-main">
                   <!-- Title -->
+                  <div class="task-detail-record-header">
+                    <h1
+                      class="task-detail-title-display"
+                      x-show="!$store.chat.isTaskDetailEditing()"
+                      x-text="$store.chat.editingTask.title || 'Untitled task'"
+                    ></h1>
+                    <div class="task-detail-meta-row" x-show="!$store.chat.isTaskDetailEditing()">
+                      <span class="task-detail-meta-pill" :class="`task-detail-meta-state state-${$store.chat.editingTask.state || 'new'}`">
+                        <span x-text="$store.chat.formatState($store.chat.editingTask.state || 'new')"></span>
+                      </span>
+                      <span class="task-detail-meta-pill" :class="`task-detail-priority-${$store.chat.editingTask.priority || 'sand'}`">
+                        <span x-text="$store.chat.formatTaskPriority($store.chat.editingTask.priority)"></span>
+                      </span>
+                      <span class="task-detail-meta-pill">
+                        <span x-text="$store.chat.formatTaskDueDate($store.chat.editingTask.scheduled_for)"></span>
+                      </span>
+                      <span class="task-detail-meta-pill" :class="{ 'task-detail-meta-muted': !$store.chat.editingTask.assigned_to_npub }">
+                        <span x-text="$store.chat.getTaskAssigneeLabel($store.chat.editingTask)"></span>
+                      </span>
+                      <span class="task-detail-meta-pill">
+                        <span
+                          class="scope-level-badge"
+                          :data-level="$store.chat.getTaskScopeLevel($store.chat.editingTask)"
+                          x-show="$store.chat.getTaskScopeLevel($store.chat.editingTask)"
+                          x-text="$store.chat.scopeLevelLabel($store.chat.getTaskScopeLevel($store.chat.editingTask))"
+                        ></span>
+                        <span x-text="$store.chat.getTaskScopeLabel($store.chat.editingTask)"></span>
+                      </span>
+                      <template x-for="tag in $store.chat.getTaskTags($store.chat.editingTask)" :key="`detail-meta-${tag}`">
+                        <span class="task-detail-meta-pill task-detail-tag-pill" x-text="tag"></span>
+                      </template>
+                    </div>
+                  </div>
                   <input
                     class="task-detail-title"
                     type="text"
+                    x-show="$store.chat.isTaskDetailEditing()"
                     x-model="$store.chat.editingTask.title"
                     :readonly="!$store.chat.isTaskDetailEditing()"
                     :class="{ 'task-readonly-control': !$store.chat.isTaskDetailEditing() }"
@@ -1463,7 +1497,7 @@
                   />
 
                   <!-- State & Priority row -->
-                  <div class="task-detail-fields">
+                  <div class="task-detail-fields" x-show="$store.chat.isTaskDetailEditing()">
                     <div class="task-field">
                       <label class="task-field-label">Status</label>
                       <select x-model="$store.chat.editingTask.state" :disabled="!$store.chat.isTaskDetailEditing()">
@@ -1511,7 +1545,7 @@
                     </div>
                   </div>
 
-                  <div class="task-field task-field-wide">
+                  <div class="task-field task-field-wide" x-show="$store.chat.isTaskDetailEditing() || $store.chat.editingTask.assigned_to_npub">
                     <label class="task-field-label">Assigned</label>
                     <template x-if="$store.chat.editingTask.assigned_to_npub">
                       <div class="new-channel-resolved-profile task-assignee-selected">
@@ -1556,7 +1590,7 @@
                   </div>
 
                   <!-- Scope -->
-                  <div class="task-field" x-data="{ scopeIdx: 0 }" @click.outside="$store.chat.closeScopePicker()">
+                  <div class="task-field" x-show="$store.chat.isTaskDetailEditing()" x-data="{ scopeIdx: 0 }" @click.outside="$store.chat.closeScopePicker()">
                     <label class="task-field-label">Scope</label>
                     <template x-if="$store.chat.editingTask.scope_id && !$store.chat.showScopePicker">
                       <div class="scope-picker-selected">
@@ -1601,7 +1635,12 @@
                     </div>
                   </div>
 
-                  <div class="task-field task-field-wide" x-data="{ predIdx: 0 }" @click.outside="$store.chat.closePredecessorTaskPicker()">
+                  <div
+                    class="task-field task-field-wide"
+                    x-show="$store.chat.isTaskDetailEditing() || $store.chat.getEditingTaskPredecessorRows().length > 0"
+                    x-data="{ predIdx: 0 }"
+                    @click.outside="$store.chat.closePredecessorTaskPicker()"
+                  >
                     <label class="task-field-label">Predecessors</label>
                     <div class="task-predecessor-list" x-show="$store.chat.getEditingTaskPredecessorRows().length > 0">
                       <template x-for="pred in $store.chat.getEditingTaskPredecessorRows()" :key="pred.record_id">
@@ -1663,7 +1702,11 @@
                   </div>
 
                   <!-- Flow linkage -->
-                  <div class="task-field task-field-wide" x-data="{ flowExpanded: false, get flowInfo() { return $store.chat.getEditingTaskFlowInfo(); } }">
+                  <div
+                    class="task-field task-field-wide"
+                    x-show="$store.chat.isTaskDetailEditing() || $store.chat.getEditingTaskFlowInfo()"
+                    x-data="{ flowExpanded: false, get flowInfo() { return $store.chat.getEditingTaskFlowInfo(); } }"
+                  >
                     <label class="task-field-label">Flow</label>
                     <template x-if="flowInfo">
                       <div class="task-flow-linkage-wrap">
@@ -1738,7 +1781,10 @@
                   </div>
 
                   <!-- Description -->
-                  <div class="task-field task-field-wide">
+                  <div
+                    class="task-field task-field-wide task-description-section"
+                    x-show="$store.chat.isTaskDetailEditing() || $store.chat.editingTask.description"
+                  >
                     <div class="task-field-label-row">
                       <label class="task-field-label">Description</label>
                       <a
@@ -1769,7 +1815,10 @@
                   </div>
 
                   <!-- Subtasks -->
-                  <div class="subtask-list-field">
+                  <div
+                    class="subtask-list-field"
+                    x-show="$store.chat.isTaskDetailEditing() || ($store.chat.editingTask?.record_id && $store.chat.getSubtasks($store.chat.editingTask.record_id).length > 0)"
+                  >
                     <label class="task-field-label">Subtasks</label>
                     <div class="subtask-list">
                       <template x-for="st in ($store.chat.editingTask?.record_id ? $store.chat.getSubtasks($store.chat.editingTask.record_id) : [])" :key="st.record_id">
@@ -1828,7 +1877,10 @@
 
                 <!-- Comments section -->
                 <div class="task-comments-section">
-                  <label class="task-field-label">Comments</label>
+                  <div class="task-comments-header">
+                    <label class="task-field-label">Activity</label>
+                    <span x-text="$store.chat.taskComments.length === 1 ? '1 comment' : `${$store.chat.taskComments.length} comments`"></span>
+                  </div>
                   <div class="task-comment-add">
                     <textarea
                       x-model="$store.chat.newTaskCommentBody"
