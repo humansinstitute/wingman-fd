@@ -2599,6 +2599,8 @@ button:disabled {
 }
 
 .command-palette-form-body {
+  display: grid;
+  gap: 0.75rem;
   padding: 0.85rem 0.95rem 0.35rem;
 }
 
@@ -2610,7 +2612,8 @@ button:disabled {
   font-weight: 700;
 }
 
-.command-palette-form-body select {
+.command-palette-form-body select,
+.command-palette-form-body textarea {
   width: 100%;
   min-height: 2.35rem;
   border: 1px solid rgba(100, 116, 139, 0.28);
@@ -2618,6 +2621,15 @@ button:disabled {
   background: #ffffff;
   color: #0f172a;
   padding: 0.45rem 0.55rem;
+}
+
+.command-palette-form-body textarea {
+  height: 3.9rem;
+  min-height: 3.9rem;
+  max-height: 3.9rem;
+  line-height: 1.35;
+  resize: none;
+  overflow-y: auto;
 }
 
 .command-palette-form-actions {

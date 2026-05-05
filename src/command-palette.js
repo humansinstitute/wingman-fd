@@ -59,6 +59,7 @@ export function createCommandPaletteState() {
     commandPaletteNewWorkDefaultScopeId: readStoredScopeId(NEW_WORK_SCOPE_STORAGE_KEY),
     showCommandPaletteNewWorkModal: false,
     commandPaletteNewWorkTitle: '',
+    commandPaletteNewWorkDescription: '',
     commandPaletteNewWorkScopeId: '',
   };
 }
@@ -658,6 +659,7 @@ export const commandPaletteMixin = {
 
   openCommandPaletteNewWorkModal() {
     this.commandPaletteNewWorkTitle = '';
+    this.commandPaletteNewWorkDescription = '';
     this.commandPaletteNewWorkScopeId = this.resolveCommandPaletteNewWorkScopeId();
     this.showCommandPaletteNewWorkModal = true;
     this.focusCommandPaletteNewWorkInput();
@@ -666,15 +668,41 @@ export const commandPaletteMixin = {
   closeCommandPaletteNewWorkModal() {
     this.showCommandPaletteNewWorkModal = false;
     this.commandPaletteNewWorkTitle = '';
+    this.commandPaletteNewWorkDescription = '';
     this.commandPaletteNewWorkScopeId = '';
+  },
+
+  getCommandPaletteNewWorkPasteGroupIds() {
+    const scopeId = String(this.commandPaletteNewWorkScopeId || '').trim();
+    if (!scopeId) return [];
+    const assignment = this.buildTaskBoardAssignment?.(scopeId) || null;
+    if (Array.isArray(assignment?.group_ids) && assignment.group_ids.length > 0) return assignment.group_ids;
+    if (Array.isArray(assignment?.scope_policy_group_ids) && assignment.scope_policy_group_ids.length > 0) return assignment.scope_policy_group_ids;
+    const scope = this.scopesMap?.get(scopeId);
+    if (Array.isArray(scope?.group_ids)) return scope.group_ids;
+    return [];
+  },
+
+  async handleCommandPaletteNewWorkDescriptionPaste(event) {
+    await this.handleInlineImagePaste?.(event, {
+      modelKey: 'commandPaletteNewWorkDescription',
+      ownerNpub: this.workspaceOwnerNpub || this.session?.npub,
+      accessGroupIds: this.getCommandPaletteNewWorkPasteGroupIds(),
+      fileLabel: 'task',
+    });
   },
 
   async createCommandPaletteNewWork() {
     const title = String(this.commandPaletteNewWorkTitle || '').trim();
+    const description = String(this.commandPaletteNewWorkDescription || '').trim();
     if (!title) return;
+    if (this.containsInlineImageUploadToken?.(description)) {
+      this.error = 'Wait for image upload to finish.';
+      return;
+    }
     if (this.commandPaletteNewWorkScopeId) this.applyCommandPaletteScope(this.commandPaletteNewWorkScopeId);
     this.newTaskTitle = title;
-    const createdTask = await this.addTask?.();
+    const createdTask = await this.addTask?.({ description });
     if (!createdTask?.record_id) return;
     this.closeCommandPaletteNewWorkModal();
     this.navigateTo?.('tasks', { syncRoute: false });

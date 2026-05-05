@@ -756,6 +756,7 @@ export const docsManagerMixin = {
     } else {
       this.selectedDocCommentId = null;
     }
+    this.docCommentsVisible = Boolean(this.selectedDocCommentId);
     this.navSection = 'docs';
     this.mobileNavOpen = false;
     const document = this.documents.find((item) => item.record_id === recordId);
@@ -780,7 +781,7 @@ export const docsManagerMixin = {
     this.selectedDocId = null;
     this.selectedDocCommentId = null;
     this.docComments = [];
-    this.docCommentsVisible = true;
+    this.docCommentsVisible = false;
     this.showDocCommentModal = false;
     this.docSelectedBlockId = null;
     this.docCommentAnchorLine = null;
@@ -821,7 +822,7 @@ export const docsManagerMixin = {
       this.docBlockBuffer = '';
       this.docEditingTitle = false;
       this.docComments = [];
-      this.docCommentsVisible = true;
+      this.docCommentsVisible = false;
       this.showDocCommentModal = false;
       this.docSelectedBlockId = null;
       this.docCommentAnchorLine = null;
@@ -850,6 +851,7 @@ export const docsManagerMixin = {
     this.docBlockBuffer = '';
     this.docEditingTitle = false;
     this.docSelectedBlockId = null;
+    this.docCommentsVisible = Boolean(this.selectedDocCommentId);
     this.showDocCommentModal = false;
     this.docCommentAnchorLine = null;
     this.docCommentAnchorBlockId = null;

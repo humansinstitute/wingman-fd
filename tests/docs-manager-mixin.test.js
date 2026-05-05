@@ -256,6 +256,30 @@ describe('docsManagerMixin comment drawer', () => {
     vi.restoreAllMocks();
   });
 
+  it('starts the doc comments drawer collapsed when opening a document normally', () => {
+    const store = createStore({
+      documents: [{ record_id: 'doc-1', parent_directory_id: 'dir-1' }],
+      docCommentsVisible: true,
+    });
+
+    store.openDoc('doc-1');
+
+    expect(store.docCommentsVisible).toBe(false);
+    expect(store.selectedDocCommentId).toBeNull();
+  });
+
+  it('opens the doc comments drawer when routing directly to a comment', () => {
+    const store = createStore({
+      documents: [{ record_id: 'doc-1', parent_directory_id: 'dir-1' }],
+      docCommentsVisible: false,
+    });
+
+    store.openDoc('doc-1', { commentId: 'comment-1' });
+
+    expect(store.docCommentsVisible).toBe(true);
+    expect(store.selectedDocCommentId).toBe('comment-1');
+  });
+
   it('opens an inline anchored composer instead of the legacy modal', () => {
     const store = createStore({
       selectedDocId: 'doc-1',

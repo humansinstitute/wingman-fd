@@ -41,6 +41,7 @@ function createStore(overrides = {}) {
     channels: [],
     documents: [],
     session: { npub: 'npub-me' },
+    workspaceOwnerNpub: 'npub-owner',
     botNpub: 'npub-bot',
     defaultAgentNpub: 'npub-agent',
     commandPaletteIndex: [],
@@ -76,6 +77,9 @@ function createStore(overrides = {}) {
     createBotDm: vi.fn(async () => {}),
     createDocument: vi.fn(async () => {}),
     addTask: vi.fn(async () => ({ record_id: 'task-new' })),
+    buildTaskBoardAssignment: vi.fn((scopeId) => ({ scope_id: scopeId, group_ids: ['group-default'] })),
+    handleInlineImagePaste: vi.fn(async () => {}),
+    containsInlineImageUploadToken: vi.fn((value) => String(value || '').includes('[ Uploading image')),
     $nextTick: (fn) => fn(),
     ...overrides,
   });
@@ -92,6 +96,12 @@ describe('command palette launchers', () => {
     expect(indexSource).toContain('command-palette-group-quick');
     expect(indexSource).toContain('command-palette-result-icon-key');
     expect(indexSource).not.toContain('command-palette-result-key');
+  });
+
+  it('renders a two-line New Work description field with image paste handling', () => {
+    expect(indexSource).toContain('x-model="$store.chat.commandPaletteNewWorkDescription"');
+    expect(indexSource).toContain('rows="2"');
+    expect(indexSource).toContain('@paste="$store.chat.handleCommandPaletteNewWorkDescriptionPaste($event)"');
   });
 
   it('registers Command/Super+J to open the palette in capture phase', () => {
@@ -363,15 +373,35 @@ describe('command palette actions', () => {
 
     await store.runCommandPaletteAction({ action: 'new-work' });
     store.commandPaletteNewWorkTitle = 'Draft launch checklist';
+    store.commandPaletteNewWorkDescription = 'Use the notes from today.';
     await store.createCommandPaletteNewWork();
 
     expect(store.showCommandPaletteNewWorkModal).toBe(false);
     expect(store.selectedBoardId).toBe('scope-a');
     expect(store.newTaskTitle).toBe('Draft launch checklist');
-    expect(store.addTask).toHaveBeenCalledTimes(1);
+    expect(store.addTask).toHaveBeenCalledWith({ description: 'Use the notes from today.' });
     expect(store.navigateTo).toHaveBeenCalledWith('tasks', { syncRoute: false });
     expect(store.openTaskDetail).toHaveBeenCalledWith('task-new');
     expect(store.syncRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it('pastes images into the New Work description with the selected board groups', async () => {
+    const pasteEvent = { type: 'paste' };
+    const store = createStore({
+      selectedBoardScope: { record_id: 'scope-a', title: 'Apollo' },
+      scopesMap: new Map([['scope-a', { record_id: 'scope-a', title: 'Apollo', group_ids: ['group-scope'] }]]),
+      buildTaskBoardAssignment: vi.fn(() => ({ scope_id: 'scope-a', group_ids: ['group-board'] })),
+    });
+
+    await store.runCommandPaletteAction({ action: 'new-work' });
+    await store.handleCommandPaletteNewWorkDescriptionPaste(pasteEvent);
+
+    expect(store.handleInlineImagePaste).toHaveBeenCalledWith(pasteEvent, {
+      modelKey: 'commandPaletteNewWorkDescription',
+      ownerNpub: 'npub-owner',
+      accessGroupIds: ['group-board'],
+      fileLabel: 'task',
+    });
   });
 
   it('uses the configured default New Work board while keeping the modal board selectable', async () => {

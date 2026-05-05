@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-Bw8BVKWJ.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DW5DYzI7.css">
+  <script type="module" crossorigin src="/assets/index-CA_wtasw.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CCMjtOTM.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -469,6 +469,17 @@
           </div>
           <div class="command-palette-form-body">
             <label>
+              <span>Description</span>
+              <textarea
+                class="command-palette-new-work-description"
+                rows="2"
+                x-model="$store.chat.commandPaletteNewWorkDescription"
+                placeholder="Add detail or paste an image"
+                aria-label="New work description"
+                @paste="$store.chat.handleCommandPaletteNewWorkDescriptionPaste($event)"
+              ></textarea>
+            </label>
+            <label>
               <span>Board</span>
               <select x-model="$store.chat.commandPaletteNewWorkScopeId">
                 <option value="">Current board</option>
@@ -480,7 +491,11 @@
           </div>
           <div class="command-palette-form-actions">
             <button type="button" class="btn-cancel" @click="$store.chat.closeCommandPaletteNewWorkModal()">Cancel</button>
-            <button type="submit" class="btn-confirm">Create task</button>
+            <button
+              type="submit"
+              class="btn-confirm"
+              :disabled="$store.chat.containsInlineImageUploadToken($store.chat.commandPaletteNewWorkDescription)"
+            >Create task</button>
           </div>
         </form>
       </section>

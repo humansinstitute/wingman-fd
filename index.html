@@ -467,6 +467,17 @@
           </div>
           <div class="command-palette-form-body">
             <label>
+              <span>Description</span>
+              <textarea
+                class="command-palette-new-work-description"
+                rows="2"
+                x-model="$store.chat.commandPaletteNewWorkDescription"
+                placeholder="Add detail or paste an image"
+                aria-label="New work description"
+                @paste="$store.chat.handleCommandPaletteNewWorkDescriptionPaste($event)"
+              ></textarea>
+            </label>
+            <label>
               <span>Board</span>
               <select x-model="$store.chat.commandPaletteNewWorkScopeId">
                 <option value="">Current board</option>
@@ -478,7 +489,11 @@
           </div>
           <div class="command-palette-form-actions">
             <button type="button" class="btn-cancel" @click="$store.chat.closeCommandPaletteNewWorkModal()">Cancel</button>
-            <button type="submit" class="btn-confirm">Create task</button>
+            <button
+              type="submit"
+              class="btn-confirm"
+              :disabled="$store.chat.containsInlineImageUploadToken($store.chat.commandPaletteNewWorkDescription)"
+            >Create task</button>
           </div>
         </form>
       </section>

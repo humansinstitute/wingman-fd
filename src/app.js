@@ -591,7 +591,7 @@ export function initApp() {
     docBlockBuffer: '',
     docEditingTitle: false,
     docComments: [],
-    docCommentsVisible: true,
+    docCommentsVisible: false,
     showDocCommentModal: false,
     docSelectedBlockId: null,
     docCommentAnchorLine: null,
@@ -3154,9 +3154,10 @@ export function initApp() {
       }
     },
 
-    async addTask() {
+    async addTask(options = {}) {
       const title = String(this.newTaskTitle || '').trim();
       if (!title || !this.session?.npub) return null;
+      const description = String(options.description || '').trim();
       if (!this.selectedBoardId) {
         this.error = 'Select a scope board first.';
         return null;
@@ -3172,8 +3173,8 @@ export function initApp() {
 
       const flowLinkage = resolveFlowLinkage({
         title,
-        description: '',
-        references: [],
+        description,
+        references: parseReferencesFromDescription(description),
         flows: (this.flows || []).filter(f => f.record_state !== 'deleted'),
       });
       const dispatchAssigneeNpub = resolveFlowDispatchAssignee({
@@ -3187,7 +3188,7 @@ export function initApp() {
         record_id: recordId,
         owner_npub: ownerNpub,
         title,
-        description: '',
+        description,
         state: 'new',
         priority: 'sand',
         parent_task_id: null,
