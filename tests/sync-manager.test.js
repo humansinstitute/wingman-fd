@@ -613,6 +613,67 @@ describe('pending write diagnostics', () => {
     expect(removePendingWrite).toHaveBeenCalledWith(31);
     expect(removePendingWrite).not.toHaveBeenCalledWith(32);
   });
+
+  it('repairs only Tower-backed pending targets by clearing queued writes and pulling those families', async () => {
+    const documentFamilyHash = getSyncFamilyHash('document');
+    const scopeFamilyHash = getSyncFamilyHash('scope');
+    const pendingRows = [
+      {
+        row_id: 41,
+        record_id: 'doc-on-tower',
+        record_family_hash: documentFamilyHash,
+        envelope: {
+          record_id: 'doc-on-tower',
+          record_family_hash: documentFamilyHash,
+          version: 4,
+          previous_version: 3,
+        },
+      },
+      {
+        row_id: 42,
+        record_id: 'scope-local-only',
+        record_family_hash: scopeFamilyHash,
+        envelope: {
+          record_id: 'scope-local-only',
+          record_family_hash: scopeFamilyHash,
+          version: 2,
+          previous_version: 1,
+        },
+      },
+    ];
+    fetchRecordHistory
+      .mockResolvedValueOnce({ versions: [{ version: 3, updated_at: '2026-03-28T10:00:00.000Z' }] })
+      .mockResolvedValueOnce({ versions: [] });
+    pullRecordsForFamilies.mockResolvedValueOnce({ pulled: 1 });
+
+    const store = createStore({
+      session: { npub: 'npub1me' },
+      backendUrl: 'https://tower.example.com',
+      refreshStateForFamilies: vi.fn(async () => {}),
+    });
+
+    const result = await store.repairPendingWriteTargetsFromTower(
+      store.getPendingWriteRepairTargets(pendingRows),
+      { pendingWrites: pendingRows },
+    );
+
+    expect(result).toMatchObject({
+      repaired: 1,
+      cleared: 1,
+      attempted: 2,
+      skippedMissing: 1,
+      failures: [],
+    });
+    expect(removePendingWrite).toHaveBeenCalledWith(41);
+    expect(removePendingWrite).not.toHaveBeenCalledWith(42);
+    expect(pullRecordsForFamilies).toHaveBeenCalledWith(
+      'npub1owner',
+      'npub1me',
+      [documentFamilyHash],
+      expect.objectContaining({ forceFull: true, backendUrl: 'https://tower.example.com' }),
+    );
+    expect(store.refreshStateForFamilies).toHaveBeenCalledWith(['document']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1367,6 +1428,57 @@ describe('record status modal', () => {
     expect(markRecordStatusLocalRecordSynced).not.toHaveBeenCalled();
     expect(removeRecordStatusPendingWrite).not.toHaveBeenCalled();
     expect(store.recordStatusError).toContain('Force submit rejected');
+  });
+
+  it('can restore a conflicted record status target from Tower instead of force-submitting stale local state', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    const pendingRows = [
+      {
+        row_id: 51,
+        record_id: 'task-1',
+        record_family_hash: taskFamilyHash,
+        envelope: {
+          record_id: 'task-1',
+          record_family_hash: taskFamilyHash,
+          version: 6,
+          previous_version: 5,
+        },
+      },
+    ];
+    fetchRecordHistory.mockResolvedValueOnce({
+      versions: [{ version: 5, updated_at: '2026-03-28T12:00:00.000Z' }],
+    });
+    pullRecordsForFamilies.mockResolvedValueOnce({ pulled: 1 });
+    const checkRecordStatusOnTower = vi.fn().mockResolvedValue(undefined);
+    const refreshRecordStatusLocalContext = vi.fn().mockResolvedValue(undefined);
+    const { fn, store } = bindMethod('repairRecordStatusTargetFromTower', {
+      session: { npub: 'npub1me' },
+      backendUrl: 'https://tower.example.com',
+      recordStatusFamilyId: 'task',
+      recordStatusTargetId: 'task-1',
+      recordStatusTargetLabel: 'Task One',
+      recordStatusTowerVersionCount: 5,
+      recordStatusTowerLatestVersion: 5,
+      recordStatusPendingWriteCount: 1,
+      getRecordStatusPendingWrites: vi.fn().mockResolvedValue(pendingRows),
+      checkRecordStatusOnTower,
+      refreshRecordStatusLocalContext,
+      refreshStateForFamilies: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await fn();
+
+    expect(removePendingWrite).toHaveBeenCalledWith(51);
+    expect(syncRecords).not.toHaveBeenCalled();
+    expect(pullRecordsForFamilies).toHaveBeenCalledWith(
+      'npub1owner',
+      'npub1me',
+      [taskFamilyHash],
+      expect.objectContaining({ forceFull: true, backendUrl: 'https://tower.example.com' }),
+    );
+    expect(checkRecordStatusOnTower).toHaveBeenCalled();
+    expect(refreshRecordStatusLocalContext).toHaveBeenCalled();
+    expect(store.recordStatusNotice).toContain('Restored Task One from Tower');
   });
 
   it('force-pushes scoped tasks using recovered scope groups and persists the repaired assignment locally', async () => {

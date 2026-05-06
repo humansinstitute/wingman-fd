@@ -325,6 +325,42 @@ export const syncManagerMixin = {
     return [...targets.values()];
   },
 
+  getPendingWriteRepairTargets(rows = []) {
+    const targets = new Map();
+    for (const row of rows) {
+      const envelope = row?.envelope || {};
+      const familyHash = String(row?.record_family_hash || envelope.record_family_hash || '').trim();
+      const family = getSyncFamily(familyHash);
+      const recordId = String(row?.record_id || envelope.record_id || '').trim();
+      if (!family?.id || !recordId) continue;
+      const key = `${family.id}\u0000${recordId}`;
+      const diagnostic = this.describePendingWriteRow(row);
+      const target = targets.get(key) || {
+        familyId: family.id,
+        familyHash,
+        recordId,
+        label: diagnostic.title || recordId,
+        rowIds: [],
+      };
+      if (row?.row_id != null) target.rowIds.push(row.row_id);
+      targets.set(key, target);
+    }
+    return [...targets.values()];
+  },
+
+  getPendingWriteRowsForTarget(pendingWrites = [], target = {}) {
+    const familyId = String(target?.familyId || '').trim();
+    const familyHash = String(target?.familyHash || getSyncFamily(familyId)?.hash || '').trim();
+    const recordId = String(target?.recordId || '').trim();
+    if (!familyHash || !recordId) return [];
+    return pendingWrites.filter((row) => {
+      const envelope = row?.envelope || {};
+      const rowFamilyHash = String(row?.record_family_hash || envelope.record_family_hash || '').trim();
+      const rowRecordId = String(row?.record_id || envelope.record_id || '').trim();
+      return rowFamilyHash === familyHash && rowRecordId === recordId;
+    });
+  },
+
   async getRecordStatusRelatedComments(recordId, targetFamilyHash) {
     const comments = await getCommentsByTarget(recordId);
     return comments.filter((comment) => comment?.target_record_family_hash === targetFamilyHash);
@@ -502,6 +538,24 @@ export const syncManagerMixin = {
       && this.recordStatusLocalPresent
       && (
         this.recordStatusTowerVersionCount === 0
+        || this.recordStatusPendingWriteCount > 0
+        || this.recordStatusLocalSyncStatus === 'pending'
+        || this.recordStatusLocalSyncStatus === 'failed'
+        || (
+          Number(this.recordStatusLocalVersion || 0) > 0
+          && Number(this.recordStatusLocalVersion || 0) !== Number(this.recordStatusTowerLatestVersion || 0)
+        )
+      )
+    );
+  },
+
+  canRepairRecordStatusTargetFromTower() {
+    return Boolean(
+      this.recordStatusTargetId
+      && this.recordStatusFamilyId
+      && Number(this.recordStatusTowerVersionCount || 0) > 0
+      && (
+        !this.recordStatusLocalPresent
         || this.recordStatusPendingWriteCount > 0
         || this.recordStatusLocalSyncStatus === 'pending'
         || this.recordStatusLocalSyncStatus === 'failed'
@@ -1093,6 +1147,52 @@ export const syncManagerMixin = {
     }
   },
 
+  async repairRecordStatusTargetFromTower() {
+    const familyId = String(this.recordStatusFamilyId || '').trim();
+    const recordId = String(this.recordStatusTargetId || '').trim();
+    const familyLabel = this.getRecordStatusFamilyLabel(familyId);
+    const targetLabel = this.recordStatusTargetLabel || `${familyLabel} record`;
+    if (!familyId || !recordId) {
+      this.recordStatusError = 'Select a record first.';
+      return;
+    }
+    if (!this.workspaceOwnerNpub || !this.session?.npub) {
+      this.recordStatusError = 'Configure workspace sync first.';
+      return;
+    }
+    if (Number(this.recordStatusTowerVersionCount || 0) <= 0) {
+      this.recordStatusError = `${targetLabel} is not on Tower, so there is no Tower copy to restore.`;
+      return;
+    }
+
+    const confirmed = typeof window === 'undefined'
+      ? true
+      : window.confirm(`Use the Tower copy for ${targetLabel}? This clears queued local writes for this record and reloads the Tower version.`);
+    if (!confirmed) return;
+
+    this.recordStatusSyncBusy = true;
+    this.recordStatusError = null;
+    this.recordStatusNotice = `Repairing ${targetLabel} from Tower...`;
+    try {
+      const pendingWrites = await this.getRecordStatusPendingWrites();
+      const result = await this.repairPendingWriteTargetsFromTower([
+        { familyId, recordId, label: targetLabel },
+      ], { pendingWrites, requirePendingRows: false });
+      await this.checkRecordStatusOnTower();
+      if (!this.recordStatusError) {
+        const clearedSuffix = result.cleared > 0
+          ? ` Cleared ${result.cleared} queued local ${result.cleared === 1 ? 'write' : 'writes'}.`
+          : '';
+        this.recordStatusNotice = `Restored ${targetLabel} from Tower.${clearedSuffix}`;
+      }
+    } catch (error) {
+      this.recordStatusError = error?.message || 'Failed to repair this record from Tower.';
+    } finally {
+      await this.refreshRecordStatusLocalContext();
+      this.recordStatusSyncBusy = false;
+    }
+  },
+
   async forceSyncAllPendingWrites() {
     if (this.pendingWritesBusy) return;
     if (!this.workspaceOwnerNpub || !this.session?.npub) {
@@ -1129,6 +1229,119 @@ export const syncManagerMixin = {
     } finally {
       this.pendingWritesBusy = false;
     }
+  },
+
+  async repairAllPendingWritesFromTower() {
+    if (this.pendingWritesBusy) return;
+    if (!this.workspaceOwnerNpub || !this.session?.npub) {
+      this.pendingWritesError = 'Configure workspace sync first.';
+      return;
+    }
+
+    const confirmed = typeof window === 'undefined'
+      ? true
+      : window.confirm('Repair Tower-backed pending writes? This discards queued local writes for records that already exist on Tower, then reloads those records from Tower. Records missing on Tower stay pending.');
+    if (!confirmed) return;
+
+    this.pendingWritesBusy = true;
+    this.pendingWritesError = null;
+    this.pendingWritesNotice = 'Repairing Tower-backed pending writes...';
+    try {
+      const pendingWrites = await this.getRecordStatusPendingWrites();
+      const targets = this.getPendingWriteRepairTargets(pendingWrites);
+      if (targets.length === 0) {
+        this.pendingWritesNotice = 'No pending writes.';
+        return;
+      }
+
+      const result = await this.repairPendingWriteTargetsFromTower(targets, { pendingWrites });
+
+      await this.refreshPendingWriteDiagnostics();
+      await this.refreshSyncStatus({ refreshUnread: false });
+      const skippedSuffix = result.skippedMissing > 0
+        ? ` ${result.skippedMissing} ${result.skippedMissing === 1 ? 'record is' : 'records are'} missing on Tower and stayed pending.`
+        : '';
+      this.pendingWritesNotice = `Repaired ${result.repaired}/${result.attempted} Tower-backed pending ${result.attempted === 1 ? 'record' : 'records'} and cleared ${result.cleared} queued ${result.cleared === 1 ? 'write' : 'writes'}.${skippedSuffix}`;
+      if (result.failures.length > 0) {
+        const details = result.failures
+          .slice(0, 5)
+          .map((failure) => `${failure.label || failure.recordId}: ${failure.message}`)
+          .join(' | ');
+        const suffix = result.failures.length > 5 ? ` | +${result.failures.length - 5} more` : '';
+        this.pendingWritesError = `Repair failed for ${result.failures.length}/${result.attempted}: ${details}${suffix}`;
+      }
+    } catch (error) {
+      this.pendingWritesError = error?.message || 'Failed to repair pending writes from Tower.';
+    } finally {
+      this.pendingWritesBusy = false;
+    }
+  },
+
+  async repairPendingWriteTargetsFromTower(targets = [], options = {}) {
+    const pendingWrites = Array.isArray(options.pendingWrites)
+      ? options.pendingWrites
+      : await this.getRecordStatusPendingWrites();
+    const requirePendingRows = options.requirePendingRows !== false;
+    const wanted = new Map();
+    for (const target of targets) {
+      const familyId = String(target?.familyId || '').trim();
+      const familyHash = String(target?.familyHash || getSyncFamily(familyId)?.hash || '').trim();
+      const recordId = String(target?.recordId || '').trim();
+      if (!familyId || !familyHash || !recordId) continue;
+      const key = `${familyId}\u0000${recordId}`;
+      if (wanted.has(key)) continue;
+      wanted.set(key, {
+        familyId,
+        familyHash,
+        recordId,
+        label: String(target?.label || '').trim() || recordId,
+      });
+    }
+    if (wanted.size === 0) {
+      return { repaired: 0, cleared: 0, attempted: 0, skippedMissing: 0, failures: [] };
+    }
+
+    let repaired = 0;
+    let cleared = 0;
+    let attempted = 0;
+    let skippedMissing = 0;
+    const failures = [];
+    const familiesToPull = new Set();
+
+    for (const target of wanted.values()) {
+      attempted += 1;
+      try {
+        const pendingRows = this.getPendingWriteRowsForTarget(pendingWrites, target);
+        if (requirePendingRows && pendingRows.length === 0) continue;
+
+        const towerContext = await this.getRecordStatusTowerVersionContext(target.recordId);
+        if (towerContext.visibleVersionCount <= 0) {
+          skippedMissing += 1;
+          continue;
+        }
+
+        for (const row of pendingRows) {
+          if (row?.row_id == null) continue;
+          await this.removeRecordStatusPendingWrite(row.row_id);
+          cleared += 1;
+        }
+        familiesToPull.add(target.familyId);
+        repaired += 1;
+      } catch (error) {
+        failures.push({
+          ...target,
+          message: error?.message || 'Repair failed.',
+        });
+      }
+    }
+
+    const familyIds = [...familiesToPull];
+    if (familyIds.length > 0) {
+      await this.pullFamiliesFromBackend(familyIds, { forceFull: true });
+      await this.refreshStateForFamilies(familyIds);
+    }
+
+    return { repaired, cleared, attempted, skippedMissing, failures };
   },
 
   async forceSyncPendingWriteTargets(targets = [], options = {}) {
