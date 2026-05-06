@@ -8243,6 +8243,14 @@ button:disabled {
   opacity: 0.4;
 }
 
+.kanban-card-drop-before {
+  box-shadow: inset 0 3px 0 var(--accent), 0 3px 8px rgba(0,0,0,0.08);
+}
+
+.kanban-card-drop-after {
+  box-shadow: inset 0 -3px 0 var(--accent), 0 3px 8px rgba(0,0,0,0.08);
+}
+
 .kanban-column-body.drag-over {
   background: rgba(59, 130, 246, 0.08);
   border-radius: var(--radius-sm);

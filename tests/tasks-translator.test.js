@@ -37,6 +37,7 @@ describe('task translator — inbound', () => {
             description: 'Port v3 board to v4',
             state: 'in_progress',
             priority: 'rock',
+            board_order: 1250,
             parent_task_id: null,
             assigned_to_npub: 'npub_assignee',
             scheduled_for: '2026-03-15',
@@ -58,6 +59,7 @@ describe('task translator — inbound', () => {
     expect(row.description).toBe('Port v3 board to v4');
     expect(row.state).toBe('in_progress');
     expect(row.priority).toBe('rock');
+    expect(row.board_order).toBe(1250);
     expect(row.parent_task_id).toBeNull();
     expect(row.assigned_to_npub).toBe('npub_assignee');
     expect(row.scheduled_for).toBe('2026-03-15');
@@ -149,6 +151,7 @@ describe('task translator — inbound', () => {
     expect(row.title).toBe('');
     expect(row.state).toBe('new');
     expect(row.priority).toBe('sand');
+    expect(row.board_order).toBeNull();
     expect(row.parent_task_id).toBeNull();
   });
 });
@@ -162,6 +165,7 @@ describe('task translator — outbound', () => {
       description: 'Port v3',
       state: 'new',
       priority: 'rock',
+      board_order: 2500,
       assigned_to_npub: 'npub_assignee',
       group_ids: ['gpub_abc'],
       signature_npub: 'npub_owner',
@@ -181,6 +185,7 @@ describe('task translator — outbound', () => {
     expect(payload.data.title).toBe('Build board');
     expect(payload.data.state).toBe('new');
     expect(payload.data.priority).toBe('rock');
+    expect(payload.data.board_order).toBe(2500);
     expect(payload.data.assigned_to_npub).toBe('npub_assignee');
   });
 

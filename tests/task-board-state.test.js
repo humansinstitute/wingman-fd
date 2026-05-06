@@ -13,6 +13,8 @@ import {
   dedupeTasksByRecordId,
   computeParentDisplayState,
   computeBoardColumns,
+  sortTasksByBoardOrder,
+  calculateTaskBoardOrderForInsertion,
   computeBoardScopedTasks,
   computeFilteredTasks,
   computeTaskTagStats,
@@ -745,6 +747,75 @@ describe('computeBoardColumns', () => {
     const cols = computeBoardColumns(active, [], []);
     expect(cols.find((c) => c.state === 'new').tasks).toHaveLength(1);
     expect(cols.find((c) => c.state === 'new').tasks[0].version).toBe(2);
+  });
+
+  it('orders cards by hidden board_order while preserving input order for unranked cards', () => {
+    const active = [
+      { record_id: 'a1', state: 'ready' },
+      { record_id: 'a2', state: 'ready', board_order: 3000 },
+      { record_id: 'a3', state: 'ready', board_order: 1000 },
+      { record_id: 'a4', state: 'ready' },
+    ];
+
+    const cols = computeBoardColumns(active, [], []);
+
+    expect(cols.find((c) => c.state === 'ready').tasks.map((task) => task.record_id)).toEqual([
+      'a3',
+      'a2',
+      'a1',
+      'a4',
+    ]);
+  });
+});
+
+describe('sortTasksByBoardOrder', () => {
+  it('keeps unranked tasks stable after ranked tasks', () => {
+    expect(sortTasksByBoardOrder([
+      { record_id: 'first' },
+      { record_id: 'ranked-low', board_order: 200 },
+      { record_id: 'ranked-high', board_order: 100 },
+      { record_id: 'last' },
+    ]).map((task) => task.record_id)).toEqual([
+      'ranked-high',
+      'ranked-low',
+      'first',
+      'last',
+    ]);
+  });
+});
+
+describe('calculateTaskBoardOrderForInsertion', () => {
+  it('uses a midpoint between neighbouring cards', () => {
+    expect(calculateTaskBoardOrderForInsertion([
+      { record_id: 'a', board_order: 1000 },
+      { record_id: 'b', board_order: 3000 },
+    ], {
+      taskId: 'dragged',
+      targetTaskId: 'b',
+      position: 'before',
+    })).toBe(2000);
+  });
+
+  it('creates stable virtual gaps for unranked cards', () => {
+    expect(calculateTaskBoardOrderForInsertion([
+      { record_id: 'a' },
+      { record_id: 'b' },
+    ], {
+      taskId: 'dragged',
+      targetTaskId: 'a',
+      position: 'before',
+    })).toBe(500);
+  });
+
+  it('moves the dragged task to the end after removing it from the sibling list', () => {
+    expect(calculateTaskBoardOrderForInsertion([
+      { record_id: 'a', board_order: 1000 },
+      { record_id: 'dragged', board_order: 2000 },
+      { record_id: 'c', board_order: 3000 },
+    ], {
+      taskId: 'dragged',
+      position: 'end',
+    })).toBe(4000);
   });
 });
 

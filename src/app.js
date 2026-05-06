@@ -45,6 +45,7 @@ import {
 } from './task-predecessor-helpers.js';
 import {
   taskBoardStateMixin,
+  calculateTaskBoardOrderForInsertion,
   dedupeTasksByRecordId,
   UNSCOPED_TASK_BOARD_ID,
   WEEKDAY_OPTIONS,
@@ -3273,6 +3274,9 @@ export function initApp() {
         description,
         state: String(options.state || 'new').trim() || 'new',
         priority: String(options.priority || 'sand').trim() || 'sand',
+        board_order: Number.isFinite(Number(options.boardOrder ?? options.board_order))
+          ? Number(options.boardOrder ?? options.board_order)
+          : null,
         parent_task_id: null,
         ...assignment,
         assigned_to_npub: hasExplicitAssignee ? (options.assignedToNpub || null) : dispatchAssigneeNpub,
@@ -4216,6 +4220,7 @@ export function initApp() {
       this._dragTaskId = null;
       e.target.classList.remove('dragging');
       document.querySelectorAll('.kanban-column-body.drag-over').forEach(el => el.classList.remove('drag-over'));
+      this.clearTaskCardDropClasses();
     },
 
     handleTaskDragOver(e, targetState) {
@@ -4229,15 +4234,64 @@ export function initApp() {
       }
     },
 
-    async handleTaskDrop(e, targetState) {
+    clearTaskCardDropClasses() {
+      if (typeof document === 'undefined') return;
+      document.querySelectorAll('.kanban-card-drop-before, .kanban-card-drop-after').forEach((el) => {
+        el.classList.remove('kanban-card-drop-before', 'kanban-card-drop-after');
+      });
+    },
+
+    getTaskCardDropPosition(event) {
+      const rect = event?.currentTarget?.getBoundingClientRect?.();
+      if (!rect) return 'after';
+      const midpoint = rect.top + (rect.height / 2);
+      return event.clientY < midpoint ? 'before' : 'after';
+    },
+
+    handleTaskCardDragOver(event, targetState) {
+      if (!this._dragTaskId || targetState === 'summary') return;
+      event.dataTransfer.dropEffect = 'move';
+      this.clearTaskCardDropClasses();
+      const position = this.getTaskCardDropPosition(event);
+      event.currentTarget.classList.add(position === 'before' ? 'kanban-card-drop-before' : 'kanban-card-drop-after');
+    },
+
+    handleTaskCardDragLeave(event) {
+      event.currentTarget.classList.remove('kanban-card-drop-before', 'kanban-card-drop-after');
+    },
+
+    getTaskColumnTasksForReorder(targetState) {
+      const column = this.boardColumns.find((candidate) => candidate.state === targetState);
+      return column?.tasks || [];
+    },
+
+    calculateTaskBoardOrderForDrop(taskId, targetState, targetTaskId = null, position = 'end') {
+      return calculateTaskBoardOrderForInsertion(this.getTaskColumnTasksForReorder(targetState), {
+        taskId,
+        targetTaskId,
+        position,
+      });
+    },
+
+    async handleTaskDrop(e, targetState, targetTaskId = null, position = 'end') {
       e.currentTarget.classList.remove('drag-over');
+      this.clearTaskCardDropClasses();
       if (targetState === 'summary') return;
       const taskId = e.dataTransfer.getData('text/plain');
       if (!taskId) return;
       const task = this.tasks.find(t => t.record_id === taskId);
-      if (!task || task.state === targetState) return;
+      if (!task) return;
       if (this.isParentTask(taskId)) return;
-      await this.updateTaskField(taskId, 'state', targetState);
+      if (taskId === targetTaskId && task.state === targetState) return;
+
+      const nextBoardOrder = this.calculateTaskBoardOrderForDrop(taskId, targetState, targetTaskId, position);
+      const patch = {};
+      if (task.state !== targetState) patch.state = targetState;
+      if (Number.isFinite(nextBoardOrder) && Math.abs(Number(task.board_order ?? NaN) - nextBoardOrder) > 0.000001) {
+        patch.board_order = nextBoardOrder;
+      }
+      if (Object.keys(patch).length === 0) return;
+      await this.applyTaskPatch(taskId, patch, { silent: true, sync: true, intent: 'move' });
     },
 
     isTaskSelected(taskId) {

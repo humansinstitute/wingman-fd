@@ -2,7 +2,7 @@
 // Do not edit by hand.
 export const FLIGHT_DECK_SCHEMA_BUNDLE = {
   "bundle_schema_version": 1,
-  "schema_hash": "973a5ce05daefefe4390007d3c2c8045164453738804e76637d98354de469b08",
+  "schema_hash": "68351a3a264343b0790268fc4c82a659ecd4cd81c557492a3689a9a341d460ff",
   "schemas": [
     {
       "collection_space": "agent_chat_trigger",
@@ -2437,6 +2437,12 @@ export const FLIGHT_DECK_SCHEMA_BUNDLE = {
               },
               "priority": {
                 "type": "string"
+              },
+              "board_order": {
+                "type": [
+                  "number",
+                  "null"
+                ]
               },
               "parent_task_id": {
                 "type": [

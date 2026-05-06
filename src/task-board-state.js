@@ -674,10 +674,57 @@ export function sortTagsByPopularity(tags = [], tagCounts = {}) {
   });
 }
 
+export function getTaskBoardOrder(task) {
+  const order = Number(task?.board_order);
+  return Number.isFinite(order) ? order : null;
+}
+
+export function sortTasksByBoardOrder(tasks = []) {
+  if (!Array.isArray(tasks) || tasks.length <= 1) return Array.isArray(tasks) ? tasks : [];
+  return (tasks || [])
+    .map((task, index) => ({ task, index, order: getTaskBoardOrder(task) }))
+    .sort((left, right) => {
+      const leftHasOrder = left.order !== null;
+      const rightHasOrder = right.order !== null;
+      if (leftHasOrder !== rightHasOrder) return leftHasOrder ? -1 : 1;
+      if (leftHasOrder && left.order !== right.order) return left.order - right.order;
+      return left.index - right.index;
+    })
+    .map((entry) => entry.task);
+}
+
+export function getTaskVirtualBoardOrder(task, index) {
+  const order = getTaskBoardOrder(task);
+  return order !== null ? order : (index + 1) * 1000;
+}
+
+export function calculateTaskBoardOrderForInsertion(tasks = [], options = {}) {
+  const taskId = String(options.taskId || '').trim();
+  const targetTaskId = String(options.targetTaskId || '').trim();
+  const position = options.position === 'after' ? 'after' : options.position === 'before' ? 'before' : 'end';
+  const siblings = (tasks || []).filter((task) => !taskId || task?.record_id !== taskId);
+  let insertIndex = siblings.length;
+  if (targetTaskId) {
+    const targetIndex = siblings.findIndex((task) => task.record_id === targetTaskId);
+    if (targetIndex >= 0) insertIndex = position === 'after' ? targetIndex + 1 : targetIndex;
+  }
+
+  const previousTask = insertIndex > 0 ? siblings[insertIndex - 1] : null;
+  const nextTask = insertIndex < siblings.length ? siblings[insertIndex] : null;
+  const previousOrder = previousTask ? getTaskVirtualBoardOrder(previousTask, insertIndex - 1) : null;
+  const nextOrder = nextTask ? getTaskVirtualBoardOrder(nextTask, insertIndex) : null;
+
+  if (previousOrder === null && nextOrder === null) return 1000;
+  if (previousOrder === null) return nextOrder > 1 ? nextOrder / 2 : nextOrder - 1000;
+  if (nextOrder === null) return previousOrder + 1000;
+  if (nextOrder > previousOrder) return previousOrder + ((nextOrder - previousOrder) / 2);
+  return previousOrder + 0.001;
+}
+
 export function computeBoardColumns(activeTasks, doneTasks, summaryTasks) {
-  const normalizedSummaryTasks = dedupeTasksByRecordId(summaryTasks);
-  const normalizedActiveTasks = dedupeTasksByRecordId(activeTasks);
-  const normalizedDoneTasks = dedupeTasksByRecordId(doneTasks);
+  const normalizedSummaryTasks = sortTasksByBoardOrder(dedupeTasksByRecordId(summaryTasks));
+  const normalizedActiveTasks = sortTasksByBoardOrder(dedupeTasksByRecordId(activeTasks));
+  const normalizedDoneTasks = sortTasksByBoardOrder(dedupeTasksByRecordId(doneTasks));
   const cols = [];
   if (normalizedSummaryTasks.length > 0) {
     cols.push({ state: 'summary', label: 'Summary', tasks: normalizedSummaryTasks });

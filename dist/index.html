@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-BURuR5fK.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-7IFJ8aUB.css">
+  <script type="module" crossorigin src="/assets/index-CeNilOh3.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-2XhbVxRv.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -1306,6 +1306,9 @@
                         :class="{ 'summary-card': col.state === 'summary', 'kanban-card-selected': $store.chat.isTaskSelected(task.record_id), 'task-unread': $store.chat.isTaskUnread(task.record_id) }"
                         :draggable="col.state !== 'summary'"
                         @dragstart="col.state !== 'summary' && $store.chat.handleTaskDragStart($event, task.record_id)"
+                        @dragover.prevent.stop="col.state !== 'summary' && $store.chat.handleTaskCardDragOver($event, col.state, task.record_id)"
+                        @dragleave.stop="$store.chat.handleTaskCardDragLeave($event)"
+                        @drop.prevent.stop="col.state !== 'summary' && $store.chat.handleTaskDrop($event, col.state, task.record_id, $store.chat.getTaskCardDropPosition($event))"
                         @dragend="$store.chat.handleTaskDragEnd($event)"
                         @click="$store.chat.handleTaskCardClick(task.record_id)"
                       >
@@ -1353,7 +1356,6 @@
                           </div>
                         </template>
                         <div class="kanban-card-meta">
-                          <span class="badge" :class="`priority-${task.priority}`" x-text="task.priority" x-show="task.priority && task.priority !== 'sand'"></span>
                           <span class="badge badge-date" x-text="task.scheduled_for" x-show="task.scheduled_for"></span>
                           <template x-if="col.state === 'summary'">
                             <div class="summary-meta">
@@ -1414,7 +1416,6 @@
                               </template>
                             </div>
                           </template>
-                          <span class="badge" :class="`priority-${task.priority}`" x-text="task.priority" x-show="task.priority && task.priority !== 'sand'"></span>
                           <span class="badge badge-date" x-text="task.scheduled_for" x-show="task.scheduled_for"></span>
                           <template x-if="group.state === 'summary'">
                             <span class="badge" :class="`state-${$store.chat.computedParentState(task.record_id)}`" x-text="$store.chat.formatState($store.chat.computedParentState(task.record_id))"></span>
@@ -1543,9 +1544,6 @@
                       <span class="task-detail-meta-pill" :class="`task-detail-meta-state state-${$store.chat.editingTask.state || 'new'}`">
                         <span x-text="$store.chat.formatState($store.chat.editingTask.state || 'new')"></span>
                       </span>
-                      <span class="task-detail-meta-pill" :class="`task-detail-priority-${$store.chat.editingTask.priority || 'sand'}`">
-                        <span x-text="$store.chat.formatTaskPriority($store.chat.editingTask.priority)"></span>
-                      </span>
                       <span class="task-detail-meta-pill">
                         <span x-text="$store.chat.formatTaskDueDate($store.chat.editingTask.scheduled_for)"></span>
                       </span>
@@ -1576,7 +1574,7 @@
                     placeholder="Task title"
                   />
 
-                  <!-- State & Priority row -->
+                  <!-- State row -->
                   <div class="task-detail-fields" x-show="$store.chat.isTaskDetailEditing()">
                     <div class="task-field">
                       <label class="task-field-label">Status</label>
@@ -1594,14 +1592,6 @@
                         <span class="task-quick-date-sep">|</span>
                         <button type="button" class="task-quick-date-link" :disabled="!$store.chat.isTaskDetailEditing()" @click="$store.chat.quickSetTaskState('archive')">Archive</button>
                       </span>
-                    </div>
-                    <div class="task-field">
-                      <label class="task-field-label">Priority</label>
-                      <select x-model="$store.chat.editingTask.priority" :disabled="!$store.chat.isTaskDetailEditing()">
-                        <option value="rock">Rock (High)</option>
-                        <option value="pebble">Pebble (Med)</option>
-                        <option value="sand">Sand (Low)</option>
-                      </select>
                     </div>
                     <div class="task-field">
                       <label class="task-field-label">Scheduled</label>
