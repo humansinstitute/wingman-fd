@@ -270,7 +270,7 @@ describe('sync worker pending write batching', () => {
     expect(state.removed).toEqual([1]);
   });
 
-  it('flushes terminal task pending writes optimistically when stale checkout config is attached', async () => {
+  it('keeps terminal task pending writes on the checkout-managed path', async () => {
     const taskFamilyHash = getSyncFamilyHash('task');
     const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
     state.tasksById.set('task-archived', {
@@ -317,9 +317,9 @@ describe('sync worker pending write batching', () => {
     await flushPendingWrites('npub-owner');
 
     expect(state.syncCalls).toEqual([['task-archived', 'task-done']]);
-    expect(state.syncArgs[0].checkout_policy_config).toBeNull();
-    expect(state.syncArgs[0].records[0].checkout).toBeUndefined();
-    expect(state.syncArgs[0].records[1].checkout).toBeUndefined();
+    expect(state.syncArgs[0].checkout_policy_config).toEqual(checkoutPolicyConfig);
+    expect(state.syncArgs[0].records[0].checkout).toEqual({ checkout_id: 'checkout-archive-stale', consume_on_success: true });
+    expect(state.syncArgs[0].records[1].checkout).toEqual({ checkout_id: 'checkout-done-stale', consume_on_success: true });
     expect(state.removed).toEqual([1, 2]);
   });
 

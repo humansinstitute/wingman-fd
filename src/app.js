@@ -159,7 +159,6 @@ import {
 import {
   isTaskBlockedByPendingSave,
   markTaskEditSyncedAfterAcceptedFlush,
-  shouldUseOptimisticTaskWrite,
 } from './task-save-helpers.js';
 import {
   filterSelectableTaskIds,
@@ -3351,10 +3350,9 @@ export function initApp() {
     },
 
     getTaskPatchCheckoutPolicyConfig(updatedTask, previousTask = null, options = {}) {
-      if (Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig')) {
+      if (Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig') && options.checkoutPolicyConfig) {
         return options.checkoutPolicyConfig;
       }
-      if (shouldUseOptimisticTaskWrite(updatedTask, previousTask)) return null;
       return this.getTaskDetailCheckoutPolicyConfig();
     },
 
@@ -3375,10 +3373,7 @@ export function initApp() {
     },
 
     async queueTaskWrite(updatedTask, previousTask, options = {}) {
-      const hasExplicitCheckoutPolicyConfig = Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig');
-      const checkoutPolicyConfig = hasExplicitCheckoutPolicyConfig
-        ? options.checkoutPolicyConfig
-        : this.getTaskDetailCheckoutPolicyConfig();
+      const checkoutPolicyConfig = options.checkoutPolicyConfig || this.getTaskDetailCheckoutPolicyConfig();
       const taskWriteFields = await this.getTaskWriteFieldsForWrite(updatedTask);
       const envelope = await outboundTask({
         ...updatedTask,
@@ -4344,7 +4339,6 @@ export function initApp() {
         this.error = 'Summary tasks cannot be bulk changed. Select the child task cards instead.';
         return;
       }
-      const shouldForceSyncTerminalWrites = action === 'done' || action === 'archive';
       const today = new Date().toISOString().slice(0, 10);
       const patchForAction = (taskId) => {
         switch (action) {
@@ -4374,25 +4368,6 @@ export function initApp() {
           await this.applyTaskPatch(taskId, patch, { sync: false });
         }
         await this.flushAndBackgroundSync();
-        if (shouldForceSyncTerminalWrites && typeof this.forceSyncPendingWriteTargets === 'function') {
-          const targets = selectedIds.map((taskId) => {
-            const task = this.tasks.find((entry) => entry.record_id === taskId);
-            return {
-              familyId: 'task',
-              recordId: taskId,
-              label: task?.title || taskId,
-            };
-          });
-          const result = await this.forceSyncPendingWriteTargets(targets);
-          if (result.failures?.length > 0) {
-            const details = result.failures
-              .slice(0, 3)
-              .map((failure) => `${failure.label || failure.recordId}: ${failure.message}`)
-              .join(' | ');
-            const suffix = result.failures.length > 3 ? ` | +${result.failures.length - 3} more` : '';
-            this.error = `Some selected tasks still need sync: ${details}${suffix}`;
-          }
-        }
         await this.refreshTasks();
         this.clearSelectedTasks();
       } finally {

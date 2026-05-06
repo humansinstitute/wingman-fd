@@ -3,7 +3,6 @@ import {
   hasPendingRecordWrite,
   isTaskBlockedByPendingSave,
   markTaskEditSyncedAfterAcceptedFlush,
-  shouldUseOptimisticTaskWrite,
 } from '../src/task-save-helpers.js';
 
 describe('task save helpers', () => {
@@ -50,30 +49,5 @@ describe('task save helpers', () => {
     const pendingWrites = [{ record_id: 'task-1', record_family_hash: 'task-family' }];
 
     expect(markTaskEditSyncedAfterAcceptedFlush(task, pendingWrites, 'task-family')).toBeNull();
-  });
-
-  it('uses optimistic writes for terminal task state transitions', () => {
-    expect(shouldUseOptimisticTaskWrite(
-      { record_id: 'task-1', state: 'done', title: 'Task' },
-      { record_id: 'task-1', state: 'review', title: 'Task' },
-    )).toBe(true);
-    expect(shouldUseOptimisticTaskWrite(
-      { record_id: 'task-1', state: 'archive', title: 'Task' },
-      { record_id: 'task-1', state: 'in_progress', title: 'Task' },
-    )).toBe(true);
-  });
-
-  it('uses optimistic writes for board ordering without requiring checkout', () => {
-    expect(shouldUseOptimisticTaskWrite(
-      { record_id: 'task-1', title: 'Task', state: 'ready', board_order: 1500 },
-      { record_id: 'task-1', title: 'Task', state: 'ready', board_order: 1000 },
-    )).toBe(true);
-  });
-
-  it('keeps content edits on the checkout-required path', () => {
-    expect(shouldUseOptimisticTaskWrite(
-      { record_id: 'task-1', title: 'Changed', state: 'ready', board_order: 1500 },
-      { record_id: 'task-1', title: 'Task', state: 'ready', board_order: 1000 },
-    )).toBe(false);
   });
 });

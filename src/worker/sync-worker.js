@@ -207,16 +207,6 @@ async function normalizePendingWritesForFlush(pendingWrites = []) {
       normalized.push(stripPendingWriteCheckoutPolicyConfig(pendingWrite));
       continue;
     }
-    if (
-      familyHash === TASK_FAMILY
-      && pendingWrite?.checkout_policy_config
-    ) {
-      const task = await getTaskById(String(pendingWrite?.record_id || pendingWrite?.envelope?.record_id || '').trim());
-      if (task?.state === 'archive' || task?.state === 'done') {
-        normalized.push(stripPendingWriteCheckoutPolicyConfig(pendingWrite));
-        continue;
-      }
-    }
     normalized.push(pendingWrite);
   }
   return normalized;

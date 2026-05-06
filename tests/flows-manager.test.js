@@ -262,13 +262,11 @@ describe('flowsManagerMixin — approval actions', () => {
     expect(store.applyTaskPatch).toHaveBeenCalledWith('task-1', { state: 'done' }, {
       silent: true,
       sync: true,
-      checkoutPolicyConfig: null,
       intent: 'approval_approve',
     });
     expect(store.applyTaskPatch).toHaveBeenCalledWith('task-2', { state: 'done' }, {
       silent: true,
       sync: true,
-      checkoutPolicyConfig: null,
       intent: 'approval_approve',
     });
   });
@@ -402,13 +400,11 @@ describe('flowsManagerMixin — approval actions', () => {
     expect(store.applyTaskPatch).toHaveBeenCalledWith('task-1', { state: 'archive' }, {
       silent: true,
       sync: true,
-      checkoutPolicyConfig: null,
       intent: 'approval_archive',
     });
     expect(store.applyTaskPatch).toHaveBeenCalledWith('task-2', { state: 'archive' }, {
       silent: true,
       sync: true,
-      checkoutPolicyConfig: null,
       intent: 'approval_archive',
     });
   });

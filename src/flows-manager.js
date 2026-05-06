@@ -1109,7 +1109,6 @@ export const flowsManagerMixin = {
         await this.applyTaskPatch(taskId, { state: 'done' }, {
           silent: true,
           sync: true,
-          checkoutPolicyConfig: null,
           intent: 'approval_approve',
         });
       }
@@ -1231,7 +1230,6 @@ export const flowsManagerMixin = {
         await this.applyTaskPatch(taskId, { state: 'archive' }, {
           silent: true,
           sync: true,
-          checkoutPolicyConfig: null,
           intent: 'approval_archive',
         });
       }
