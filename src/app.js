@@ -159,6 +159,7 @@ import {
 import {
   isTaskBlockedByPendingSave,
   markTaskEditSyncedAfterAcceptedFlush,
+  shouldUseOptimisticTaskWrite,
 } from './task-save-helpers.js';
 import { parseSuperBasedToken } from './superbased-token.js';
 import {
@@ -3348,14 +3349,7 @@ export function initApp() {
       if (Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig')) {
         return options.checkoutPolicyConfig;
       }
-      const nextState = String(updatedTask?.state || '').trim();
-      const previousState = String(previousTask?.state || '').trim();
-      if (
-        (nextState === 'done' || nextState === 'archive')
-        && previousState !== nextState
-      ) {
-        return null;
-      }
+      if (shouldUseOptimisticTaskWrite(updatedTask, previousTask)) return null;
       return this.getTaskDetailCheckoutPolicyConfig();
     },
 
@@ -3659,8 +3653,6 @@ export function initApp() {
         this.taskDescriptionEditing = false;
         return;
       }
-      const checkoutPolicyConfig = this.getTaskDetailCheckoutPolicyConfig();
-
       if (this.editingTask.state === 'done' || this.editingTask.state === 'archive') {
         this.editingTask.assigned_to_npub = null;
       }
@@ -3741,6 +3733,7 @@ export function initApp() {
 
       this.taskDetailSaving = true;
       try {
+        const checkoutPolicyConfig = this.getTaskPatchCheckoutPolicyConfig(updated, task, { intent: 'edit' });
         await upsertTask(updated);
         this.tasks = this.tasks.map(t => t.record_id === updated.record_id ? updated : t);
         this.editingTask = { ...updated };
@@ -3765,10 +3758,22 @@ export function initApp() {
           }
         }
         const flushResult = await this.flushAndBackgroundSync();
-        const pendingWrites = await getPendingWrites();
-        const acceptedTask = (flushResult?.pushed ?? 0) > 0
+        let pendingWrites = await getPendingWrites();
+        let acceptedTask = (flushResult?.pushed ?? 0) > 0
           ? markTaskEditSyncedAfterAcceptedFlush(updated, pendingWrites, taskFamilyHash('task'))
           : null;
+        if (!acceptedTask && typeof this.forceSyncPendingWriteTargets === 'function') {
+          const result = await this.forceSyncPendingWriteTargets([{
+            familyId: 'task',
+            recordId: updated.record_id,
+            label: updated.title || updated.record_id,
+          }]);
+          pendingWrites = await getPendingWrites();
+          if (result.synced > 0) {
+            const currentTask = this.tasks.find(t => t.record_id === updated.record_id) || updated;
+            acceptedTask = markTaskEditSyncedAfterAcceptedFlush(currentTask, pendingWrites, taskFamilyHash('task'));
+          }
+        }
         if (acceptedTask) {
           await upsertTask(acceptedTask);
           this.tasks = this.tasks.map(t => t.record_id === acceptedTask.record_id ? acceptedTask : t);
