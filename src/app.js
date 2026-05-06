@@ -113,6 +113,7 @@ import {
   upsertComment,
   getScopesByOwner,
   addPendingWrite,
+  getPendingWrites,
   getChannelById,
   getAddressBookPeople,
   clearRuntimeData,
@@ -154,6 +155,10 @@ import {
 import {
   buildCascadedSubtaskUpdate,
 } from './task-scope-cascade.js';
+import {
+  isTaskBlockedByPendingSave,
+  markTaskEditSyncedAfterAcceptedFlush,
+} from './task-save-helpers.js';
 import { parseSuperBasedToken } from './superbased-token.js';
 import {
   signLoginEvent,
@@ -3575,6 +3580,10 @@ export function initApp() {
       if (!this.editingTask || !this.session?.npub || this.taskDetailCheckoutPending) return false;
       const task = this.tasks.find(t => t.record_id === this.editingTask.record_id);
       if (!task) return false;
+      if (isTaskBlockedByPendingSave(task)) {
+        this.error = 'This task has a pending save. Sync before editing it again.';
+        return false;
+      }
       const checkoutPolicyConfig = this.getTaskDetailCheckoutPolicyConfig();
       this.taskDetailCheckoutPending = true;
       try {
@@ -3638,6 +3647,13 @@ export function initApp() {
       }
       const task = this.tasks.find(t => t.record_id === this.editingTask.record_id);
       if (!task) return;
+      if (isTaskBlockedByPendingSave(task)) {
+        this.error = 'This task has a pending save. Sync before saving it again.';
+        this.taskDetailMode = 'view';
+        this.taskEditOriginal = null;
+        this.taskDescriptionEditing = false;
+        return;
+      }
       const checkoutPolicyConfig = this.getTaskDetailCheckoutPolicyConfig();
 
       if (this.editingTask.state === 'done' || this.editingTask.state === 'archive') {
@@ -3744,8 +3760,21 @@ export function initApp() {
           }
         }
         const flushResult = await this.flushAndBackgroundSync();
-        if ((flushResult?.pushed ?? 0) > 0) {
+        const pendingWrites = await getPendingWrites();
+        const acceptedTask = (flushResult?.pushed ?? 0) > 0
+          ? markTaskEditSyncedAfterAcceptedFlush(updated, pendingWrites, taskFamilyHash('task'))
+          : null;
+        if (acceptedTask) {
+          await upsertTask(acceptedTask);
+          this.tasks = this.tasks.map(t => t.record_id === acceptedTask.record_id ? acceptedTask : t);
+          this.editingTask = { ...acceptedTask };
+          this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
           this.clearLockManagedCheckoutSession(updated.record_id, taskFamilyHash('task'));
+          this.taskDetailMode = 'view';
+          this.taskEditOriginal = null;
+          this.taskDescriptionEditing = false;
+        } else {
+          this.error = 'Task save is still pending. Sync before editing it again.';
           this.taskDetailMode = 'view';
           this.taskEditOriginal = null;
           this.taskDescriptionEditing = false;
