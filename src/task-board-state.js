@@ -52,6 +52,8 @@ import {
 // ---------------------------------------------------------------------------
 
 const MENTION_NAVIGABLE_RECORD_LINK_TYPES = new Set(['doc', 'task', 'scope', 'flow', 'opportunity']);
+const TASK_FILTER_TAG_LIMIT = 5;
+const TASK_CARD_TAG_LIMIT = 3;
 
 function parseChatRecordLinkId(id, messages = []) {
   const raw = String(id || '').trim();
@@ -406,10 +408,8 @@ function getTaskBoardDerived(store) {
     );
   }
 
-  const allTaskTagsSet = new Set();
-  for (const task of visibleBoardTasks) {
-    for (const tag of parseTaskTags(task.tags)) allTaskTagsSet.add(tag);
-  }
+  const allTaskTagStats = computeTaskTagStats(visibleBoardTasks);
+  const allTaskTagCounts = Object.fromEntries(allTaskTagStats.map(({ tag, count }) => [tag, count]));
 
   const calendarScheduledTasks = filteredTasks.filter((task) =>
     task.record_state !== 'deleted'
@@ -427,7 +427,8 @@ function getTaskBoardDerived(store) {
     boardColumns,
     listGroupedTasks,
     visibleBoardTasks,
-    allTaskTags: [...allTaskTagsSet].sort(),
+    allTaskTags: allTaskTagStats.map(({ tag }) => tag),
+    allTaskTagCounts,
     calendarScheduledTasks,
   };
 
@@ -648,6 +649,29 @@ export function computeFilteredTasks(boardScopedTasks, query, filterTags, assign
     tasks = tasks.filter(t => t.assigned_to_npub === assigneeNpub);
   }
   return tasks;
+}
+
+export function computeTaskTagStats(tasks = []) {
+  const counts = new Map();
+  for (const task of tasks || []) {
+    for (const tag of parseTaskTags(task?.tags)) {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((left, right) => right.count - left.count || left.tag.localeCompare(right.tag));
+}
+
+export function sortTagsByPopularity(tags = [], tagCounts = {}) {
+  const counts = tagCounts instanceof Map
+    ? tagCounts
+    : new Map(Object.entries(tagCounts || {}));
+  return [...new Set(tags || [])].sort((left, right) => {
+    const leftCount = Number(counts.get(left) ?? 0) || 0;
+    const rightCount = Number(counts.get(right) ?? 0) || 0;
+    return rightCount - leftCount || String(left).localeCompare(String(right));
+  });
 }
 
 export function computeBoardColumns(activeTasks, doneTasks, summaryTasks) {
@@ -1284,8 +1308,44 @@ export const taskBoardStateMixin = {
     return getTaskBoardDerived(this).allTaskTags;
   },
 
+  get allTaskTagCounts() {
+    return getTaskBoardDerived(this).allTaskTagCounts;
+  },
+
+  get primaryTaskFilterTags() {
+    return this.allTaskTags.slice(0, TASK_FILTER_TAG_LIMIT);
+  },
+
+  get hasTaskFilterTagOverflow() {
+    return this.allTaskTags.length > TASK_FILTER_TAG_LIMIT;
+  },
+
   getTaskTags(task) {
     return parseTaskTags(task?.tags);
+  },
+
+  getTaskTagsByPopularity(task) {
+    return sortTagsByPopularity(this.getTaskTags(task), this.allTaskTagCounts);
+  },
+
+  getTaskCardVisibleTags(task) {
+    return this.getTaskTagsByPopularity(task).slice(0, TASK_CARD_TAG_LIMIT);
+  },
+
+  getTaskCardOverflowCount(task) {
+    return Math.max(0, this.getTaskTagsByPopularity(task).length - TASK_CARD_TAG_LIMIT);
+  },
+
+  openTaskTagCloud() {
+    this.taskTagCloudOpen = true;
+  },
+
+  closeTaskTagCloud() {
+    this.taskTagCloudOpen = false;
+  },
+
+  toggleTaskTagCloud() {
+    this.taskTagCloudOpen = !this.taskTagCloudOpen;
   },
 
   getTaskBoardLabel(taskOrScopeRef) {

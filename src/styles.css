@@ -7840,17 +7840,36 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.task-tag-filter-shell {
+  position: relative;
+  flex: 0 1 min(50vw, 520px);
+  max-width: min(50vw, 520px);
+  min-width: 180px;
+}
+
 .task-tag-filters {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.3rem;
   align-items: center;
+  max-width: 100%;
+  min-height: 28px;
+  overflow: hidden;
 }
 
 @media (max-width: 768px) {
   .board-selector-inline {
     margin-left: 0;
     width: 100%;
+  }
+
+  .task-tag-filter-shell {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+
+  .task-card-tags {
+    max-width: 100%;
   }
 }
 
@@ -7888,6 +7907,12 @@ button:disabled {
 }
 
 .tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 1 auto;
+  min-width: 2.5rem;
+  max-width: 8rem;
   font-size: 0.7rem;
   padding: 0.15rem 0.5rem;
   border-radius: 10px;
@@ -7895,10 +7920,26 @@ button:disabled {
   background: var(--surface);
   color: var(--muted);
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tag-chip:hover {
   background: var(--surface-hover);
+}
+
+.tag-chip span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag-chip-count {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  opacity: 0.75;
 }
 
 .tag-chip-active {
@@ -7907,7 +7948,41 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.tag-chip-active .tag-chip-count {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.tag-chip-overflow {
+  justify-content: center;
+  min-width: 2.1rem;
+  max-width: 2.1rem;
+  font-weight: 800;
+}
+
+.task-tag-cloud {
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  width: min(520px, 82vw);
+  max-height: min(360px, 60vh);
+  overflow: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+}
+
+.task-tag-cloud-chip {
+  max-width: 14rem;
+}
+
 .clear-filters-btn {
+  flex: 0 0 auto;
   font-size: 0.7rem;
   padding: 0.15rem 0.5rem;
   background: transparent;
@@ -8098,12 +8173,19 @@ button:disabled {
 
 .task-card-tags {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.25rem;
   margin-bottom: 0.45rem;
+  max-width: min(50%, 18rem);
+  min-height: 1.45rem;
+  overflow: hidden;
+  align-items: center;
 }
 
 .task-card-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 7.5rem;
   font-size: 0.68rem;
   padding: 0.12rem 0.45rem;
   border-radius: 999px;
@@ -8111,6 +8193,9 @@ button:disabled {
   background: var(--surface-muted);
   color: var(--muted);
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .task-card-tag:hover {
@@ -8121,6 +8206,13 @@ button:disabled {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+.task-card-tag-overflow {
+  flex: 0 0 auto;
+  width: 2rem;
+  max-width: 2rem;
+  font-weight: 800;
 }
 
 .kanban-card-meta {

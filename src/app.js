@@ -485,6 +485,7 @@ export function initApp() {
     taskFilter: '',
     taskFilterTags: [],
     taskFilterAssignee: null,
+    taskTagCloudOpen: false,
     selectedTaskIds: [],
     bulkTaskBusy: false,
     selectedBoardId: null,
@@ -4547,6 +4548,7 @@ export function initApp() {
       this.taskFilter = '';
       this.taskFilterTags = [];
       this.taskFilterAssignee = null;
+      this.taskTagCloudOpen = false;
     },
 
     toggleFilterToMe() {

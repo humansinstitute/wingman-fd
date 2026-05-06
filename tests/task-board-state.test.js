@@ -15,6 +15,8 @@ import {
   computeBoardColumns,
   computeBoardScopedTasks,
   computeFilteredTasks,
+  computeTaskTagStats,
+  sortTagsByPopularity,
   selectPreferredWritableGroupRef,
   taskBoardStateMixin,
   UNSCOPED_TASK_BOARD_ID,
@@ -674,6 +676,31 @@ describe('computeFilteredTasks', () => {
     const result = computeFilteredTasks(tasksWithAssignee, 'Fix', []);
     expect(result).toHaveLength(1);
     expect(result[0].record_id).toBe('t1');
+  });
+});
+
+describe('task tag popularity helpers', () => {
+  const tasks = [
+    { record_id: 't1', tags: 'marketing,flightdeck,ai' },
+    { record_id: 't2', tags: 'marketing,docs' },
+    { record_id: 't3', tags: 'flightdeck,marketing' },
+    { record_id: 't4', tags: 'docs' },
+  ];
+
+  it('orders board tags by popularity, then alphabetically', () => {
+    expect(computeTaskTagStats(tasks)).toEqual([
+      { tag: 'marketing', count: 3 },
+      { tag: 'docs', count: 2 },
+      { tag: 'flightdeck', count: 2 },
+      { tag: 'ai', count: 1 },
+    ]);
+  });
+
+  it('orders a task tag row using board popularity', () => {
+    expect(sortTagsByPopularity(
+      ['ai', 'flightdeck', 'marketing'],
+      { marketing: 3, docs: 2, flightdeck: 2, ai: 1 },
+    )).toEqual(['marketing', 'flightdeck', 'ai']);
   });
 });
 

@@ -1155,18 +1155,48 @@
               </template>
             </button>
             <template x-if="$store.chat.allTaskTags.length > 0">
-              <div class="task-tag-filters">
-                <template x-for="tag in $store.chat.allTaskTags" :key="tag">
-                  <button
-                    type="button"
-                    class="tag-chip"
-                    :class="{ 'tag-chip-active': $store.chat.taskFilterTags.includes(tag) }"
-                    @click="$store.chat.toggleTaskFilterTag(tag)"
-                    x-text="tag"
-                  ></button>
-                </template>
-                <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter || $store.chat.taskFilterAssignee">
-                  <button type="button" class="clear-filters-btn" @click="$store.chat.clearTaskFilters()">Clear</button>
+              <div class="task-tag-filter-shell" @click.outside="$store.chat.closeTaskTagCloud()">
+                <div class="task-tag-filters">
+                  <template x-for="tag in $store.chat.primaryTaskFilterTags" :key="tag">
+                    <button
+                      type="button"
+                      class="tag-chip"
+                      :class="{ 'tag-chip-active': $store.chat.taskFilterTags.includes(tag) }"
+                      @click="$store.chat.toggleTaskFilterTag(tag)"
+                      :title="`${tag} (${($store.chat.allTaskTagCounts[tag] || 0)} tasks)`"
+                    >
+                      <span x-text="tag"></span>
+                      <span class="tag-chip-count" x-text="$store.chat.allTaskTagCounts[tag]"></span>
+                    </button>
+                  </template>
+                  <template x-if="$store.chat.hasTaskFilterTagOverflow">
+                    <button
+                      type="button"
+                      class="tag-chip tag-chip-overflow"
+                      :class="{ 'tag-chip-active': $store.chat.taskTagCloudOpen }"
+                      @click="$store.chat.toggleTaskTagCloud()"
+                      title="Show all tags"
+                    >...</button>
+                  </template>
+                  <template x-if="$store.chat.taskFilterTags.length > 0 || $store.chat.taskFilter || $store.chat.taskFilterAssignee">
+                    <button type="button" class="clear-filters-btn" @click="$store.chat.clearTaskFilters()">Clear</button>
+                  </template>
+                </div>
+                <template x-if="$store.chat.taskTagCloudOpen">
+                  <div class="task-tag-cloud">
+                    <template x-for="tag in $store.chat.allTaskTags" :key="`cloud-${tag}`">
+                      <button
+                        type="button"
+                        class="tag-chip task-tag-cloud-chip"
+                        :class="{ 'tag-chip-active': $store.chat.taskFilterTags.includes(tag) }"
+                        @click="$store.chat.toggleTaskFilterTag(tag)"
+                        :title="`${tag} (${($store.chat.allTaskTagCounts[tag] || 0)} tasks)`"
+                      >
+                        <span x-text="tag"></span>
+                        <span class="tag-chip-count" x-text="$store.chat.allTaskTagCounts[tag]"></span>
+                      </button>
+                    </template>
+                  </div>
                 </template>
               </div>
             </template>
@@ -1301,7 +1331,7 @@
                         </div>
                         <template x-if="$store.chat.getTaskTags(task).length > 0">
                           <div class="task-card-tags">
-                            <template x-for="tag in $store.chat.getTaskTags(task)" :key="`${task.record_id}-${tag}`">
+                            <template x-for="tag in $store.chat.getTaskCardVisibleTags(task)" :key="`${task.record_id}-${tag}`">
                               <button
                                 type="button"
                                 class="task-card-tag"
@@ -1309,6 +1339,14 @@
                                 @click.stop="$store.chat.toggleTaskFilterTag(tag)"
                                 x-text="tag"
                               ></button>
+                            </template>
+                            <template x-if="$store.chat.getTaskCardOverflowCount(task) > 0">
+                              <button
+                                type="button"
+                                class="task-card-tag task-card-tag-overflow"
+                                @click.stop="$store.chat.openTaskTagCloud()"
+                                :title="`${$store.chat.getTaskCardOverflowCount(task)} more tags`"
+                              >...</button>
                             </template>
                           </div>
                         </template>
