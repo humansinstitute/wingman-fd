@@ -161,6 +161,11 @@ import {
   markTaskEditSyncedAfterAcceptedFlush,
   shouldUseOptimisticTaskWrite,
 } from './task-save-helpers.js';
+import {
+  filterSelectableTaskIds,
+  getSelectableColumnTaskIds,
+  toggleColumnTaskSelection,
+} from './task-selection-helpers.js';
 import { parseSuperBasedToken } from './superbased-token.js';
 import {
   signLoginEvent,
@@ -4313,7 +4318,7 @@ export function initApp() {
     },
 
     selectVisibleTasks() {
-      const visibleTaskIds = this.activeTasks.map((task) => task.record_id);
+      const visibleTaskIds = getSelectableColumnTaskIds(this.activeTasks, (taskId) => this.isParentTask(taskId));
       this.selectedTaskIds = [...new Set([...this.selectedTaskIds, ...visibleTaskIds])];
     },
 
@@ -4321,13 +4326,8 @@ export function initApp() {
       const col = this.boardColumns.find((c) => c.state === columnState)
         || this.listGroupedTasks.find((g) => g.state === columnState);
       if (!col) return;
-      const colIds = col.tasks.map((t) => t.record_id);
-      const allSelected = colIds.length > 0 && colIds.every((id) => this.selectedTaskIds.includes(id));
-      if (allSelected) {
-        this.selectedTaskIds = this.selectedTaskIds.filter((id) => !colIds.includes(id));
-      } else {
-        this.selectedTaskIds = [...new Set([...this.selectedTaskIds, ...colIds])];
-      }
+      const colIds = getSelectableColumnTaskIds(col.tasks, (taskId) => this.isParentTask(taskId));
+      this.selectedTaskIds = toggleColumnTaskSelection(this.selectedTaskIds, colIds);
     },
 
     clearSelectedTasks() {
@@ -4336,7 +4336,14 @@ export function initApp() {
 
     async applyBulkTaskAction(action) {
       if (this.bulkTaskBusy || this.selectedTaskIds.length === 0) return;
-      const selectedIds = [...this.selectedTaskIds];
+      const selectedIds = filterSelectableTaskIds(this.selectedTaskIds, (taskId) => this.isParentTask(taskId));
+      if (selectedIds.length !== this.selectedTaskIds.length) {
+        this.selectedTaskIds = selectedIds;
+      }
+      if (selectedIds.length === 0) {
+        this.error = 'Summary tasks cannot be bulk changed. Select the child task cards instead.';
+        return;
+      }
       const shouldForceSyncTerminalWrites = action === 'done' || action === 'archive';
       const today = new Date().toISOString().slice(0, 10);
       const patchForAction = (taskId) => {
