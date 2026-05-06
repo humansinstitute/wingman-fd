@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-CeNilOh3.js"></script>
+  <script type="module" crossorigin src="/assets/index-BKu3axIc.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-2XhbVxRv.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
@@ -7411,11 +7411,11 @@
                 <span x-show="!$store.chat.recordStatusBusy">Check again</span>
                 <span x-show="$store.chat.recordStatusBusy">Checking...</span>
               </button>
-              <button type="button" class="btn-cancel" @click="$store.chat.repairRecordStatusTargetFromTower()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canRepairRecordStatusTargetFromTower()">
+              <button type="button" :class="$store.chat.isRecordStatusTowerResolutionRecommended() ? 'btn-confirm' : 'btn-cancel'" @click="$store.chat.repairRecordStatusTargetFromTower()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canRepairRecordStatusTargetFromTower()">
                 <span x-show="!$store.chat.recordStatusSyncBusy">Use Tower copy</span>
                 <span x-show="$store.chat.recordStatusSyncBusy">Repairing...</span>
               </button>
-              <button type="button" class="btn-confirm" @click="$store.chat.forcePushRecordStatusTarget()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canForcePushRecordStatusTarget()">
+              <button type="button" :class="$store.chat.isRecordStatusForceSubmitRecommended() ? 'btn-confirm' : 'btn-cancel'" @click="$store.chat.forcePushRecordStatusTarget()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canForcePushRecordStatusTarget()">
                 <span x-show="!$store.chat.recordStatusSyncBusy">Force submit</span>
                 <span x-show="$store.chat.recordStatusSyncBusy">Pushing...</span>
               </button>

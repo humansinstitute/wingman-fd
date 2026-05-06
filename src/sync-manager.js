@@ -532,21 +532,18 @@ export const syncManagerMixin = {
   },
 
   canForcePushRecordStatusTarget() {
-    return Boolean(
-      this.recordStatusTargetId
-      && this.recordStatusFamilyId
-      && this.recordStatusLocalPresent
-      && (
-        this.recordStatusTowerVersionCount === 0
-        || this.recordStatusPendingWriteCount > 0
-        || this.recordStatusLocalSyncStatus === 'pending'
-        || this.recordStatusLocalSyncStatus === 'failed'
-        || (
-          Number(this.recordStatusLocalVersion || 0) > 0
-          && Number(this.recordStatusLocalVersion || 0) !== Number(this.recordStatusTowerLatestVersion || 0)
-        )
-      )
-    );
+    if (!this.recordStatusTargetId || !this.recordStatusFamilyId || !this.recordStatusLocalPresent) return false;
+    const localVersion = Number(this.recordStatusLocalVersion || 0) || 0;
+    const towerVersion = Number(this.recordStatusTowerLatestVersion || 0) || 0;
+    const towerCount = Number(this.recordStatusTowerVersionCount || 0) || 0;
+    const hasLocalWriteState = this.recordStatusPendingWriteCount > 0
+      || this.recordStatusLocalSyncStatus === 'pending'
+      || this.recordStatusLocalSyncStatus === 'failed';
+
+    if (towerCount === 0) return true;
+    if (localVersion > towerVersion) return true;
+    if (localVersion === towerVersion && hasLocalWriteState) return true;
+    return false;
   },
 
   canRepairRecordStatusTargetFromTower() {
@@ -565,6 +562,41 @@ export const syncManagerMixin = {
         )
       )
     );
+  },
+
+  getRecordStatusRecommendedResolution() {
+    const localVersion = Number(this.recordStatusLocalVersion || 0) || 0;
+    const towerVersion = Number(this.recordStatusTowerLatestVersion || 0) || 0;
+    const towerCount = Number(this.recordStatusTowerVersionCount || 0) || 0;
+    const hasLocalWriteState = this.recordStatusPendingWriteCount > 0
+      || this.recordStatusLocalSyncStatus === 'pending'
+      || this.recordStatusLocalSyncStatus === 'failed';
+
+    if (this.recordStatusLocalPresent && towerCount === 0) return 'force_submit';
+    if (!this.recordStatusLocalPresent && towerCount > 0) return 'use_tower';
+    if (localVersion > towerVersion) return 'force_submit';
+    if (towerVersion > localVersion) return 'use_tower';
+    if (hasLocalWriteState) return 'force_submit';
+    return 'none';
+  },
+
+  isRecordStatusForceSubmitRecommended() {
+    return this.getRecordStatusRecommendedResolution() === 'force_submit';
+  },
+
+  isRecordStatusTowerResolutionRecommended() {
+    return this.getRecordStatusRecommendedResolution() === 'use_tower';
+  },
+
+  getRecordStatusResolutionHint(targetLabel = 'This record') {
+    const resolution = this.getRecordStatusRecommendedResolution();
+    if (resolution === 'force_submit') {
+      return `${targetLabel} has the newer local copy. Force submit is the recommended repair if this browser copy should win.`;
+    }
+    if (resolution === 'use_tower') {
+      return `${targetLabel} has a newer or better Tower copy. Use Tower copy is the recommended repair.`;
+    }
+    return '';
   },
 
   getRecordStatusSubmitCheckoutPolicyConfig(familyId, options = {}) {
@@ -962,9 +994,11 @@ export const syncManagerMixin = {
         return;
       }
 
+      const hint = this.getRecordStatusResolutionHint(targetLabel);
+      const suffix = hint ? ` ${hint}` : '';
       this.recordStatusNotice = this.recordStatusLocalPresent
-        ? `${targetLabel} is on Tower with ${visibleVersionCount} version${visibleVersionCount === 1 ? '' : 's'}, and the local copy is present.`
-        : `${targetLabel} is on Tower with ${visibleVersionCount} version${visibleVersionCount === 1 ? '' : 's'}, but the local copy is missing.`;
+        ? `${targetLabel} is on Tower with ${visibleVersionCount} version${visibleVersionCount === 1 ? '' : 's'}, and the local copy is present.${suffix}`
+        : `${targetLabel} is on Tower with ${visibleVersionCount} version${visibleVersionCount === 1 ? '' : 's'}, but the local copy is missing.${suffix}`;
     } catch (error) {
       this.recordStatusError = error?.message || 'Failed to check record status on Tower.';
     } finally {

@@ -7409,11 +7409,11 @@
                 <span x-show="!$store.chat.recordStatusBusy">Check again</span>
                 <span x-show="$store.chat.recordStatusBusy">Checking...</span>
               </button>
-              <button type="button" class="btn-cancel" @click="$store.chat.repairRecordStatusTargetFromTower()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canRepairRecordStatusTargetFromTower()">
+              <button type="button" :class="$store.chat.isRecordStatusTowerResolutionRecommended() ? 'btn-confirm' : 'btn-cancel'" @click="$store.chat.repairRecordStatusTargetFromTower()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canRepairRecordStatusTargetFromTower()">
                 <span x-show="!$store.chat.recordStatusSyncBusy">Use Tower copy</span>
                 <span x-show="$store.chat.recordStatusSyncBusy">Repairing...</span>
               </button>
-              <button type="button" class="btn-confirm" @click="$store.chat.forcePushRecordStatusTarget()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canForcePushRecordStatusTarget()">
+              <button type="button" :class="$store.chat.isRecordStatusForceSubmitRecommended() ? 'btn-confirm' : 'btn-cancel'" @click="$store.chat.forcePushRecordStatusTarget()" :disabled="$store.chat.recordStatusBusy || $store.chat.recordStatusSyncBusy || !$store.chat.canForcePushRecordStatusTarget()">
                 <span x-show="!$store.chat.recordStatusSyncBusy">Force submit</span>
                 <span x-show="$store.chat.recordStatusSyncBusy">Pushing...</span>
               </button>

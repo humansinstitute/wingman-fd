@@ -276,6 +276,23 @@ describe('record status actions', () => {
       recordStatusPendingWriteCount: 0,
     });
     expect(store.canForcePushRecordStatusTarget()).toBe(true);
+    expect(store.getRecordStatusRecommendedResolution()).toBe('force_submit');
+  });
+
+  it('does not recommend force submit when Tower is newer than the local copy', () => {
+    const store = createStore({
+      recordStatusTargetId: 'msg-1',
+      recordStatusFamilyId: 'chat_message',
+      recordStatusLocalPresent: true,
+      recordStatusTowerVersionCount: 4,
+      recordStatusTowerLatestVersion: 4,
+      recordStatusLocalVersion: 2,
+      recordStatusLocalSyncStatus: 'synced',
+      recordStatusPendingWriteCount: 0,
+    });
+    expect(store.canForcePushRecordStatusTarget()).toBe(false);
+    expect(store.canRepairRecordStatusTargetFromTower()).toBe(true);
+    expect(store.getRecordStatusRecommendedResolution()).toBe('use_tower');
   });
 
   it('builds chat message force-submit envelopes from the channel group', async () => {
@@ -1257,6 +1274,7 @@ describe('record status modal', () => {
     expect(store.recordStatusTowerVersionCount).toBe(2);
     expect(store.recordStatusTowerLatestVersion).toBe(2);
     expect(store.recordStatusNotice).toContain('2 versions');
+    expect(store.recordStatusNotice).toContain('Use Tower copy is the recommended repair');
   });
 
   it('reports when a record is missing on Tower', async () => {
