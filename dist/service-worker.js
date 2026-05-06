@@ -1,5 +1,5 @@
 
-const BUILD_ID = "20260506-0157-3-830";
+const BUILD_ID = "20260506-0614-4-831";
 const CACHE_PREFIX = 'wingman-fd';
 const CACHE_NAME = `${CACHE_PREFIX}-${BUILD_ID}`;
 const PRECACHE_URLS = [

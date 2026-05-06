@@ -18,6 +18,7 @@ Current default registry:
 - `document`: `checkout_required`
 - `directory`: `checkout_required`
 - `task`: `optimistic_write`
+- `scope`: `optimistic_write`
 - `chat`, `chat_message`, `channel`, `comment`: `optimistic_write`
 
 Task detail editing currently opts task updates into `checkout_required` at the app/runtime seam with `getTaskDetailCheckoutPolicyConfig()`. That keeps task creation optimistic while making task edits checkout-managed.
