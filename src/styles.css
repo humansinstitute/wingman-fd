@@ -5296,6 +5296,68 @@ button:disabled {
   border-color: rgba(59, 130, 246, 0.18);
 }
 
+.doc-thread-entry-root.doc-thread-entry-resolved {
+  padding: 0.45rem 0.55rem;
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #64748b;
+  box-shadow: none;
+}
+
+.doc-thread-group-selected .doc-thread-entry-root.doc-thread-entry-resolved {
+  border-color: rgba(100, 116, 139, 0.35);
+  box-shadow: none;
+}
+
+.doc-thread-entry-root.doc-thread-entry-resolved:hover {
+  border-color: rgba(100, 116, 139, 0.38);
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.doc-thread-resolved-line {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+.doc-thread-resolved-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.14);
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.doc-thread-resolved-author {
+  color: #475569;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.doc-thread-resolved-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  opacity: 0.78;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-thread-resolved-time {
+  color: #94a3b8;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
 .doc-thread-entry-reply {
   margin-left: 1rem;
   background: var(--surface);

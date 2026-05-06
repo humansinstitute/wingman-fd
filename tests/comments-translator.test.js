@@ -33,6 +33,7 @@ describe('comment translator — inbound', () => {
             target_record_family_hash: `${APP_NPUB}:task`,
             parent_comment_id: null,
             anchor_block_id: 'block-1-1',
+            sender_npub: 'npub_original_commenter',
             body: 'Looks good, shipping it.',
             attachments: [{ kind: 'audio', audio_note_record_id: 'audio-1', title: 'Voice note' }],
             record_state: 'active',
@@ -54,7 +55,7 @@ describe('comment translator — inbound', () => {
     expect(row.anchor_block_id).toBe('block-1-1');
     expect(row.body).toBe('Looks good, shipping it.');
     expect(row.attachments).toHaveLength(1);
-    expect(row.sender_npub).toBe('npub_commenter');
+    expect(row.sender_npub).toBe('npub_original_commenter');
     expect(row.record_state).toBe('active');
   });
 
@@ -85,8 +86,9 @@ describe('comment translator — outbound', () => {
       anchor_block_id: 'block-1-1',
       body: 'Great progress!',
       attachments: [{ kind: 'audio', audio_note_record_id: 'audio-1', title: 'Voice note' }],
+      sender_npub: 'npub_comment_creator',
       target_group_ids: ['gpub_abc'],
-      signature_npub: 'npub_owner',
+      signature_npub: 'npub_status_updater',
     });
 
     expect(envelope.record_id).toBe('comment-1');
@@ -100,6 +102,7 @@ describe('comment translator — outbound', () => {
     expect(payload.data.target_record_id).toBe('task-1');
     expect(payload.data.body).toBe('Great progress!');
     expect(payload.data.attachments).toHaveLength(1);
+    expect(payload.data.sender_npub).toBe('npub_comment_creator');
     expect(payload.data.parent_comment_id).toBeNull();
     expect(payload.data.anchor_block_id).toBe('block-1-1');
   });

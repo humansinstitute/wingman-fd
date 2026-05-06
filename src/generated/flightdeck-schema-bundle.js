@@ -2,7 +2,7 @@
 // Do not edit by hand.
 export const FLIGHT_DECK_SCHEMA_BUNDLE = {
   "bundle_schema_version": 1,
-  "schema_hash": "68351a3a264343b0790268fc4c82a659ecd4cd81c557492a3689a9a341d460ff",
+  "schema_hash": "1919a922f8a1f4b9f426d8eaba6fb2df41bb70b7548f0736d1d57781f1d61e70",
   "schemas": [
     {
       "collection_space": "agent_chat_trigger",
@@ -673,6 +673,12 @@ export const FLIGHT_DECK_SCHEMA_BUNDLE = {
                 "items": {
                   "type": "object"
                 }
+              },
+              "sender_npub": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "record_state": {
                 "type": "string"

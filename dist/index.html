@@ -11,8 +11,8 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/wingman-logo-192x192.png" />
   <title>Wingman: Flight Deck</title>
-  <script type="module" crossorigin src="/assets/index-D1jAe-_m.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-2XhbVxRv.css">
+  <script type="module" crossorigin src="/assets/index-BrPq_OcC.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DkAjGA9S.css">
 </head>
 <body x-data x-init="$store.chat.init()" x-cloak>
   <!-- Catch-up sync overlay — shown during initial load or long-gap reconnect -->
@@ -2937,8 +2937,14 @@
                           </div>
                           <template x-for="root in $store.chat.getRootDocComments()" :key="root.record_id">
                             <div class="doc-thread-group" :class="{ 'doc-thread-group-selected': root.record_id === $store.chat.selectedDocCommentId }">
-                              <div class="doc-thread-entry doc-thread-entry-root" @click="$store.chat.selectDocCommentThread(root.record_id)">
-                                <div class="doc-thread-entry-header">
+                              <div class="doc-thread-entry doc-thread-entry-root" :class="{ 'doc-thread-entry-resolved': root.comment_status === 'resolved' }" @click="$store.chat.selectDocCommentThread(root.record_id)">
+                                <div class="doc-thread-resolved-line" x-show="root.comment_status === 'resolved'">
+                                  <span class="doc-thread-resolved-check">&#10003;</span>
+                                  <span class="doc-thread-resolved-author" x-text="$store.chat.getSenderName(root.sender_npub)"></span>
+                                  <span class="doc-thread-resolved-preview" x-text="root.body || 'Completed comment'"></span>
+                                  <span class="doc-thread-resolved-time" x-text="$store.chat.formatRelativeTime(root.updated_at)"></span>
+                                </div>
+                                <div class="doc-thread-entry-header" x-show="root.comment_status !== 'resolved'">
                                   <template x-if="$store.chat.getSenderAvatar(root.sender_npub)">
                                     <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(root.sender_npub)" alt="Profile picture" />
                                   </template>
@@ -2951,8 +2957,8 @@
                                   </div>
                                   <span class="doc-thread-status-badge" :class="{ 'doc-thread-status-badge-resolved': root.comment_status === 'resolved' }" x-text="root.comment_status === 'resolved' ? 'Done' : 'Open'"></span>
                                 </div>
-                                <div class="doc-thread-entry-body" x-html="$store.chat.renderMarkdown(root.body || '')"></div>
-                                <div class="audio-attachment-list" x-show="(root.attachments || []).length > 0">
+                                <div class="doc-thread-entry-body" x-show="root.comment_status !== 'resolved'" x-html="$store.chat.renderMarkdown(root.body || '')"></div>
+                                <div class="audio-attachment-list" x-show="root.comment_status !== 'resolved' && (root.attachments || []).length > 0">
                                   <template x-for="attachment in (root.attachments || []).filter(a => a.kind === 'audio')" :key="attachment.audio_note_record_id">
                                     <button type="button" class="audio-card" @click.stop="$store.chat.playAudioAttachment(attachment)">
                                       <div class="audio-card-main">
@@ -2965,7 +2971,7 @@
                                     </button>
                                   </template>
                                 </div>
-                                <div class="reaction-bar" x-show="$store.chat.session?.npub" @click.stop>
+                                <div class="reaction-bar" x-show="root.comment_status !== 'resolved' && $store.chat.session?.npub" @click.stop>
                                   <template x-for="reaction in $store.chat.getReactionSummary(root.record_id, $store.chat.reactionTargetFamilyHash('comment'))" :key="reaction.emoji">
                                     <button type="button" class="reaction-pill" :class="{ 'reaction-pill-active': reaction.reacted_by_me }" @click="$store.chat.toggleReaction(root.record_id, $store.chat.reactionTargetFamilyHash('comment'), reaction.emoji)" :title="reaction.emoji_shortcode">
                                       <span x-text="$store.chat.reactionLabel(reaction.emoji)"></span>
@@ -2985,7 +2991,7 @@
                               </div>
 
                               <template x-for="reply in $store.chat.getDocCommentReplies(root.record_id)" :key="reply.record_id">
-                                <div class="doc-thread-entry doc-thread-entry-reply">
+                                <div class="doc-thread-entry doc-thread-entry-reply" x-show="root.comment_status !== 'resolved'">
                                   <div class="doc-thread-entry-header">
                                     <template x-if="$store.chat.getSenderAvatar(reply.sender_npub)">
                                       <img class="doc-comment-avatar" :src="$store.chat.getSenderAvatar(reply.sender_npub)" alt="Profile picture" />
@@ -3054,7 +3060,7 @@
                                 >Close</button>
                               </div>
 
-                              <div class="doc-thread-reply" x-show="root.record_id === $store.chat.selectedDocCommentId">
+                              <div class="doc-thread-reply" x-show="root.comment_status !== 'resolved' && root.record_id === $store.chat.selectedDocCommentId">
                                 <textarea
                                   class="doc-thread-reply-input"
                                   rows="3"
