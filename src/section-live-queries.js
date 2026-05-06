@@ -166,6 +166,11 @@ function buildWorkspaceSpecs(store) {
           query: () => getScopesByOwner(ownerNpub),
           onNext: (scopes) => store.applyScopes(scopes),
         },
+        {
+          key: 'tasks:documents',
+          query: () => getWindowedDocumentsByOwner(ownerNpub),
+          onNext: (documents) => store.applyDocuments(documents),
+        },
       ];
       break;
     case 'reports':

@@ -23,7 +23,7 @@ describe('section live query plan', () => {
       activeTaskId: 'task-1',
       applyAddressBookPeople() {},
     });
-    expect(taskPlan.workspace).toEqual(['ws:flows', 'ws:opportunities', 'tasks:tasks', 'tasks:scopes']);
+    expect(taskPlan.workspace).toEqual(['ws:flows', 'ws:opportunities', 'tasks:tasks', 'tasks:scopes', 'tasks:documents']);
     expect(taskPlan.detail).toEqual([
       'tasks:selected-task:task-1',
       'tasks:comments:task-1',

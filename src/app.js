@@ -4962,6 +4962,52 @@ export function initApp() {
       return results.slice(0, limit);
     },
 
+    getDefaultMentionResults(limit = 8) {
+      const results = [];
+      const seen = new Set();
+      const add = (result) => {
+        const key = `${result?.type || ''}:${result?.id || ''}`;
+        if (!result?.id || seen.has(key) || results.length >= limit) return;
+        seen.add(key);
+        results.push(result);
+      };
+
+      for (const group of this.currentWorkspaceGroups) {
+        for (const npub of (group.member_npubs || [])) {
+          add({ type: 'person', id: npub, label: this.getSenderName(npub), sublabel: '' });
+          if (results.length >= 2) break;
+        }
+        if (results.length >= 2) break;
+      }
+
+      const recentDocs = [...(this.documents || [])]
+        .filter((doc) => doc.record_state !== 'deleted')
+        .sort((left, right) => (Date.parse(right.updated_at || '') || 0) - (Date.parse(left.updated_at || '') || 0));
+      for (const doc of recentDocs.slice(0, 3)) {
+        add({ type: 'doc', id: doc.record_id, label: doc.title || 'Untitled', sublabel: 'Doc' });
+      }
+
+      const recentTasks = [...(this.tasks || [])]
+        .filter((task) => task.record_state !== 'deleted')
+        .sort((left, right) => (Date.parse(right.updated_at || '') || 0) - (Date.parse(left.updated_at || '') || 0));
+      for (const task of recentTasks.slice(0, 2)) {
+        add({ type: 'task', id: task.record_id, label: task.title || 'Untitled', sublabel: 'Task' });
+      }
+
+      for (const scope of (this.scopes || []).filter((scope) => scope.record_state !== 'deleted').slice(0, 2)) {
+        const levelLabel = scope.level === 'product' ? 'Product' : scope.level === 'project' ? 'Project' : 'Deliverable';
+        add({ type: 'scope', id: scope.record_id, label: scope.title || 'Untitled', sublabel: levelLabel });
+      }
+
+      if (results.length < limit) {
+        for (const flow of (this.flows || []).filter((flow) => flow.record_state !== 'deleted').slice(0, 2)) {
+          add({ type: 'flow', id: flow.record_id, label: flow.title || 'Untitled', sublabel: 'Flow' });
+        }
+      }
+
+      return results;
+    },
+
     handleMentionInput(el) {
       const value = el.value;
       const cursorPos = el.selectionStart;
@@ -4992,19 +5038,8 @@ export function initApp() {
         this._mentionTargetEl = el;
         this._mentionStartPos = atPos;
         this.mentionQuery = '';
-        this.mentionResults = this.searchMentions('');
+        this.mentionResults = this.getDefaultMentionResults(8);
         this.mentionSelectedIndex = 0;
-        // Show some default results
-        const defaults = [];
-        const seenNpubs = new Set();
-        for (const group of this.currentWorkspaceGroups) {
-          for (const npub of (group.member_npubs || [])) {
-            if (seenNpubs.has(npub)) continue;
-            seenNpubs.add(npub);
-            defaults.push({ type: 'person', id: npub, label: this.getSenderName(npub), sublabel: '' });
-          }
-        }
-        this.mentionResults = defaults.slice(0, 8);
         return;
       }
 
