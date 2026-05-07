@@ -3317,9 +3317,19 @@ export function initApp() {
         record_family_hash: envelope.record_family_hash,
         envelope,
       });
-      await this.flushAndBackgroundSync();
+      let createdTask = localRow;
+      const flushResult = await this.flushAndBackgroundSync();
+      if ((flushResult?.pushed ?? 0) > 0) {
+        const pendingWrites = await getPendingWrites();
+        const acceptedTask = markTaskEditSyncedAfterAcceptedFlush(localRow, pendingWrites, taskFamilyHash('task'));
+        if (acceptedTask) {
+          await upsertTask(acceptedTask);
+          this.tasks = this.tasks.map((task) => task.record_id === acceptedTask.record_id ? acceptedTask : task);
+          createdTask = acceptedTask;
+        }
+      }
       await this.refreshTasks();
-      return localRow;
+      return createdTask;
     },
 
     getTaskDetailCheckoutPolicyConfig() {
@@ -3579,19 +3589,27 @@ export function initApp() {
       if (!this.editingTask || !this.session?.npub || this.taskDetailCheckoutPending) return false;
       const task = this.tasks.find(t => t.record_id === this.editingTask.record_id);
       if (!task) return false;
-      if (isTaskBlockedByPendingSave(task)) {
+      const pendingWrites = await getPendingWrites();
+      if (isTaskBlockedByPendingSave(task, pendingWrites, taskFamilyHash('task'))) {
         this.error = 'This task has a pending save. Sync before editing it again.';
         return false;
+      }
+      const taskForEdit = String(task.sync_status || '').trim() === 'pending'
+        ? markTaskEditSyncedAfterAcceptedFlush(task, pendingWrites, taskFamilyHash('task')) || task
+        : task;
+      if (taskForEdit !== task) {
+        await upsertTask(taskForEdit);
+        this.tasks = this.tasks.map(t => t.record_id === taskForEdit.record_id ? taskForEdit : t);
       }
       const checkoutPolicyConfig = this.getTaskDetailCheckoutPolicyConfig();
       this.taskDetailCheckoutPending = true;
       try {
-        await this.ensureLockManagedCheckout(task, taskFamilyHash('task'), {
+        await this.ensureLockManagedCheckout(taskForEdit, taskFamilyHash('task'), {
           intent: 'edit',
           checkoutPolicyConfig,
         });
-        this.taskEditOriginal = toRaw(task);
-        this.editingTask = toRaw(task);
+        this.taskEditOriginal = toRaw(taskForEdit);
+        this.editingTask = toRaw(taskForEdit);
         this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
         this.taskDetailMode = 'edit';
         this.taskDescriptionEditing = true;
@@ -3646,23 +3664,31 @@ export function initApp() {
       }
       const task = this.tasks.find(t => t.record_id === this.editingTask.record_id);
       if (!task) return;
-      if (isTaskBlockedByPendingSave(task)) {
+      const pendingWritesBeforeSave = await getPendingWrites();
+      if (isTaskBlockedByPendingSave(task, pendingWritesBeforeSave, taskFamilyHash('task'))) {
         this.error = 'This task has a pending save. Sync before saving it again.';
         this.taskDetailMode = 'view';
         this.taskEditOriginal = null;
         this.taskDescriptionEditing = false;
         return;
       }
+      const taskForSave = String(task.sync_status || '').trim() === 'pending'
+        ? markTaskEditSyncedAfterAcceptedFlush(task, pendingWritesBeforeSave, taskFamilyHash('task')) || task
+        : task;
+      if (taskForSave !== task) {
+        await upsertTask(taskForSave);
+        this.tasks = this.tasks.map(t => t.record_id === taskForSave.record_id ? taskForSave : t);
+      }
       if (this.editingTask.state === 'done' || this.editingTask.state === 'archive') {
         this.editingTask.assigned_to_npub = null;
       }
 
-      const nextVersion = (task.version ?? 1) + 1;
+      const nextVersion = (taskForSave.version ?? 1) + 1;
       const descRefs = parseReferencesFromDescription(this.editingTask.description);
       const existingRecordLinks = buildRecordLinkPayload({
-        source_links: this.editingTask.source_links ?? task.source_links ?? [],
-        references: this.editingTask.references ?? task.references ?? [],
-        deliverable_links: this.editingTask.deliverable_links ?? task.deliverable_links ?? [],
+        source_links: this.editingTask.source_links ?? taskForSave.source_links ?? [],
+        references: this.editingTask.references ?? taskForSave.references ?? [],
+        deliverable_links: this.editingTask.deliverable_links ?? taskForSave.deliverable_links ?? [],
       });
       const baseReferences = mergeRecordLinkLists(existingRecordLinks.references, descRefs);
       const flowLinkage = resolveFlowLinkage({
@@ -3673,7 +3699,7 @@ export function initApp() {
       });
       const predecessorTaskIds = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
       const draft = toRaw({
-        ...task,
+        ...taskForSave,
         title: this.editingTask.title,
         description: this.editingTask.description,
         state: this.editingTask.state,
@@ -3688,31 +3714,31 @@ export function initApp() {
         scope_l3_id: this.editingTask.scope_l3_id ?? null,
         scope_l4_id: this.editingTask.scope_l4_id ?? null,
         scope_l5_id: this.editingTask.scope_l5_id ?? null,
-        scope_policy_group_ids: this.editingTask.scope_policy_group_ids ?? task.scope_policy_group_ids ?? null,
-        board_group_id: this.editingTask.board_group_id ?? task.board_group_id ?? null,
-        shares: toRaw(this.editingTask.shares ?? task.shares ?? []),
-        group_ids: toRaw(this.editingTask.group_ids ?? task.group_ids ?? []),
-        flow_id: flowLinkage.flow_id ?? task.flow_id ?? null,
-        flow_run_id: flowLinkage.flow_run_id ?? task.flow_run_id ?? null,
-        flow_step: flowLinkage.flow_step ?? task.flow_step ?? null,
+        scope_policy_group_ids: this.editingTask.scope_policy_group_ids ?? taskForSave.scope_policy_group_ids ?? null,
+        board_group_id: this.editingTask.board_group_id ?? taskForSave.board_group_id ?? null,
+        shares: toRaw(this.editingTask.shares ?? taskForSave.shares ?? []),
+        group_ids: toRaw(this.editingTask.group_ids ?? taskForSave.group_ids ?? []),
+        flow_id: flowLinkage.flow_id ?? taskForSave.flow_id ?? null,
+        flow_run_id: flowLinkage.flow_run_id ?? taskForSave.flow_run_id ?? null,
+        flow_step: flowLinkage.flow_step ?? taskForSave.flow_step ?? null,
         source_links: existingRecordLinks.source_links,
         references: flowLinkage.references,
         deliverable_links: existingRecordLinks.deliverable_links,
       });
       const scopePolicyPatch = draft.scope_id
         ? (() => {
-          const previousScopeGroupIds = draft.scope_id !== task.scope_id && task.scope_id
-            ? this.getResolvedScopePolicyGroupIds(task.scope_id)
+          const previousScopeGroupIds = draft.scope_id !== taskForSave.scope_id && taskForSave.scope_id
+            ? this.getResolvedScopePolicyGroupIds(taskForSave.scope_id)
             : [];
           if (
-            draft.scope_id !== task.scope_id
+            draft.scope_id !== taskForSave.scope_id
             || this.shouldRefreshScopedPolicy(draft, draft.scope_id, { allowLegacyGroupFallback: true })
           ) {
             return this.buildScopedPolicyRepairPatch(draft, {
               scopeId: draft.scope_id,
               previousScopeGroupIds,
               includeBoardGroupId: true,
-              fallbackPolicyGroupIds: task.group_ids || [],
+              fallbackPolicyGroupIds: taskForSave.group_ids || [],
             });
           }
           return {
@@ -3733,22 +3759,22 @@ export function initApp() {
 
       this.taskDetailSaving = true;
       try {
-        const checkoutPolicyConfig = this.getTaskPatchCheckoutPolicyConfig(updated, task, { intent: 'edit' });
+        const checkoutPolicyConfig = this.getTaskPatchCheckoutPolicyConfig(updated, taskForSave, { intent: 'edit' });
         await upsertTask(updated);
         this.tasks = this.tasks.map(t => t.record_id === updated.record_id ? updated : t);
         this.editingTask = { ...updated };
         this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
         if (this.activeTaskId === updated.record_id) this.scheduleStorageImageHydration();
 
-        await this.queueTaskWrite(updated, task, { checkoutPolicyConfig, intent: 'edit' });
+        await this.queueTaskWrite(updated, taskForSave, { checkoutPolicyConfig, intent: 'edit' });
         // Task checkout edits commit one task record. Subtask scope cascades
         // need their own explicit transaction if we bring them back here.
-        if (updated.description && updated.description !== task.description) {
+        if (updated.description && updated.description !== taskForSave.description) {
           this._fireMentionTriggers(updated.description, `task "${updated.title}"`);
         }
         // Fire trigger when task is assigned to a bot
         const newAssignee = updated.assigned_to_npub;
-        if (newAssignee && newAssignee !== task.assigned_to_npub) {
+        if (newAssignee && newAssignee !== taskForSave.assigned_to_npub) {
           for (const trigger of (this.workspaceTriggers || [])) {
             if (!trigger.enabled || !trigger.botNpub || trigger.triggerType !== 'chat_bot_tagged') continue;
             if (newAssignee === trigger.botNpub) {

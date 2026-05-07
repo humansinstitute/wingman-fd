@@ -1,5 +1,9 @@
-export function isTaskBlockedByPendingSave(task) {
-  return String(task?.sync_status || '').trim() === 'pending';
+export function isTaskBlockedByPendingSave(task, pendingWrites = null, familyHash = null) {
+  if (String(task?.sync_status || '').trim() !== 'pending') return false;
+  if (Array.isArray(pendingWrites) && familyHash) {
+    return hasPendingRecordWrite(pendingWrites, task?.record_id, familyHash);
+  }
+  return true;
 }
 
 export function hasPendingRecordWrite(pendingWrites = [], recordId, familyHash) {

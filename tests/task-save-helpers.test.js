@@ -12,6 +12,15 @@ describe('task save helpers', () => {
     expect(isTaskBlockedByPendingSave(null)).toBe(false);
   });
 
+  it('does not block a stale pending flag when no matching pending write remains', () => {
+    const task = { record_id: 'task-1', sync_status: 'pending' };
+
+    expect(isTaskBlockedByPendingSave(task, [], 'task-family')).toBe(false);
+    expect(isTaskBlockedByPendingSave(task, [
+      { record_id: 'task-1', record_family_hash: 'task-family' },
+    ], 'task-family')).toBe(true);
+  });
+
   it('matches pending writes by record id and task family hash', () => {
     const pendingWrites = [
       { record_id: 'task-1', record_family_hash: 'task-family' },
