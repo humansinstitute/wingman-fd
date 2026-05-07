@@ -25,10 +25,13 @@ It does not own:
 
 ## Read this first
 
+- Before changing behavior, scan `docs/` for design docs relevant to the task;
+  do not rely only on code shape when a design reference exists.
 - repo purpose: `README.md`
 - shared workspace framing: `../README.md`
 - current architecture: `../ARCHITECTURE.md`
 - implementation seams: `../design.md`
+- checkout and sync semantics: `docs/checkout_semantics.md`
 - main app state: `src/app.js`
 - local DB: `src/db.js`
 - Tower transport: `src/api.js`
@@ -51,6 +54,8 @@ It does not own:
 - `src/agent-connect.js`: Agent Connect export helpers
 - `tests/`: unit and integration coverage
 - `tests/e2e/`: browser-level checks
+- `docs/checkout_semantics.md`: implementation reference for checkout-managed
+  edits, optimistic creates, pending-write policy config, and worker sync behavior
 - `docs/tower-backend-prod.md`: backend deployment notes from the FD side
 - `docs/design/`: architecture and design docs (SSE, Alpine+Dexie target, etc.)
 
