@@ -1,17 +1,31 @@
 export function isTaskBlockedByPendingSave(task, pendingWrites = null, familyHash = null) {
   if (String(task?.sync_status || '').trim() !== 'pending') return false;
+  const coeditState = String(task?.coedit_state || '').trim();
+  if (coeditState === 'conflicted' || coeditState === 'rejected') return true;
   if (Array.isArray(pendingWrites) && familyHash) {
-    return hasPendingRecordWrite(pendingWrites, task?.record_id, familyHash);
+    return false;
   }
   return true;
 }
 
-export function hasPendingRecordWrite(pendingWrites = [], recordId, familyHash) {
-  if (!recordId || !familyHash) return false;
-  return pendingWrites.some((write) =>
-    write?.record_id === recordId
-    && write?.record_family_hash === familyHash
+export function getPendingRecordWrites(pendingWrites = [], recordId, familyHash) {
+  if (!recordId || !familyHash) return [];
+  return pendingWrites.filter((write) =>
+    String(write?.record_id || write?.envelope?.record_id || '') === recordId
+    && String(write?.record_family_hash || write?.envelope?.record_family_hash || '') === familyHash
   );
+}
+
+export function hasPendingRecordWrite(pendingWrites = [], recordId, familyHash) {
+  return getPendingRecordWrites(pendingWrites, recordId, familyHash).length > 0;
+}
+
+export function getPendingRecordBaseVersion(pendingWrites = [], recordId, familyHash) {
+  const versions = getPendingRecordWrites(pendingWrites, recordId, familyHash)
+    .map((write) => Number(write?.envelope?.previous_version ?? Number.NaN))
+    .filter((version) => Number.isFinite(version) && version >= 0);
+  if (versions.length === 0) return null;
+  return Math.min(...versions);
 }
 
 export function markTaskEditSyncedAfterAcceptedFlush(task, pendingWrites = [], familyHash) {

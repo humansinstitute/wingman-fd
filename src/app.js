@@ -115,6 +115,7 @@ import {
   getScopesByOwner,
   addPendingWrite,
   getPendingWrites,
+  removePendingWrite,
   getChannelById,
   getAddressBookPeople,
   clearRuntimeData,
@@ -157,6 +158,9 @@ import {
   buildCascadedSubtaskUpdate,
 } from './task-scope-cascade.js';
 import {
+  getPendingRecordBaseVersion,
+  getPendingRecordWrites,
+  hasPendingRecordWrite,
   isTaskBlockedByPendingSave,
   markTaskEditSyncedAfterAcceptedFlush,
 } from './task-save-helpers.js';
@@ -2866,7 +2870,7 @@ export function initApp() {
         if (
           Array.isArray(pendingWrites)
           && String(normalized?.sync_status || '').trim() === 'pending'
-          && !isTaskBlockedByPendingSave(normalized, pendingWrites, taskFamilyHash('task'))
+          && !hasPendingRecordWrite(pendingWrites, normalized?.record_id, taskFamilyHash('task'))
         ) {
           normalized = markTaskEditSyncedAfterAcceptedFlush(normalized, pendingWrites, taskFamilyHash('task')) || normalized;
         }
@@ -3387,12 +3391,32 @@ export function initApp() {
       });
     },
 
+    getPendingTaskWrites(pendingWrites = [], recordId) {
+      return getPendingRecordWrites(pendingWrites, recordId, taskFamilyHash('task'));
+    },
+
+    getPendingTaskBaseVersion(pendingWrites = [], recordId) {
+      return getPendingRecordBaseVersion(pendingWrites, recordId, taskFamilyHash('task'));
+    },
+
+    async replacePendingTaskWrites(recordId, pendingWrites = null) {
+      const rows = this.getPendingTaskWrites(
+        Array.isArray(pendingWrites) ? pendingWrites : await getPendingWrites(),
+        recordId,
+      );
+      await Promise.all(rows
+        .filter((row) => row?.row_id != null)
+        .map((row) => removePendingWrite(row.row_id)));
+    },
+
     isTaskDetailEditing() {
       return this.taskDetailMode === 'edit';
     },
 
     async queueTaskWrite(updatedTask, previousTask, options = {}) {
-      const checkoutPolicyConfig = options.checkoutPolicyConfig || this.getTaskDetailCheckoutPolicyConfig();
+      const checkoutPolicyConfig = Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig')
+        ? options.checkoutPolicyConfig
+        : this.getTaskDetailCheckoutPolicyConfig();
       const taskWriteFields = await this.getTaskWriteFieldsForWrite(updatedTask);
       const envelope = await outboundTask({
         ...updatedTask,
@@ -3401,12 +3425,15 @@ export function initApp() {
         signature_npub: this.signingNpub,
         write_group_ref: taskWriteFields.write_group_ref,
       });
-      const managedEnvelope = typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function'
-        ? await this.attachCheckoutRequiredCheckoutToEnvelope(updatedTask, envelope, {
+      let managedEnvelope = envelope;
+      if (options.existingCheckout) {
+        managedEnvelope = { ...envelope, checkout: options.existingCheckout };
+      } else if (checkoutPolicyConfig && typeof this.attachCheckoutRequiredCheckoutToEnvelope === 'function') {
+        managedEnvelope = await this.attachCheckoutRequiredCheckoutToEnvelope(updatedTask, envelope, {
           intent: options.intent || 'edit',
           checkoutPolicyConfig,
-        })
-        : envelope;
+        });
+      }
       const pendingWrite = {
         record_id: updatedTask.record_id,
         record_family_hash: managedEnvelope.record_family_hash,
@@ -3603,7 +3630,9 @@ export function initApp() {
         this.error = 'This task has a pending save. Sync before editing it again.';
         return false;
       }
+      const pendingTaskWrites = this.getPendingTaskWrites(pendingWrites, task.record_id);
       const taskForEdit = String(task.sync_status || '').trim() === 'pending'
+        && pendingTaskWrites.length === 0
         ? markTaskEditSyncedAfterAcceptedFlush(task, pendingWrites, taskFamilyHash('task')) || task
         : task;
       if (taskForEdit !== task) {
@@ -3613,10 +3642,12 @@ export function initApp() {
       const checkoutPolicyConfig = this.getTaskDetailCheckoutPolicyConfig();
       this.taskDetailCheckoutPending = true;
       try {
-        await this.ensureLockManagedCheckout(taskForEdit, taskFamilyHash('task'), {
-          intent: 'edit',
-          checkoutPolicyConfig,
-        });
+        if (pendingTaskWrites.length === 0) {
+          await this.ensureLockManagedCheckout(taskForEdit, taskFamilyHash('task'), {
+            intent: 'edit',
+            checkoutPolicyConfig,
+          });
+        }
         this.taskEditOriginal = toRaw(taskForEdit);
         this.editingTask = toRaw(taskForEdit);
         this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
@@ -3681,7 +3712,10 @@ export function initApp() {
         this.taskDescriptionEditing = false;
         return;
       }
+      const pendingTaskWrites = this.getPendingTaskWrites(pendingWritesBeforeSave, task.record_id);
+      const pendingBaseVersion = this.getPendingTaskBaseVersion(pendingWritesBeforeSave, task.record_id);
       const taskForSave = String(task.sync_status || '').trim() === 'pending'
+        && pendingTaskWrites.length === 0
         ? markTaskEditSyncedAfterAcceptedFlush(task, pendingWritesBeforeSave, taskFamilyHash('task')) || task
         : task;
       if (taskForSave !== task) {
@@ -3692,7 +3726,9 @@ export function initApp() {
         this.editingTask.assigned_to_npub = null;
       }
 
-      const nextVersion = (taskForSave.version ?? 1) + 1;
+      const nextVersion = pendingBaseVersion == null
+        ? (taskForSave.version ?? 1) + 1
+        : pendingBaseVersion + 1;
       const descRefs = parseReferencesFromDescription(this.editingTask.description);
       const existingRecordLinks = buildRecordLinkPayload({
         source_links: this.editingTask.source_links ?? taskForSave.source_links ?? [],
@@ -3768,14 +3804,31 @@ export function initApp() {
 
       this.taskDetailSaving = true;
       try {
-        const checkoutPolicyConfig = this.getTaskPatchCheckoutPolicyConfig(updated, taskForSave, { intent: 'edit' });
+        const hasQueuedTaskWrite = pendingTaskWrites.length > 0;
+        const queuedCheckout = pendingTaskWrites.find((row) => row?.envelope?.checkout)?.envelope?.checkout || null;
+        const queuedCheckoutPolicyConfig = pendingTaskWrites.find((row) => row?.checkout_policy_config)?.checkout_policy_config || null;
+        const checkoutPolicyConfig = hasQueuedTaskWrite
+          ? queuedCheckoutPolicyConfig
+          : this.getTaskPatchCheckoutPolicyConfig(updated, taskForSave, { intent: 'edit' });
         await upsertTask(updated);
         this.tasks = this.tasks.map(t => t.record_id === updated.record_id ? updated : t);
         this.editingTask = { ...updated };
         this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
         if (this.activeTaskId === updated.record_id) this.scheduleStorageImageHydration();
 
-        await this.queueTaskWrite(updated, taskForSave, { checkoutPolicyConfig, intent: 'edit' });
+        if (hasQueuedTaskWrite) {
+          await this.replacePendingTaskWrites(updated.record_id, pendingWritesBeforeSave);
+        }
+        const previousTaskForWrite = pendingBaseVersion == null
+          ? taskForSave
+          : pendingBaseVersion > 0
+            ? { ...taskForSave, version: pendingBaseVersion }
+            : null;
+        await this.queueTaskWrite(updated, previousTaskForWrite, {
+          checkoutPolicyConfig,
+          existingCheckout: queuedCheckout,
+          intent: 'edit',
+        });
         // Task checkout edits commit one task record. Subtask scope cascades
         // need their own explicit transaction if we bring them back here.
         if (updated.description && updated.description !== taskForSave.description) {
@@ -3815,6 +3868,11 @@ export function initApp() {
           this.editingTask = { ...acceptedTask };
           this.editingTask.predecessor_task_ids = normalizePredecessorTaskIds(this.editingTask.predecessor_task_ids || [], this.editingTask.record_id);
           this.clearLockManagedCheckoutSession(updated.record_id, taskFamilyHash('task'));
+          this.taskDetailMode = 'view';
+          this.taskEditOriginal = null;
+          this.taskDescriptionEditing = false;
+        } else if (hasQueuedTaskWrite) {
+          this.error = '';
           this.taskDetailMode = 'view';
           this.taskEditOriginal = null;
           this.taskDescriptionEditing = false;
