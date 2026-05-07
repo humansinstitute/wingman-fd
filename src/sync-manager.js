@@ -605,16 +605,7 @@ export const syncManagerMixin = {
       if (typeof this.getTaskDetailCheckoutPolicyConfig === 'function') {
         return this.getTaskDetailCheckoutPolicyConfig();
       }
-      const baseConfig = this.recordCheckoutPolicyConfig || {};
-      return {
-        recordFamilyHashes: {
-          ...(baseConfig.recordFamilyHashes || {}),
-        },
-        familySuffixes: {
-          ...(baseConfig.familySuffixes || {}),
-          task: 'checkout_required',
-        },
-      };
+      return this.recordCheckoutPolicyConfig || null;
     }
     return this.recordCheckoutPolicyConfig || null;
   },

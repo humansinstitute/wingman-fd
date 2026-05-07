@@ -136,7 +136,7 @@ describe('sync worker pending write batching', () => {
     expect(state.removed).toEqual([1]);
   });
 
-  it('uses pending-write policy config without flipping unrelated task writes', async () => {
+  it('strips legacy task policy config without splitting optimistic task batches', async () => {
     const taskFamilyHash = getSyncFamilyHash('task');
     const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
     state.pending = [
@@ -172,12 +172,9 @@ describe('sync worker pending write batching', () => {
     const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
     await flushPendingWrites('npub-owner');
 
-    expect(state.syncCalls).toEqual([
-      ['task-create'],
-      ['task-edit'],
-    ]);
+    expect(state.syncCalls).toEqual([['task-create', 'task-edit']]);
     expect(state.syncArgs[0].checkout_policy_config).toBeNull();
-    expect(state.syncArgs[1].checkout_policy_config).toEqual(checkoutPolicyConfig);
+    expect(state.syncArgs[0].records[1].checkout).toBeUndefined();
     expect(state.removed).toEqual([1, 2]);
   });
 
@@ -270,7 +267,7 @@ describe('sync worker pending write batching', () => {
     expect(state.removed).toEqual([1]);
   });
 
-  it('keeps terminal task pending writes on the checkout-managed path', async () => {
+  it('strips legacy task checkout metadata before flushing pending writes', async () => {
     const taskFamilyHash = getSyncFamilyHash('task');
     const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
     state.tasksById.set('task-archived', {
@@ -317,9 +314,9 @@ describe('sync worker pending write batching', () => {
     await flushPendingWrites('npub-owner');
 
     expect(state.syncCalls).toEqual([['task-archived', 'task-done']]);
-    expect(state.syncArgs[0].checkout_policy_config).toEqual(checkoutPolicyConfig);
-    expect(state.syncArgs[0].records[0].checkout).toEqual({ checkout_id: 'checkout-archive-stale', consume_on_success: true });
-    expect(state.syncArgs[0].records[1].checkout).toEqual({ checkout_id: 'checkout-done-stale', consume_on_success: true });
+    expect(state.syncArgs[0].checkout_policy_config).toBeNull();
+    expect(state.syncArgs[0].records[0].checkout).toBeUndefined();
+    expect(state.syncArgs[0].records[1].checkout).toBeUndefined();
     expect(state.removed).toEqual([1, 2]);
   });
 

@@ -199,6 +199,10 @@ async function normalizePendingWritesForFlush(pendingWrites = []) {
   const normalized = [];
   for (const pendingWrite of pendingWrites) {
     const familyHash = String(pendingWrite?.record_family_hash || pendingWrite?.envelope?.record_family_hash || '').trim();
+    if (familyHash === TASK_FAMILY && pendingWrite?.checkout_policy_config) {
+      normalized.push(stripPendingWriteCheckoutPolicyConfig(pendingWrite));
+      continue;
+    }
     if (
       pendingWrite?.checkout_policy_config
       && !pendingWrite?.envelope?.checkout?.checkout_id
