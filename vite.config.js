@@ -2,12 +2,91 @@ import { defineConfig } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
 
+const DIST_DIR = path.resolve(__dirname, 'dist');
+const DIST_ASSETS_DIR = path.join(DIST_DIR, 'assets');
+
 function readBuildMeta(metaPath) {
   try {
     return JSON.parse(fs.readFileSync(metaPath, 'utf8'));
   } catch {
     return { absoluteVersion: 0, lastBuildDate: '', dailyVersion: 0 };
   }
+}
+
+function findCurrentDistAsset(pattern) {
+  try {
+    return fs.readdirSync(DIST_ASSETS_DIR).find((fileName) => pattern.test(fileName)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function serveFile(response, filePath, contentType) {
+  const stat = fs.statSync(filePath);
+  response.statusCode = 200;
+  response.setHeader('Content-Type', contentType);
+  response.setHeader('Content-Length', String(stat.size));
+  response.setHeader('Cache-Control', 'no-cache');
+  fs.createReadStream(filePath).pipe(response);
+}
+
+function staleDistAssetFallbackPlugin() {
+  return {
+    name: 'stale-dist-asset-fallback',
+    configurePreviewServer(server) {
+      server.middlewares.use((request, response, next) => {
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          next();
+          return;
+        }
+
+        const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+        const requestedAsset = path.basename(pathname);
+        const existingPath = path.join(DIST_ASSETS_DIR, requestedAsset);
+        if (!pathname.startsWith('/assets/') || fs.existsSync(existingPath)) {
+          next();
+          return;
+        }
+
+        const fallbacks = [
+          {
+            match: /^index-[\w-]+\.js$/,
+            current: () => findCurrentDistAsset(/^index-[\w-]+\.js$/),
+            contentType: 'text/javascript',
+          },
+          {
+            match: /^index-[\w-]+\.css$/,
+            current: () => findCurrentDistAsset(/^index-[\w-]+\.css$/),
+            contentType: 'text/css',
+          },
+          {
+            match: /^sync-worker-runner-[\w-]+\.js$/,
+            current: () => findCurrentDistAsset(/^sync-worker-runner-[\w-]+\.js$/),
+            contentType: 'text/javascript',
+          },
+        ];
+        const fallback = fallbacks.find(({ match }) => match.test(requestedAsset));
+        const currentAsset = fallback?.current();
+        if (!fallback || !currentAsset) {
+          next();
+          return;
+        }
+
+        const currentPath = path.join(DIST_ASSETS_DIR, currentAsset);
+        if (request.method === 'HEAD') {
+          const stat = fs.statSync(currentPath);
+          response.statusCode = 200;
+          response.setHeader('Content-Type', fallback.contentType);
+          response.setHeader('Content-Length', String(stat.size));
+          response.setHeader('Cache-Control', 'no-cache');
+          response.end();
+          return;
+        }
+
+        serveFile(response, currentPath, fallback.contentType);
+      });
+    },
+  };
 }
 
 function buildVersionPlugin() {
@@ -170,7 +249,7 @@ self.addEventListener('fetch', (event) => {
 
 export default defineConfig({
   root: '.',
-  plugins: [buildVersionPlugin()],
+  plugins: [buildVersionPlugin(), staleDistAssetFallbackPlugin()],
   server: {
     host: true,
     strictPort: true,
