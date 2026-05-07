@@ -129,13 +129,23 @@ function normalizeEnvelopeForTowerBootstrap(envelope = {}) {
   };
 }
 
-function isMissingTowerBaseRejection(rejection = {}) {
+function getPriorVersionMismatchContext(rejection = {}) {
   const code = String(rejection?.code || '').trim();
   const requiredPreviousVersion = Number(rejection?.required_previous_version ?? rejection?.tower_latest_version ?? -1);
   const receivedPreviousVersion = Number(rejection?.received_previous_version ?? -1);
-  return code === 'prior_version_mismatch'
-    && requiredPreviousVersion === 0
-    && receivedPreviousVersion > 0;
+  if (code !== 'prior_version_mismatch') return null;
+  if (!Number.isFinite(requiredPreviousVersion) || requiredPreviousVersion < 0) return null;
+  if (!Number.isFinite(receivedPreviousVersion) || receivedPreviousVersion <= requiredPreviousVersion) return null;
+  return { requiredPreviousVersion, receivedPreviousVersion };
+}
+
+function normalizeEnvelopeForTowerPreviousVersion(envelope = {}, previousVersion = 0) {
+  if (previousVersion <= 0) return normalizeEnvelopeForTowerBootstrap(envelope);
+  return {
+    ...envelope,
+    version: previousVersion + 1,
+    previous_version: previousVersion,
+  };
 }
 
 async function retryMissingTowerBaseWrites({
@@ -145,19 +155,30 @@ async function retryMissingTowerBaseWrites({
   checkoutPolicyConfig = null,
 }) {
   const rejected = Array.isArray(result?.rejected) ? result.rejected : [];
-  const bootstrapRecordIds = new Set(rejected
-    .filter(isMissingTowerBaseRejection)
-    .map((entry) => String(entry?.record_id || '').trim())
-    .filter(Boolean));
-  if (bootstrapRecordIds.size === 0) return result;
+  const retryContextByRecordId = new Map();
+  for (const entry of rejected) {
+    const recordId = String(entry?.record_id || '').trim();
+    const context = getPriorVersionMismatchContext(entry);
+    if (!recordId || !context) continue;
+    retryContextByRecordId.set(recordId, context);
+  }
+  if (retryContextByRecordId.size === 0) return result;
 
-  const retryRows = batch.filter((row) => bootstrapRecordIds.has(String(row?.record_id || row?.envelope?.record_id || '').trim()));
+  const retryRows = batch.filter((row) => retryContextByRecordId.has(String(row?.record_id || row?.envelope?.record_id || '').trim()));
   if (retryRows.length === 0) return result;
 
-  const retryRecords = retryRows.map((row) => normalizeEnvelopeForTowerBootstrap(row.envelope));
-  flightDeckLog('warn', 'sync', 'retrying local pending writes as Tower bootstrap versions', {
+  const retryRecords = retryRows.map((row) => {
+    const recordId = String(row?.record_id || row?.envelope?.record_id || '').trim();
+    const context = retryContextByRecordId.get(recordId);
+    return normalizeEnvelopeForTowerPreviousVersion(row.envelope, context?.requiredPreviousVersion ?? 0);
+  });
+  flightDeckLog('warn', 'sync', 'retrying local pending writes at Tower latest versions', {
     ownerNpub,
-    recordIds: retryRecords.map((record) => record.record_id),
+    records: retryRecords.map((record) => ({
+      recordId: record.record_id,
+      version: record.version,
+      previousVersion: record.previous_version,
+    })),
   });
 
   const retryResult = await syncRecords({
@@ -167,6 +188,7 @@ async function retryMissingTowerBaseWrites({
   });
 
   const retryRejected = Array.isArray(retryResult?.rejected) ? retryResult.rejected : [];
+  const retryHasUnscopedRejection = retryRejected.some((entry) => !String(entry?.record_id || '').trim());
   const retryRejectedIds = new Set(retryRejected
     .map((entry) => String(entry?.record_id || '').trim())
     .filter(Boolean));
@@ -175,19 +197,19 @@ async function retryMissingTowerBaseWrites({
     .filter(Boolean));
   const acceptedRetryIds = new Set(retryRows
     .map((row) => String(row?.record_id || row?.envelope?.record_id || '').trim())
-    .filter((recordId) => recordId && !retryRejectedIds.has(recordId) && !retryDeferredIds.has(recordId)));
+    .filter((recordId) => recordId && !retryHasUnscopedRejection && !retryRejectedIds.has(recordId) && !retryDeferredIds.has(recordId)));
 
   const originalRejectedStillActive = rejected.filter((entry) => {
     const recordId = String(entry?.record_id || '').trim();
-    return !recordId || !acceptedRetryIds.has(recordId);
+    return !recordId || !retryContextByRecordId.has(recordId);
   });
 
   return {
     ...result,
     synced: (Number(result?.synced ?? 0) || 0) + (Number(retryResult?.synced ?? 0) || acceptedRetryIds.size),
-    created: (Number(result?.created ?? 0) || 0) + (Number(retryResult?.created ?? 0) || acceptedRetryIds.size),
-    updated: Number(result?.updated ?? 0) || 0,
-    rejected: [...originalRejectedStillActive.filter((entry) => !bootstrapRecordIds.has(String(entry?.record_id || '').trim())), ...retryRejected],
+    created: (Number(result?.created ?? 0) || 0) + (Number(retryResult?.created ?? 0) || 0),
+    updated: (Number(result?.updated ?? 0) || 0) + (Number(retryResult?.updated ?? 0) || 0),
+    rejected: [...originalRejectedStillActive, ...retryRejected],
     deferred: [...new Set([
       ...(Array.isArray(result?.deferred) ? result.deferred : []),
       ...(Array.isArray(retryResult?.deferred) ? retryResult.deferred : []),

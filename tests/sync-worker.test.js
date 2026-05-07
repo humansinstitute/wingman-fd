@@ -270,6 +270,68 @@ describe('sync worker pending write batching', () => {
     expect(state.removed).toEqual([1]);
   });
 
+  it('retries newer local task snapshots at the Tower latest version', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'task-local-newer',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: checkoutPolicyConfig,
+        envelope: {
+          record_id: 'task-local-newer',
+          record_family_hash: taskFamilyHash,
+          version: 4,
+          previous_version: 3,
+          checkout: { checkout_id: 'checkout-task-local-newer', consume_on_success: true },
+        },
+      },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords
+      .mockImplementationOnce(async (args) => {
+        state.syncCalls.push(args.records.map((record) => record.record_id));
+        state.syncArgs.push(args);
+        return {
+          synced: 0,
+          rejected: [{
+            record_id: 'task-local-newer',
+            record_family_hash: taskFamilyHash,
+            code: 'prior_version_mismatch',
+            required_previous_version: 2,
+            received_previous_version: 3,
+          }],
+        };
+      })
+      .mockImplementationOnce(async (args) => {
+        state.syncCalls.push(args.records.map((record) => record.record_id));
+        state.syncArgs.push(args);
+        return { synced: 1, updated: 1, rejected: [] };
+      });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+    const result = await flushPendingWrites('npub-owner');
+
+    expect(result).toEqual({ pushed: 1 });
+    expect(state.syncCalls).toEqual([
+      ['task-local-newer'],
+      ['task-local-newer'],
+    ]);
+    expect(state.syncArgs[1]).toMatchObject({
+      checkout_policy_config: checkoutPolicyConfig,
+      records: [expect.objectContaining({
+        record_id: 'task-local-newer',
+        record_family_hash: taskFamilyHash,
+        version: 3,
+        previous_version: 2,
+        checkout: { checkout_id: 'checkout-task-local-newer', consume_on_success: true },
+      })],
+    });
+    expect(state.removed).toEqual([1]);
+  });
+
   it('keeps task pending writes on the checkout-managed path', async () => {
     const taskFamilyHash = getSyncFamilyHash('task');
     const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };

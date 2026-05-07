@@ -223,6 +223,10 @@ Rules:
 - Do not attach checkout policy config to creates unless the create intentionally includes checkout metadata.
 - Do not strip checkout metadata from checkout-managed updates.
 - Do strip stale checkout metadata from `optimistic_write` records.
+- If Tower rejects a newer local snapshot with `prior_version_mismatch` and
+  reports its latest version, retry the same local snapshot as
+  `version: tower_latest + 1` / `previous_version: tower_latest`; do not strand
+  the write for manual Force Submit when local is intended to win.
 - Error diagnostics should include record id, family, version, previous version, and checkout state.
 
 ## Common Pitfalls Seen So Far
