@@ -199,10 +199,6 @@ async function normalizePendingWritesForFlush(pendingWrites = []) {
   const normalized = [];
   for (const pendingWrite of pendingWrites) {
     const familyHash = String(pendingWrite?.record_family_hash || pendingWrite?.envelope?.record_family_hash || '').trim();
-    if (familyHash === TASK_FAMILY && pendingWrite?.checkout_policy_config) {
-      normalized.push(stripPendingWriteCheckoutPolicyConfig(pendingWrite));
-      continue;
-    }
     if (
       pendingWrite?.checkout_policy_config
       && !pendingWrite?.envelope?.checkout?.checkout_id
@@ -213,7 +209,44 @@ async function normalizePendingWritesForFlush(pendingWrites = []) {
     }
     normalized.push(pendingWrite);
   }
-  return normalized;
+  return coalesceTaskPendingWrites(normalized);
+}
+
+async function coalesceTaskPendingWrites(pendingWrites = []) {
+  const latestTaskWriteByRecord = new Map();
+  const supersededRows = [];
+  const passthrough = [];
+
+  for (const pendingWrite of pendingWrites) {
+    const familyHash = String(pendingWrite?.record_family_hash || pendingWrite?.envelope?.record_family_hash || '').trim();
+    const recordId = String(pendingWrite?.record_id || pendingWrite?.envelope?.record_id || '').trim();
+    const previousVersion = Number(pendingWrite?.envelope?.previous_version ?? 0) || 0;
+    if (familyHash !== TASK_FAMILY || !recordId || previousVersion <= 0) {
+      passthrough.push(pendingWrite);
+      continue;
+    }
+
+    const existing = latestTaskWriteByRecord.get(recordId);
+    if (!existing) {
+      latestTaskWriteByRecord.set(recordId, pendingWrite);
+      continue;
+    }
+
+    const existingVersion = Number(existing?.envelope?.version ?? 0) || 0;
+    const candidateVersion = Number(pendingWrite?.envelope?.version ?? 0) || 0;
+    const existingRowId = Number(existing?.row_id ?? 0) || 0;
+    const candidateRowId = Number(pendingWrite?.row_id ?? 0) || 0;
+    const candidateIsNewer = candidateVersion > existingVersion
+      || (candidateVersion === existingVersion && candidateRowId > existingRowId);
+    supersededRows.push(candidateIsNewer ? existing : pendingWrite);
+    if (candidateIsNewer) latestTaskWriteByRecord.set(recordId, pendingWrite);
+  }
+
+  for (const row of supersededRows) {
+    if (row?.row_id != null) await removePendingWrite(row.row_id);
+  }
+
+  return [...passthrough, ...latestTaskWriteByRecord.values()];
 }
 
 function nextPendingWriteBatch(pending, offset, options = {}) {

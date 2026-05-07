@@ -3346,7 +3346,16 @@ export function initApp() {
     },
 
     getTaskDetailCheckoutPolicyConfig() {
-      return null;
+      const baseConfig = this.recordCheckoutPolicyConfig || {};
+      return {
+        recordFamilyHashes: {
+          ...(baseConfig.recordFamilyHashes || {}),
+        },
+        familySuffixes: {
+          ...(baseConfig.familySuffixes || {}),
+          task: 'checkout_required',
+        },
+      };
     },
 
     getCheckoutEditPolicyConfig(familySuffix) {
@@ -3407,7 +3416,7 @@ export function initApp() {
     async queueTaskWrite(updatedTask, previousTask, options = {}) {
       const checkoutPolicyConfig = Object.prototype.hasOwnProperty.call(options, 'checkoutPolicyConfig')
         ? options.checkoutPolicyConfig
-        : null;
+        : this.getTaskDetailCheckoutPolicyConfig();
       const taskWriteFields = await this.getTaskWriteFieldsForWrite(updatedTask);
       const envelope = await outboundTask({
         ...updatedTask,

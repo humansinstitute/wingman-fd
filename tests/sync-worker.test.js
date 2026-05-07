@@ -136,7 +136,7 @@ describe('sync worker pending write batching', () => {
     expect(state.removed).toEqual([1]);
   });
 
-  it('strips legacy task policy config without splitting optimistic task batches', async () => {
+  it('uses pending-write policy config without flipping unrelated task writes', async () => {
     const taskFamilyHash = getSyncFamilyHash('task');
     const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
     state.pending = [
@@ -172,9 +172,12 @@ describe('sync worker pending write batching', () => {
     const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
     await flushPendingWrites('npub-owner');
 
-    expect(state.syncCalls).toEqual([['task-create', 'task-edit']]);
+    expect(state.syncCalls).toEqual([
+      ['task-create'],
+      ['task-edit'],
+    ]);
     expect(state.syncArgs[0].checkout_policy_config).toBeNull();
-    expect(state.syncArgs[0].records[1].checkout).toBeUndefined();
+    expect(state.syncArgs[1].checkout_policy_config).toEqual(checkoutPolicyConfig);
     expect(state.removed).toEqual([1, 2]);
   });
 
@@ -267,7 +270,7 @@ describe('sync worker pending write batching', () => {
     expect(state.removed).toEqual([1]);
   });
 
-  it('strips legacy task checkout metadata before flushing pending writes', async () => {
+  it('keeps task pending writes on the checkout-managed path', async () => {
     const taskFamilyHash = getSyncFamilyHash('task');
     const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
     state.tasksById.set('task-archived', {
@@ -314,9 +317,62 @@ describe('sync worker pending write batching', () => {
     await flushPendingWrites('npub-owner');
 
     expect(state.syncCalls).toEqual([['task-archived', 'task-done']]);
-    expect(state.syncArgs[0].checkout_policy_config).toBeNull();
-    expect(state.syncArgs[0].records[0].checkout).toBeUndefined();
-    expect(state.syncArgs[0].records[1].checkout).toBeUndefined();
+    expect(state.syncArgs[0].checkout_policy_config).toEqual(checkoutPolicyConfig);
+    expect(state.syncArgs[0].records[0].checkout).toEqual({ checkout_id: 'checkout-archive-stale', consume_on_success: true });
+    expect(state.syncArgs[0].records[1].checkout).toEqual({ checkout_id: 'checkout-done-stale', consume_on_success: true });
+    expect(state.removed).toEqual([1, 2]);
+  });
+
+  it('coalesces duplicate task pending updates before flushing', async () => {
+    const taskFamilyHash = getSyncFamilyHash('task');
+    const checkoutPolicyConfig = { familySuffixes: { task: 'checkout_required' } };
+    state.pending = [
+      {
+        row_id: 1,
+        record_id: 'task-chain',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: checkoutPolicyConfig,
+        envelope: {
+          record_id: 'task-chain',
+          record_family_hash: taskFamilyHash,
+          version: 6,
+          previous_version: 5,
+          checkout: { checkout_id: 'checkout-task-chain', consume_on_success: true },
+        },
+      },
+      {
+        row_id: 2,
+        record_id: 'task-chain',
+        record_family_hash: taskFamilyHash,
+        checkout_policy_config: checkoutPolicyConfig,
+        envelope: {
+          record_id: 'task-chain',
+          record_family_hash: taskFamilyHash,
+          version: 7,
+          previous_version: 6,
+          checkout: { checkout_id: 'checkout-task-chain', consume_on_success: true },
+        },
+      },
+    ];
+
+    const { syncRecords } = await import('../src/api.js');
+    syncRecords.mockImplementation(async (args) => {
+      state.syncCalls.push(args.records.map((record) => record.record_id));
+      state.syncArgs.push(args);
+      return { synced: args.records.length, rejected: [] };
+    });
+
+    const { flushPendingWrites } = await import('../src/worker/sync-worker.js');
+    await flushPendingWrites('npub-owner');
+
+    expect(state.syncCalls).toEqual([['task-chain']]);
+    expect(state.syncArgs[0].records[0]).toMatchObject({
+      record_id: 'task-chain',
+      version: 7,
+      previous_version: 6,
+      checkout: { checkout_id: 'checkout-task-chain', consume_on_success: true },
+    });
+    expect(state.syncArgs[0].checkout_policy_config).toEqual(checkoutPolicyConfig);
     expect(state.removed).toEqual([1, 2]);
   });
 
