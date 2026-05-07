@@ -4,6 +4,28 @@ This document is the implementation reference for adding checkout/edit behavior 
 
 Checkout is an edit lock for an existing Tower record version. It is not a creation primitive. A record type can use checkout for updates while still creating new records through the normal optimistic create path.
 
+## Two-Layer Model: Local Data And Syncing
+
+Flight Deck has two separate layers that must stay mentally distinct:
+
+1. Local data: Dexie/materialized records are the source of the browser UI. User actions should update local state quickly whenever the action can be represented safely as a local mutation.
+2. Syncing: pending writes describe those local mutations to Tower. This is the point where Tower version checks, checkout acquisition, checkout metadata, write access, and encryption rules are enforced.
+
+The user should not have to wait for Tower for every small action. A quick action can update local data immediately and still be a checkout-managed update when it is flushed to Tower.
+
+This means checkout has two valid UX timings:
+
+- Early checkout: acquire checkout before the user enters a long-lived edit session, such as editing a document or opening a task detail form for editing. This reserves the existing Tower version while the user drafts for minutes or longer.
+- Sync-time checkout: let a quick local action happen immediately, then have the sync path perform the checkout-managed Tower transaction. This is appropriate for actions like archive, done, drag/drop, quick field toggles, and multi-select operations.
+
+For a quick local action on an existing checkout-managed record, the Tower-side operation is logically:
+
+1. Acquire checkout for the current Tower record version.
+2. Submit the local update envelope with checkout metadata.
+3. Let Tower save the update and consume/release checkout on success.
+
+The user sees one quick local action. The pending write and worker still preserve the checkout contract when the action is synchronized.
+
 ## Policy Vocabulary
 
 Flight Deck uses the generic Library checkout policy primitives exposed through `src/record-checkout-policy.js`.
@@ -28,11 +50,13 @@ Task detail editing currently opts task updates into `checkout_required` at the 
 Create and update are different operations:
 
 - Create: `previous_version: 0`, `version: 1`. Do not acquire checkout. Do not attach checkout metadata. Queue a normal pending write.
-- Update: `previous_version` equals the latest local/Tower version and `version` increments by one. If policy is `checkout_required`, acquire checkout before edit and attach checkout metadata to the update envelope.
-- Delete/archive: treat as an update to an existing record, usually by writing `record_state: "deleted"` or equivalent. If policy is `checkout_required`, it needs checkout.
+- Update: `previous_version` equals the latest known local/Tower version and `version` increments by one. If policy is `checkout_required`, the Tower submission must acquire or already hold checkout and attach checkout metadata to the update envelope.
+- Delete/archive: treat as an update to an existing record, usually by writing `record_state: "deleted"` or equivalent. If policy is `checkout_required`, it needs checkout semantics at Tower submission time.
 - Retry: preserve the original pending write semantics. Do not silently add or remove checkout policy in retry code unless that pending write was created for that policy.
 
 Tower enforces this same distinction. For `checkout_required` families, creates may omit checkout because there is no prior server version to lock. Updates require checkout.
+
+Local state is allowed to be ahead of Tower. If a pending local update represents the intended latest user state, sync should reconcile Tower's current version to that local state instead of forcing the user to manually repair normal version drift.
 
 ## Create Flow
 
@@ -116,6 +140,31 @@ await addPendingWrite({
 });
 ```
 
+## Quick Local Actions For Checkout-Managed Records
+
+Use this flow for small actions that should feel immediate in the UI but still update an existing checkout-managed Tower record.
+
+Examples:
+
+- Archive/delete buttons.
+- Done/status buttons.
+- Dragging a task between columns.
+- Quick field toggles.
+- Multi-select actions.
+- Cascade updates triggered by one of the above actions.
+
+Rules:
+
+1. Apply the intended change to the local row immediately when the action is locally valid.
+2. Queue a pending update write that preserves the checkout policy for that record path.
+3. The sync worker must treat the pending write as checkout-managed even though the UI action already completed locally.
+4. Before submitting to Tower, acquire checkout for the Tower record version being updated, or reuse a still-valid checkout already held by this actor.
+5. Attach checkout metadata to the outbound envelope.
+6. Submit the update. On success, Tower consumes/releases checkout according to the policy.
+7. If checkout acquire or submit fails, keep the local row and pending write. Surface deterministic pending/failed sync state and repair actions. Do not silently drop or roll back the user's local change.
+
+The checkout requirement belongs to the Tower write, not necessarily to the visible interaction. Do not block quick local interactions merely because the corresponding Tower update requires checkout.
+
 ## Current Patterns
 
 Documents:
@@ -129,9 +178,9 @@ Tasks:
 
 - Task creation is optimistic. It does not acquire checkout and does not attach task checkout policy to the create pending write.
 - Task detail opens in view mode.
-- Task detail Edit acquires checkout with a task-specific runtime policy config.
+- Task detail Edit acquires checkout with a task-specific runtime policy config because this is a long-lived edit session.
 - Task Save writes one task update record, attaches checkout metadata, queues with `checkout_policy_config`, and flushes.
-- Quick field mutations, delete/archive, drag/drop, or cascade updates are updates. If they use the task checkout policy seam, they must acquire or already hold checkout. Avoid hidden checkout-managed writes from read mode unless the UX explicitly communicates the lock.
+- Quick field mutations, delete/archive, drag/drop, bulk actions, and cascade updates are local-first quick mutations. They do not require a user-visible edit session, but the pending write must be flushed through checkout-managed update semantics.
 
 ## Adding Checkout To Another Record Type
 
@@ -227,6 +276,7 @@ Rules:
   reports its latest version, retry the same local snapshot as
   `version: tower_latest + 1` / `previous_version: tower_latest`; do not strand
   the write for manual Force Submit when local is intended to win.
+- This retry rule is how sync preserves the local-first mental model when local data has moved ahead of Tower. The worker should submit the current local snapshot at the next Tower version rather than requiring manual Force Submit for ordinary local-ahead cases.
 - Error diagnostics should include record id, family, version, previous version, and checkout state.
 
 ## Common Pitfalls Seen So Far
@@ -238,7 +288,8 @@ Rules:
 - Using `signature_npub` in checkout endpoint payloads. Checkout endpoint payloads must use `signer_npub`.
 - Forgetting `checkout_policy_config` on a checkout-managed pending update. The worker may treat the family as default policy and strip or reject checkout metadata incorrectly.
 - Adding `checkout_policy_config` to unrelated creates. This can accidentally make a default optimistic family behave like checkout-required in the worker batch.
-- Allowing hidden update paths from read mode. If a record is checkout-managed, quick edits, drag/drop, delete/archive, and cascade updates need either an explicit checkout UX or must stay disabled/read-only.
+- Confusing local mutation timing with Tower submission semantics. A quick action can update Dexie immediately and still require checkout when its pending update is flushed.
+- Rolling back or dropping a successful local quick action because sync-time checkout failed. Keep the local row and pending write, then surface a deterministic repair path.
 - Assuming sharing UI equals actual readability. Other users need matching group payloads and loaded group keys.
 - Re-encrypting every historical delivery group on collaborator updates. A collaborator can write through a shared group without having the creator's private group key; outbound envelopes must be limited to actor-encryptable groups.
 - Assuming a history `404 record_pull_not_found` always means the record does not exist. It can also mean the local create never reached Tower, the actor cannot see the latest version, or the wrong viewer/workspace key was used.
