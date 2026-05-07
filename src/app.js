@@ -2858,10 +2858,18 @@ export function initApp() {
     // --- tasks ---
 
     async applyTasks(tasks = []) {
+      const pendingWrites = await getPendingWrites().catch(() => null);
       const normalizedTasks = [];
       for (const task of (Array.isArray(tasks) ? tasks : [])) {
         const normalizedGroups = this.normalizeTaskRowGroupRefs(task);
-        const normalized = this.normalizeTaskRowScopeRefs(normalizedGroups);
+        let normalized = this.normalizeTaskRowScopeRefs(normalizedGroups);
+        if (
+          Array.isArray(pendingWrites)
+          && String(normalized?.sync_status || '').trim() === 'pending'
+          && !isTaskBlockedByPendingSave(normalized, pendingWrites, taskFamilyHash('task'))
+        ) {
+          normalized = markTaskEditSyncedAfterAcceptedFlush(normalized, pendingWrites, taskFamilyHash('task')) || normalized;
+        }
         normalizedTasks.push(normalized);
       }
       const dedupedTasks = dedupeTasksByRecordId(normalizedTasks);
@@ -2874,6 +2882,7 @@ export function initApp() {
         String(task?.version ?? ''),
         String(task?.record_state || ''),
         String(task?.state || ''),
+        String(task?.sync_status || ''),
       ].join('|'))) {
         this.tasks = hydratedTasks;
       }
